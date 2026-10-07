@@ -1,0 +1,43 @@
+station_id: "STATION_4"
+name: "Complete Seat & Mechanism Cycle Test"
+description: "Cosmetics, component presence, full travel recliner and track, sensor lock confirmation."
+enabled: true
+
+camera:
+  adapter: "replay"
+  replay_dir: "data/station_4/replay"
+  resolution: [2592, 1944]
+  exposure_us: 14000
+  gain_db: 0.0
+  pixel_size_mm: 0.15
+  timeout_ms: 3000
+
+lighting:
+  ambient_intensity_pct: 100
+
+regions_of_interest:
+  recliner_pivot:
+    x: 400
+    y: 800
+    w: 500
+    h: 500
+  track_travel:
+    x: 200
+    y: 1400
+    w: 2000
+    h: 400
+
+mechanism:
+  command_full_cycle: true
+  sensor_poll_timeout_s: 10.0
+  verify_sensor_lock_strictly: true
+
+model:
+  backend: "mock"
+  model_type: "yolo_cosmetic_defects"
+  weights_path: "models/station_4/cosmetics.onnx"
+  version: "v0.1.0"
+  threshold: 0.45
+
+trigger:
+  timeout_s: 12.0

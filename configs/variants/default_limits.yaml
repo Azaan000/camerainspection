@@ -1,0 +1,80 @@
+# Default OEM Limits (Engineering Starting Values)
+# Note: In accordance with safety rules:
+# - Range checks: value <= pass_max is PASS; pass_max < value < fail_at is REVIEW; value >= fail_at is FAIL.
+# - Tolerance checks: |value - nominal| <= pass_tol is PASS; pass_tol < diff <= fail_tol is REVIEW; diff > fail_tol is FAIL.
+# - Boolean / Critical checks: trigger FAIL or REVIEW immediately as specified.
+# - Unhandled conditions fail-safe to FAIL or REVIEW.
+
+limits:
+  stitch:
+    skip_length_mm:
+      pass_max: 0.0
+      fail_at: 5.0
+    broken_thread:
+      fail_on_any: true
+    loose_end_mm:
+      pass_max: 3.0
+      fail_at: 5.0
+    stitches_per_inch:
+      pass_tol: 0.5
+      fail_tol: 1.0
+    seam_position_mm:
+      pass_tol: 1.0
+      fail_tol: 1.5
+    thread_color_delta_e:
+      pass_max: 3.0
+      fail_at: 5.0
+
+  leather:
+    scratch_length_mm:
+      seating_face:
+        pass_max: 0.0
+        fail_at: 2.0
+      side_back:
+        pass_max: 3.0
+        fail_at: 5.0
+    cut_or_pinhole:
+      fail_on_any: true
+    stain_area_mm2:
+      seating_face:
+        pass_max: 0.0
+        fail_at: 1.0
+
+  fit:
+    wrinkle_puckering:
+      review_on_any: true
+
+  plastic:
+    presence_hand_count:
+      fail_on_any_missing_or_wrong: true
+    color_delta_e:
+      pass_max: 3.0
+      fail_at: 5.0
+    crack_or_short_shot:
+      fail_on_any: true
+    flash_mm:
+      pass_max: 0.3
+      fail_at: 0.5
+    shield_gap_mm:
+      pass_tol: 0.7
+      fail_tol: 1.0
+
+  mechanism:
+    recliner_angle_deg:
+      pass_tol: 1.5
+      fail_tol: 2.0
+    track_end_position_mm:
+      pass_tol: 1.5
+      fail_tol: 2.0
+    lock_sensor_confirmed:
+      required: true
+
+  model:
+    defect_confidence:
+      pass_max: 0.30
+      fail_at: 0.60
+
+targets:
+  false_reject_max: 0.03
+  escape_max: 0.005
+  cycle_time_seconds: [45, 60]

@@ -1,0 +1,26 @@
+variant_id: "REAR_BENCH_BLACK"
+description: "Rear Bench Seat - Black Leather/Rexene"
+hand: "NA"
+position: "REAR"
+color: "BLACK"
+
+nominals:
+  stitch:
+    stitches_per_inch: 5.5
+    seam_position_mm: 15.0
+  plastic:
+    shield_gap_mm: 3.0
+  mechanism:
+    recliner_angle_deg: 95.0
+    track_end_position_mm: 0.0
+
+components:
+  isofix_cover:
+    count: 4
+    required: true
+  clips:
+    count: 10
+    required: true
+
+golden_images_dir: "golden_images"
+limit_overrides: {}

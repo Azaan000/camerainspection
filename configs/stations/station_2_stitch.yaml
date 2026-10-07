@@ -1,0 +1,33 @@
+station_id: "STATION_2"
+name: "Stitching on Sewing Jig"
+description: "Rule-based measurement for stitches and position; AI model for broken thread and loose ends."
+enabled: true
+
+camera:
+  adapter: "replay"
+  replay_dir: "data/station_2/replay"
+  resolution: [2592, 1944]
+  exposure_us: 12000
+  gain_db: 0.0
+  pixel_size_mm: 0.05
+  timeout_ms: 3000
+
+lighting:
+  direct_intensity_pct: 90
+
+regions_of_interest:
+  main_seam:
+    x: 150
+    y: 300
+    w: 2300
+    h: 400
+
+model:
+  backend: "mock"
+  model_type: "yolo_stitch_defect"
+  weights_path: "models/station_2/yolo_defect.onnx"
+  version: "v0.1.0"
+  threshold: 0.50
+
+trigger:
+  timeout_s: 5.0

@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "camerainspection"
+version = "0.1.0"
+description = "Automated Camera Inspection System for Car Seats"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Quality Engineering Team" }
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24.0",
+    "opencv-python-headless>=4.8.0",
+    "sqlalchemy>=2.0.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "types-PyYAML>=6.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers"

@@ -1,0 +1,26 @@
+system:
+  environment: "development"
+  shadow_mode: false # When true, logs inspection decisions without driving physical PLC pallet hold or label printer
+  config_version: "v0.1.0"
+
+database:
+  url: "sqlite:///./data/inspection.db" # Default local developer SQLite database
+  echo_sql: false
+
+plc:
+  adapter: "simulator" # "simulator", "modbus", "snap7", "opcua"
+  host: "127.0.0.1"
+  port: 502
+  rack: 0
+  slot: 1
+  poll_interval_ms: 100
+
+storage:
+  image_dir: "storage/images"
+  raw_image_dir: "storage/images/raw"
+  annotated_image_dir: "storage/images/annotated"
+  defect_crops_dir: "storage/images/defects"
+
+coordinator:
+  expected_stations: ["STATION_1", "STATION_2", "STATION_3", "STATION_4"]
+  cycle_timeout_s: 60.0

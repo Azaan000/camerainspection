@@ -1,0 +1,35 @@
+variant_id: "FRONT_RH_BLACK"
+description: "Front Right Hand Seat - Black Leather/Rexene"
+hand: "RH"
+position: "FRONT"
+color: "BLACK"
+
+nominals:
+  stitch:
+    stitches_per_inch: 6.0
+    seam_position_mm: 12.0
+  plastic:
+    shield_gap_mm: 2.5
+  mechanism:
+    recliner_angle_deg: 90.0
+    track_end_position_mm: 240.0
+
+components:
+  side_shield:
+    expected_hand: "RH"
+    required: true
+  handle:
+    expected_hand: "RH"
+    required: true
+  lever:
+    expected_hand: "RH"
+    required: true
+  isofix_cover:
+    count: 2
+    required: true
+  clips:
+    count: 6
+    required: true
+
+golden_images_dir: "golden_images"
+limit_overrides: {}
