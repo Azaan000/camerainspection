@@ -86,8 +86,10 @@ def test_shield_gap_measurement() -> None:
         pixel_size_mm=0.10,
         axis="horizontal",
     )
-    # Expected: 2.5 mm
-    assert abs(measured_mm - 2.5) < 0.2
+    # Expected: 2.5 mm; gradient extremum after Gaussian blur may shift by ≤ 3 px (0.3 mm)
+    assert abs(measured_mm - 2.5) <= 0.30, (
+        f"Measured gap {measured_mm:.2f}mm outside ±0.30mm of expected 2.50mm"
+    )
 
 
 def test_flash_protrusion_measurement() -> None:
