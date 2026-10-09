@@ -1,0 +1,162 @@
+"""Station 4 Service: Complete Seat & Mechanism Cycle Test.
+
+Requirements:
+1. Cosmetic checks (wrinkle, puckering, foam show-through) via AI model / rules.
+   - Any wrinkle/puckering flagged as REVIEW per default limits.
+2. Component presence (motor, sensor, airbag module, connector clicked) via AI model.
+   - Any missing component flagged as FAIL.
+3. Mechanism cycle test:
+   - Recliner angle measurement by camera vs nominal (90.0 deg ± 1.5 pass, ± 2.0 fail).
+   - Track end position measurement by camera vs nominal (240.0 mm ± 1.5 pass, ± 2.0 fail).
+   - Lock confirmation MUST be read from PLC sensor signal, NEVER from camera.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+import cv2
+import numpy as np
+
+from camerainspection.core.limits import LimitsEvaluator
+from camerainspection.core.logging import get_logger
+from camerainspection.core.models import BoundingBox, DefectDetail, Outcome
+from camerainspection.station.base_station import BaseStation
+from camerainspection.vision.station4.mechanism import MechanismVisionEngine
+
+logger = get_logger("station.4")
+
+
+class Station4Service(BaseStation):
+    """Station 4: Complete Seat Inspection & Mechanism Travel / Sensor Interlock."""
+
+    def inspect_image(
+        self,
+        image: np.ndarray,
+        variant_id: str,
+        evaluator: LimitsEvaluator,
+        variant_nominals: dict[str, Any],
+    ) -> tuple[list[DefectDetail], dict[str, float], np.ndarray | None]:
+        defects: list[DefectDetail] = []
+        measurements: dict[str, float] = {}
+        annotated = image.copy()
+        pixel_size_mm: float = self.config.camera.pixel_size_mm
+
+        # Mechanism nominals from variant config
+        mech_nominals = variant_nominals.get("mechanism", {})
+        nom_recliner_deg = float(mech_nominals.get("recliner_angle_deg", 90.0))
+        nom_track_pos_mm = float(mech_nominals.get("track_end_position_mm", 240.0))
+
+        # -------------------------------------------------------------
+        # 1. Mechanism Optical Measurements (Lever Angle & Track End)
+        # -------------------------------------------------------------
+        recliner_roi_cfg = self.config.regions_of_interest.get("recliner_pivot")
+        if recliner_roi_cfg is not None:
+            rx1, ry1 = max(0, recliner_roi_cfg.x), max(0, recliner_roi_cfg.y)
+            rx2 = min(image.shape[1], recliner_roi_cfg.x + recliner_roi_cfg.w)
+            ry2 = min(image.shape[0], recliner_roi_cfg.y + recliner_roi_cfg.h)
+            recliner_crop = image[ry1:ry2, rx1:rx2]
+
+            measured_angle = MechanismVisionEngine.measure_recliner_angle(recliner_crop)
+            measurements["recliner_angle_deg"] = measured_angle
+
+            # Tolerance check against nominal
+            angle_d = evaluator.evaluate_check(
+                "mechanism", "recliner_angle_deg", measured_angle, nominal=nom_recliner_deg
+            )
+            angle_d.roi_name = "recliner_pivot"
+            if angle_d.outcome != Outcome.PASS:
+                defects.append(angle_d)
+
+            cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), (255, 200, 0), 2)
+            cv2.putText(
+                annotated, f"Angle: {measured_angle:.1f} deg",
+                (rx1, max(0, ry1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
+            )
+
+        track_roi_cfg = self.config.regions_of_interest.get("track_travel")
+        if track_roi_cfg is not None:
+            tx1, ty1 = max(0, track_roi_cfg.x), max(0, track_roi_cfg.y)
+            tx2 = min(image.shape[1], track_roi_cfg.x + track_roi_cfg.w)
+            ty2 = min(image.shape[0], track_roi_cfg.y + track_roi_cfg.h)
+            track_crop = image[ty1:ty2, tx1:tx2]
+
+            measured_pos = MechanismVisionEngine.measure_track_position_mm(
+                track_crop, pixel_size_mm=pixel_size_mm, reference_datum_x=0.0
+            )
+            measurements["track_end_position_mm"] = measured_pos
+
+            # Tolerance check against nominal
+            pos_d = evaluator.evaluate_check(
+                "mechanism", "track_end_position_mm", measured_pos, nominal=nom_track_pos_mm
+            )
+            pos_d.roi_name = "track_travel"
+            if pos_d.outcome != Outcome.PASS:
+                defects.append(pos_d)
+
+            cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), (255, 200, 0), 2)
+            cv2.putText(
+                annotated, f"Track: {measured_pos:.1f} mm",
+                (tx1, max(0, ty1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
+            )
+
+        # -------------------------------------------------------------
+        # 2. Hardware Lock Sensor Confirmation (CRITICAL SAFETY RULE)
+        # "take the lock confirmation from a sensor signal, never from the image"
+        # -------------------------------------------------------------
+        lock_confirmed = self.plc.is_mechanism_locked() if self.plc is not None else False
+        measurements["lock_sensor_confirmed"] = 1.0 if lock_confirmed else 0.0
+
+        lock_d = evaluator.evaluate_check(
+            "mechanism", "lock_sensor_confirmed", lock_confirmed
+        )
+        lock_d.defect_type = "mechanism.lock_sensor_confirmed"
+        if lock_d.outcome != Outcome.PASS:
+            lock_d.description = (
+                "Hardware mechanism lock confirmation sensor signal not asserted by PLC! "
+                "CRITICAL: Sensor confirmation missing."
+            )
+            defects.append(lock_d)
+
+        # -------------------------------------------------------------
+        # 3. Cosmetics & Component Presence via AI Inference Engine
+        # -------------------------------------------------------------
+        if self.inference_engine is not None:
+            detections = self.inference_engine.predict(image)
+            for det in detections:
+                # 3a. Cosmetic wrinkles / puckering -> REVIEW
+                if det.class_name in ("wrinkle", "puckering", "wrinkle_puckering"):
+                    wrinkle_d = evaluator.evaluate_check("fit", "wrinkle_puckering", True)
+                    wrinkle_d.defect_type = f"fit.{det.class_name}"
+                    wrinkle_d.confidence = det.confidence
+                    wrinkle_d.bounding_box = det.bounding_box
+                    wrinkle_d.description = (
+                        f"Cosmetic {det.class_name} detected (confidence: {det.confidence:.2f}). "
+                        "Flagged for human review."
+                    )
+                    defects.append(wrinkle_d)
+
+                # 3b. Missing components (motor, airbag module, sensor, connector clicked) -> FAIL
+                elif det.class_name.startswith("missing_") or det.class_name in (
+                    "missing_motor", "missing_airbag", "missing_sensor", "unclicked_connector"
+                ):
+                    comp_d = DefectDetail(
+                        defect_type=f"component.{det.class_name}",
+                        outcome=Outcome.FAIL,
+                        confidence=det.confidence,
+                        bounding_box=det.bounding_box,
+                        description=f"Critical component defect: {det.class_name}",
+                    )
+                    defects.append(comp_d)
+
+                # 3c. Cosmetic foam show-through / short cover / stains
+                elif det.class_name in ("foam_showthrough", "short_cover"):
+                    cosmetic_d = DefectDetail(
+                        defect_type=f"cosmetic.{det.class_name}",
+                        outcome=Outcome.FAIL,
+                        confidence=det.confidence,
+                        bounding_box=det.bounding_box,
+                        description=f"Cosmetic assembly failure: {det.class_name}",
+                    )
+                    defects.append(cosmetic_d)
+
+        return defects, measurements, annotated
