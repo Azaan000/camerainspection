@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SeatGuard — Seat Inspection Dashboard</title>
+
+  <!-- Tailwind CSS CDN (dark mode via class strategy) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            navy:   { 900: '#0a0f1e', 800: '#0d1526', 700: '#111d35', 600: '#162444' },
+            slate2: { 700: '#1e293b', 600: '#263348' },
+            amber:  { 400: '#fbbf24', 500: '#f59e0b' },
+            emerald:{ 400: '#34d399', 500: '#10b981' },
+            rose:   { 400: '#f87171', 500: '#ef4444' },
+            sky:    { 400: '#38bdf8' },
+          },
+          fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui'] },
+          boxShadow: {
+            card: '0 4px 32px 0 rgba(0,0,0,0.45)',
+            glow: '0 0 20px 2px rgba(251,191,36,0.18)',
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    * { box-sizing: border-box; }
+    body { background: #0a0f1e; font-family: 'Inter', sans-serif; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0d1526; }
+    ::-webkit-scrollbar-thumb { background: #263348; border-radius: 3px; }
+
+    .card {
+      background: linear-gradient(135deg, #111d35 0%, #0d1526 100%);
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      box-shadow: 0 4px 32px 0 rgba(0,0,0,0.45);
+    }
+    .card-header {
+      border-bottom: 1px solid #1e2d45;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .section-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #94a3b8;
+    }
+
+    /* Status badges */
+    .badge-pass    { background: rgba(52,211,153,0.15); color: #34d399; border: 1px solid rgba(52,211,153,0.35); }
+    .badge-fail    { background: rgba(248,113,113,0.15); color: #f87171; border: 1px solid rgba(248,113,113,0.35); }
+    .badge-review  { background: rgba(251,191,36,0.15);  color: #fbbf24; border: 1px solid rgba(251,191,36,0.35); }
+    .badge-ok      { background: rgba(56,189,248,0.12);  color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); }
+    .badge-error   { background: rgba(248,113,113,0.12); color: #f87171; border: 1px solid rgba(248,113,113,0.3); }
+
+    .seat-tile {
+      min-width: 68px;
+      height: 80px;
+      border-radius: 10px;
+      border: 1px solid;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.68rem;
+      font-weight: 600;
+      cursor: default;
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }
+    .seat-tile:hover { transform: translateY(-3px); }
+    .seat-pass   { background: rgba(52,211,153,0.1);  border-color: rgba(52,211,153,0.4);  color: #34d399; }
+    .seat-fail   { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.4); color: #f87171; }
+    .seat-review { background: rgba(251,191,36,0.1);  border-color: rgba(251,191,36,0.4);  color: #fbbf24; }
+    .seat-in_progress { background: rgba(56,189,248,0.1); border-color: rgba(56,189,248,0.4); color: #38bdf8; }
+    .seat-unknown { background: rgba(100,116,139,0.1); border-color: rgba(100,116,139,0.3); color: #64748b; }
+
+    .stat-card {
+      background: linear-gradient(135deg, #111d35, #0d1526);
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .stat-value { font-size: 2rem; font-weight: 800; line-height: 1; }
+    .stat-label { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #64748b; }
+
+    .defect-card {
+      background: linear-gradient(135deg, #111d35, #0d1526);
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .review-item {
+      background: rgba(17,29,53,0.8);
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 10px;
+    }
+
+    .audit-row:nth-child(even) { background: rgba(22,36,68,0.4); }
+
+    .nav-link { color: #64748b; font-size: 0.82rem; font-weight: 500; padding: 6px 14px; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
+    .nav-link:hover, .nav-link.active { background: rgba(251,191,36,0.1); color: #fbbf24; }
+
+    .pulse-dot { animation: pulse 2s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .tooltip-wrapper { position: relative; }
+    .tooltip-wrapper:hover .tooltip-box { display: block; }
+    .tooltip-box {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.72rem;
+      color: #cbd5e1;
+      white-space: nowrap;
+      z-index: 50;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid #1e293b;
+      border-top-color: #fbbf24;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .section { display: none; }
+    .section.active { display: block; }
+
+    input[type=text], input[type=password], select, textarea {
+      background: #0d1526;
+      border: 1px solid #263348;
+      border-radius: 8px;
+      color: #e2e8f0;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type=text]:focus, input[type=password]:focus, select:focus, textarea:focus {
+      border-color: #fbbf24;
+    }
+    input::placeholder, textarea::placeholder { color: #475569; }
+
+    button.btn-primary {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #0a0f1e;
+      font-weight: 700;
+      border-radius: 8px;
+      padding: 8px 18px;
+      font-size: 0.85rem;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button.btn-primary:hover { opacity: 0.88; }
+    button.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    button.btn-ghost {
+      background: transparent;
+      color: #94a3b8;
+      border: 1px solid #263348;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    button.btn-ghost:hover { border-color: #fbbf24; color: #fbbf24; }
+
+    .progress-bar {
+      height: 8px;
+      background: #1e293b;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.6s ease;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 999;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.25s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .toast-success { background: rgba(52,211,153,0.2); border: 1px solid rgba(52,211,153,0.5); color: #34d399; }
+    .toast-error   { background: rgba(248,113,113,0.2); border: 1px solid rgba(248,113,113,0.5); color: #f87171; }
+
+    .health-station-card {
+      border-radius: 10px;
+      border: 1px solid;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .health-ok   { border-color: rgba(52,211,153,0.3);  background: rgba(52,211,153,0.05); }
+    .health-warn { border-color: rgba(251,191,36,0.3);  background: rgba(251,191,36,0.05); }
+    .health-err  { border-color: rgba(248,113,113,0.3); background: rgba(248,113,113,0.05); }
+  </style>
+</head>
+
+<body class="dark text-slate-200 min-h-screen">
+
+<!-- ============================  TOP NAV  ============================ -->
+<header class="sticky top-0 z-40 flex items-center justify-between px-6 py-3"
+  style="background: rgba(10,15,30,0.92); backdrop-filter: blur(12px); border-bottom: 1px solid #1e293b;">
+
+  <div class="flex items-center gap-3">
+    <!-- Logo mark -->
+    <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+      <rect width="32" height="32" rx="8" fill="url(#lg)"/>
+      <path d="M8 20 L16 8 L24 20" stroke="#0a0f1e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <circle cx="16" cy="22" r="3" fill="#0a0f1e"/>
+      <defs>
+        <linearGradient id="lg" x1="0" y1="0" x2="32" y2="32">
+          <stop offset="0%" stop-color="#f59e0b"/>
+          <stop offset="100%" stop-color="#d97706"/>
+        </linearGradient>
+      </defs>
+    </svg>
+    <div>
+      <div class="font-extrabold text-sm text-white tracking-wide">SeatGuard</div>
+      <div class="text-xs text-slate-500 -mt-0.5">Inspection Intelligence</div>
+    </div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="hidden md:flex items-center gap-1">
+    <span class="nav-link active" onclick="setSection('live')">Live Line</span>
+    <span class="nav-link" onclick="setSection('quality')">Quality</span>
+    <span class="nav-link" onclick="setSection('gallery')">Defect Gallery</span>
+    <span class="nav-link" onclick="setSection('health')">System Health</span>
+    <span class="nav-link" onclick="setSection('review')">Review Queue</span>
+    <span class="nav-link" onclick="setSection('audit')">Audit Log</span>
+    <span class="nav-link" onclick="setSection('shadow')">Shadow Mode</span>
+    <span class="nav-link" onclick="setSection('settings')">Settings</span>
+  </nav>
+
+  <!-- Status bar -->
+  <div class="flex items-center gap-4">
+    <div id="api-status" class="flex items-center gap-2 text-xs">
+      <span class="w-2 h-2 rounded-full bg-slate-600 pulse-dot" id="status-dot"></span>
+      <span id="status-text" class="text-slate-500">Connecting…</span>
+    </div>
+    <div id="clock" class="text-xs text-slate-500 font-mono hidden md:block"></div>
+    <button id="refresh-btn" onclick="refreshAll()" class="btn-ghost text-xs px-3 py-1.5">↻ Refresh</button>
+  </div>
+</header>
+
+<!-- ============================  MAIN CONTENT  ============================ -->
+<main class="px-4 md:px-8 py-6 max-w-screen-2xl mx-auto">
+
+  <!-- ============  SECTION: LIVE LINE  ============ -->
+  <section id="section-live" class="section active">
+
+    <!-- KPI strip -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div class="stat-card">
+        <div class="stat-label">Total Inspected</div>
+        <div class="stat-value text-white" id="kpi-total">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Pass Rate</div>
+        <div class="stat-value text-emerald-400" id="kpi-pass">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Review Queue</div>
+        <div class="stat-value text-amber-400" id="kpi-review">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Fail Rate</div>
+        <div class="stat-value text-rose-400" id="kpi-fail">—</div>
+      </div>
+    </div>
+
+    <!-- Live seat strip -->
+    <div class="card mb-6">
+      <div class="card-header">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+          <span class="section-title">Live Line Strip</span>
+        </div>
+        <span class="text-xs text-slate-500">Last 20 seats · auto-refresh 5 s</span>
+      </div>
+      <div class="px-4 py-5 overflow-x-auto">
+        <div id="seat-strip" class="flex gap-3" style="min-width: max-content;">
+          <div class="text-slate-600 text-sm">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent seats table -->
+    <div class="card">
+      <div class="card-header">
+        <span class="section-title">Recent Seat Details</span>
+        <span class="text-xs text-slate-500">Click a seat tile above for detail</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr style="border-bottom: 1px solid #1e293b;">
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Seat ID</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Variant</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Outcome</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Stations</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Printer</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Time</th>
+            </tr>
+          </thead>
+          <tbody id="live-table-body">
+            <tr><td colspan="6" class="px-4 py-8 text-center text-slate-600">Fetching…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============  SECTION: QUALITY TRENDS  ============ -->
+  <section id="section-quality" class="section">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div class="stat-card">
+        <div class="stat-label">Pass Rate (trend)</div>
+        <div class="stat-value text-emerald-400" id="qt-pass-rate">—</div>
+        <div class="progress-bar mt-3"><div class="progress-fill bg-emerald-400" id="qt-pass-bar" style="width:0%"></div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Review Rate</div>
+        <div class="stat-value text-amber-400" id="qt-review-rate">—</div>
+        <div class="progress-bar mt-3"><div class="progress-fill bg-amber-400" id="qt-review-bar" style="width:0%"></div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Fail Rate</div>
+        <div class="stat-value text-rose-400" id="qt-fail-rate">—</div>
+        <div class="progress-bar mt-3"><div class="progress-fill bg-rose-400" id="qt-fail-bar" style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="card p-5">
+        <div class="section-title mb-4">Outcome Distribution</div>
+        <div style="height:260px; position:relative;">
+          <canvas id="doughnut-chart"></canvas>
+        </div>
+      </div>
+      <div class="card p-5">
+        <div class="section-title mb-4">Defect Pareto (Top Types)</div>
+        <div style="height:260px; position:relative;">
+          <canvas id="pareto-chart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-6 p-5">
+      <div class="section-title mb-4">Station Performance</div>
+      <div style="height:220px; position:relative;">
+        <canvas id="station-chart"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============  SECTION: DEFECT GALLERY  ============ -->
+  <section id="section-gallery" class="section">
+    <div class="flex items-center justify-between mb-5">
+      <h2 class="font-bold text-white text-lg">Defect Gallery</h2>
+      <div class="flex gap-3">
+        <select id="gallery-filter-type" onchange="renderGallery()" class="w-40">
+          <option value="">All Types</option>
+        </select>
+        <select id="gallery-filter-station" onchange="renderGallery()" class="w-40">
+          <option value="">All Stations</option>
+          <option value="1">Station 1</option>
+          <option value="2">Station 2</option>
+          <option value="3">Station 3</option>
+          <option value="4">Station 4</option>
+        </select>
+      </div>
+    </div>
+    <div id="gallery-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div class="text-slate-600 col-span-4 py-10 text-center">Loading gallery…</div>
+    </div>
+  </section>
+
+  <!-- ============  SECTION: SYSTEM HEALTH  ============ -->
+  <section id="section-health" class="section">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="card">
+        <div class="card-header">
+          <span class="section-title">Station Liveness</span>
+        </div>
+        <div class="p-5 space-y-3" id="health-stations">
+          <div class="text-slate-600 text-sm">Loading…</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="section-title">PLC &amp; System</span>
+        </div>
+        <div class="p-5 space-y-3" id="health-plc">
+          <div class="text-slate-600 text-sm">Loading…</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============  SECTION: REVIEW QUEUE  ============ -->
+  <section id="section-review" class="section">
+    <div class="flex items-center justify-between mb-5">
+      <h2 class="font-bold text-white text-lg">Human Review Queue</h2>
+      <span id="review-count-badge" class="badge-review text-xs font-bold px-3 py-1 rounded-full">0 pending</span>
+    </div>
+    <div id="review-list">
+      <div class="text-slate-600 text-sm py-10 text-center">Loading pending reviews…</div>
+    </div>
+  </section>
+
+  <!-- ============  SECTION: AUDIT LOG  ============ -->
+  <section id="section-audit" class="section">
+    <div class="card">
+      <div class="card-header">
+        <span class="section-title">Audit Log</span>
+        <div class="flex items-center gap-3">
+          <input type="text" id="audit-seat-filter" placeholder="Filter by Seat ID…" class="w-44"
+            onkeydown="if(event.key==='Enter') fetchAudit()" />
+          <button class="btn-primary" onclick="fetchAudit()">Search</button>
+          <select id="audit-limit" class="w-24" onchange="fetchAudit()">
+            <option value="20">20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr style="border-bottom: 1px solid #1e293b;">
+              <th class="px-4 py-3 text-left text-slate-500 font-semibold uppercase tracking-wide">Time</th>
+              <th class="px-4 py-3 text-left text-slate-500 font-semibold uppercase tracking-wide">Seat</th>
+              <th class="px-4 py-3 text-left text-slate-500 font-semibold uppercase tracking-wide">Event</th>
+              <th class="px-4 py-3 text-left text-slate-500 font-semibold uppercase tracking-wide">Actor</th>
+              <th class="px-4 py-3 text-left text-slate-500 font-semibold uppercase tracking-wide">Details</th>
+            </tr>
+          </thead>
+          <tbody id="audit-tbody">
+            <tr><td colspan="5" class="px-4 py-8 text-center text-slate-600">Fetching…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="px-4 py-3 flex justify-between items-center border-t border-slate-800 text-xs text-slate-500">
+        <span id="audit-count">—</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============  SECTION: SHADOW MODE  ============ -->
+  <section id="section-shadow" class="section">
+    <div class="mb-5">
+      <h2 class="font-bold text-white text-lg">Shadow Mode Analytics</h2>
+      <p class="text-sm text-slate-500 mt-1">Compares camera-system verdict against human review decisions to quantify escape and false-reject rates.</p>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div class="stat-card">
+        <div class="stat-label">Agreement Rate</div>
+        <div class="stat-value text-sky-400" id="sm-agreement">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Escape Rate</div>
+        <div class="stat-value text-rose-400" id="sm-escape">—</div>
+        <div class="text-xs text-slate-500 mt-1">Camera PASS, Human FAIL</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">False-Reject Rate</div>
+        <div class="stat-value text-amber-400" id="sm-false-reject">—</div>
+        <div class="text-xs text-slate-500 mt-1">Camera FAIL, Human PASS</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Reviews Sampled</div>
+        <div class="stat-value text-white" id="sm-reviews">—</div>
+      </div>
+    </div>
+
+    <!-- Shadow mode chart -->
+    <div class="card p-5">
+      <div class="section-title mb-4">Agreement Breakdown</div>
+      <div style="height:240px; position:relative;">
+        <canvas id="shadow-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="card mt-4 p-5">
+      <div class="section-title mb-3">Shadow Mode Details</div>
+      <div id="shadow-details" class="text-sm text-slate-400 space-y-2"></div>
+    </div>
+  </section>
+
+  <!-- ============  SECTION: SETTINGS  ============ -->
+  <section id="section-settings" class="section">
+    <h2 class="font-bold text-white text-lg mb-5">Settings &amp; Configuration</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="card p-6 space-y-5">
+        <div class="section-title">API Connection</div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1.5 uppercase tracking-wide">API Base URL</label>
+          <input type="text" id="cfg-api-url" class="w-full" value="http://127.0.0.1:8000" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1.5 uppercase tracking-wide">X-API-Key (for review decisions)</label>
+          <input type="password" id="cfg-api-key" class="w-full" value="inspector_secret_token_123" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1.5 uppercase tracking-wide">Auto-Refresh Interval (seconds)</label>
+          <input type="text" id="cfg-refresh-interval" class="w-full" value="5" />
+        </div>
+        <div class="flex gap-3">
+          <button class="btn-primary" onclick="saveSettings()">Save Settings</button>
+          <button class="btn-ghost" onclick="testConnection()">Test Connection</button>
+        </div>
+        <div id="settings-result" class="text-sm"></div>
+      </div>
+
+      <div class="card p-6 space-y-4">
+        <div class="section-title">Dashboard Info</div>
+        <div class="space-y-3 text-sm text-slate-400">
+          <div class="flex justify-between"><span>API URL</span><span id="info-url" class="text-white font-mono text-xs">—</span></div>
+          <div class="flex justify-between"><span>Refresh Interval</span><span id="info-interval" class="text-white">—</span></div>
+          <div class="flex justify-between"><span>Last Refresh</span><span id="info-last-refresh" class="text-white text-xs">—</span></div>
+          <div class="flex justify-between"><span>API Status</span><span id="info-api-status" class="text-white">—</span></div>
+        </div>
+        <hr class="border-slate-800 my-3"/>
+        <div class="section-title">Quick Links</div>
+        <div class="space-y-2 text-sm">
+          <a id="link-docs" href="http://127.0.0.1:8000/docs" target="_blank" class="block text-sky-400 hover:underline">API Docs (Swagger UI)</a>
+          <a id="link-redoc" href="http://127.0.0.1:8000/redoc" target="_blank" class="block text-sky-400 hover:underline">ReDoc Reference</a>
+          <a id="link-health" href="http://127.0.0.1:8000/health" target="_blank" class="block text-sky-400 hover:underline">Health Endpoint</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============================  TOAST  ============================ -->
+<div id="toast" class="toast"></div>
+
+<!-- ============================  MODAL: SEAT DETAIL  ============================ -->
+<div id="seat-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden"
+  style="background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);">
+  <div class="card w-full max-w-2xl mx-4 max-h-[85vh] overflow-y-auto">
+    <div class="card-header">
+      <span class="section-title" id="modal-seat-id">Seat Detail</span>
+      <button onclick="closeModal()" class="text-slate-500 hover:text-white text-lg font-bold leading-none">✕</button>
+    </div>
+    <div id="modal-body" class="p-5"></div>
+  </div>
+</div>
+
+<!-- ============================  JAVASCRIPT  ============================ -->
+<script>
+// ─────────────────────────  Config  ─────────────────────────
+const cfg = {
+  apiUrl: localStorage.getItem('sg_api_url') || 'http://127.0.0.1:8000',
+  apiKey: localStorage.getItem('sg_api_key') || 'inspector_secret_token_123',
+  refreshInterval: parseInt(localStorage.getItem('sg_refresh_s') || '5', 10) * 1000,
+};
+
+// Chart instances
+let doughnutChart = null, paretoChart = null, stationChart = null, shadowChart = null;
+
+// Cached data
+let galleryData = [];
+
+// ─────────────────────────  Utilities  ─────────────────────────
+const api = async (path, opts = {}) => {
+  const res = await fetch(cfg.apiUrl + path, {
+    headers: { 'X-API-Key': cfg.apiKey, 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    ...opts,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+  return res.json();
+};
+
+const fmtPct = (v) => v == null ? '—' : (v * 100).toFixed(1) + '%';
+const fmtTs = (ts) => {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+
+const outcomeBadge = (outcome) => {
+  const map = {
+    'PASS':        '<span class="badge-pass  text-xs font-bold px-2 py-0.5 rounded">PASS</span>',
+    'FAIL':        '<span class="badge-fail  text-xs font-bold px-2 py-0.5 rounded">FAIL</span>',
+    'REVIEW':      '<span class="badge-review text-xs font-bold px-2 py-0.5 rounded">REVIEW</span>',
+    'IN_PROGRESS': '<span class="badge-ok    text-xs font-bold px-2 py-0.5 rounded">IN PROGRESS</span>',
+  };
+  return map[outcome] || `<span class="text-slate-500 text-xs">${outcome || '—'}</span>`;
+};
+
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast toast-${type} show`;
+  setTimeout(() => { t.className = 'toast'; }, 3500);
+}
+
+// ─────────────────────────  API Status  ─────────────────────────
+async function checkApiStatus() {
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  try {
+    const h = await api('/health');
+    dot.className = 'w-2 h-2 rounded-full bg-emerald-400 pulse-dot';
+    txt.textContent = h.status === 'ok' ? 'API Online' : h.status;
+    txt.className = 'text-emerald-400';
+    document.getElementById('info-api-status').textContent = 'Online';
+  } catch {
+    dot.className = 'w-2 h-2 rounded-full bg-rose-500 pulse-dot';
+    txt.textContent = 'API Offline';
+    txt.className = 'text-rose-400';
+    document.getElementById('info-api-status').textContent = 'Offline';
+  }
+}
+
+// ─────────────────────────  Clock  ─────────────────────────
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+}
+
+// ─────────────────────────  Navigation  ─────────────────────────
+let currentSection = 'live';
+function setSection(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  document.querySelector(`.nav-link[onclick="setSection('${name}')"]`)?.classList.add('active');
+  currentSection = name;
+  refreshCurrentSection();
+}
+
+// ─────────────────────────  LIVE LINE  ─────────────────────────
+async function fetchLive() {
+  try {
+    const data = await api('/api/v1/dashboard/live');
+
+    // KPIs
+    const seats = data.recent_seats || [];
+    const total = seats.length;
+    const passes = seats.filter(s => s.outcome === 'PASS').length;
+    const reviews = seats.filter(s => s.outcome === 'REVIEW').length;
+    const fails = seats.filter(s => s.outcome === 'FAIL').length;
+
+    document.getElementById('kpi-total').textContent = data.total_inspected ?? total;
+    document.getElementById('kpi-pass').textContent = total ? fmtPct(passes / total) : '—';
+    document.getElementById('kpi-review').textContent = reviews;
+    document.getElementById('kpi-fail').textContent = total ? fmtPct(fails / total) : '—';
+
+    // Seat strip
+    const strip = document.getElementById('seat-strip');
+    if (!seats.length) { strip.innerHTML = '<div class="text-slate-600 text-sm py-4">No seats yet.</div>'; return; }
+    strip.innerHTML = seats.map(s => {
+      const cls = 'seat-' + (s.outcome || 'unknown').toLowerCase();
+      const icon = s.outcome === 'PASS' ? '✓' : s.outcome === 'FAIL' ? '✗' : s.outcome === 'REVIEW' ? '⚑' : '…';
+      return `<div class="seat-tile ${cls} tooltip-wrapper" onclick="openSeatModal('${s.seat_id}')">
+        <div class="text-xl">${icon}</div>
+        <div class="mt-1 text-center px-1" style="font-size:0.6rem;word-break:break-all;">${s.seat_id}</div>
+        <div style="font-size:0.6rem;" class="opacity-70">${s.outcome || '?'}</div>
+        <div class="tooltip-box">${s.seat_id}<br>${s.variant_id || ''}<br>${fmtTs(s.created_at)}</div>
+      </div>`;
+    }).join('');
+
+    // Table
+    const tbody = document.getElementById('live-table-body');
+    tbody.innerHTML = seats.map(s => `
+      <tr class="audit-row border-b border-slate-800 hover:bg-slate-800/30 cursor-pointer" onclick="openSeatModal('${s.seat_id}')">
+        <td class="px-4 py-3 font-mono text-sky-400">${s.seat_id}</td>
+        <td class="px-4 py-3 text-slate-400">${s.variant_id || '—'}</td>
+        <td class="px-4 py-3">${outcomeBadge(s.outcome)}</td>
+        <td class="px-4 py-3 text-slate-400">${(s.station_outcomes || []).map(st => `S${st.station_id}:${st.outcome}`).join(' · ') || '—'}</td>
+        <td class="px-4 py-3">${s.label_printer_enabled ? '<span class="text-emerald-400">✓ ON</span>' : '<span class="text-slate-500">— OFF</span>'}</td>
+        <td class="px-4 py-3 text-slate-500 text-xs">${fmtTs(s.created_at)}</td>
+      </tr>`).join('');
+
+    document.getElementById('info-last-refresh').textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('seat-strip').innerHTML = `<div class="text-rose-400 text-sm">${e.message}</div>`;
+  }
+}
+
+// ─────────────────────────  QUALITY TRENDS  ─────────────────────────
+async function fetchQuality() {
+  try {
+    const data = await api('/api/v1/dashboard/quality-trends');
+
+    const pass = data.pass_rate ?? 0;
+    const review = data.review_rate ?? 0;
+    const fail = data.fail_rate ?? 0;
+
+    document.getElementById('qt-pass-rate').textContent = fmtPct(pass);
+    document.getElementById('qt-review-rate').textContent = fmtPct(review);
+    document.getElementById('qt-fail-rate').textContent = fmtPct(fail);
+
+    document.getElementById('qt-pass-bar').style.width = (pass * 100) + '%';
+    document.getElementById('qt-review-bar').style.width = (review * 100) + '%';
+    document.getElementById('qt-fail-bar').style.width = (fail * 100) + '%';
+
+    // Doughnut chart
+    const dCtx = document.getElementById('doughnut-chart').getContext('2d');
+    if (doughnutChart) doughnutChart.destroy();
+    doughnutChart = new Chart(dCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Pass', 'Review', 'Fail'],
+        datasets: [{
+          data: [data.pass_count || 0, data.review_count || 0, data.fail_count || 0],
+          backgroundColor: ['rgba(52,211,153,0.8)', 'rgba(251,191,36,0.8)', 'rgba(248,113,113,0.8)'],
+          borderColor: ['#34d399', '#fbbf24', '#f87171'],
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#94a3b8', boxWidth: 12, padding: 16 } },
+        },
+        cutout: '65%',
+      }
+    });
+
+    // Pareto chart
+    const defects = data.defect_pareto || [];
+    const pCtx = document.getElementById('pareto-chart').getContext('2d');
+    if (paretoChart) paretoChart.destroy();
+    paretoChart = new Chart(pCtx, {
+      type: 'bar',
+      data: {
+        labels: defects.map(d => d.defect_type),
+        datasets: [{
+          label: 'Count',
+          data: defects.map(d => d.count),
+          backgroundColor: 'rgba(251,191,36,0.75)',
+          borderColor: '#fbbf24',
+          borderWidth: 1,
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
+          y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } },
+        },
+      }
+    });
+
+    // Station performance chart
+    const stations = data.station_performance || [];
+    const sCtx = document.getElementById('station-chart').getContext('2d');
+    if (stationChart) stationChart.destroy();
+    stationChart = new Chart(sCtx, {
+      type: 'bar',
+      data: {
+        labels: stations.map(s => 'Station ' + s.station_id),
+        datasets: [
+          { label: 'Pass', data: stations.map(s => s.pass_count || 0), backgroundColor: 'rgba(52,211,153,0.7)', borderRadius: 4 },
+          { label: 'Review', data: stations.map(s => s.review_count || 0), backgroundColor: 'rgba(251,191,36,0.7)', borderRadius: 4 },
+          { label: 'Fail', data: stations.map(s => s.fail_count || 0), backgroundColor: 'rgba(248,113,113,0.7)', borderRadius: 4 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } },
+        scales: {
+          x: { stacked: false, grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } },
+          y: { stacked: false, grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
+        },
+      }
+    });
+
+  } catch (e) {
+    console.error('Quality fetch error:', e);
+  }
+}
+
+// ─────────────────────────  DEFECT GALLERY  ─────────────────────────
+async function fetchGallery() {
+  try {
+    const data = await api('/api/v1/dashboard/defect-gallery');
+    galleryData = data.defects || [];
+
+    // Populate type filter
+    const types = [...new Set(galleryData.map(d => d.defect_type).filter(Boolean))];
+    const sel = document.getElementById('gallery-filter-type');
+    sel.innerHTML = '<option value="">All Types</option>' + types.map(t => `<option value="${t}">${t}</option>`).join('');
+
+    renderGallery();
+  } catch (e) {
+    document.getElementById('gallery-grid').innerHTML = `<div class="col-span-4 text-rose-400 text-sm py-10 text-center">${e.message}</div>`;
+  }
+}
+
+function renderGallery() {
+  const typeF = document.getElementById('gallery-filter-type').value;
+  const stationF = document.getElementById('gallery-filter-station').value;
+  let data = galleryData;
+  if (typeF) data = data.filter(d => d.defect_type === typeF);
+  if (stationF) data = data.filter(d => String(d.station_id) === stationF);
+
+  if (!data.length) {
+    document.getElementById('gallery-grid').innerHTML = '<div class="col-span-4 text-slate-600 text-sm py-10 text-center">No defects match the current filter.</div>';
+    return;
+  }
+  document.getElementById('gallery-grid').innerHTML = data.slice(0, 48).map(d => {
+    const conf = d.confidence != null ? (d.confidence * 100).toFixed(0) + '%' : '';
+    const sev = d.severity || '';
+    const sevColor = sev === 'CRITICAL' ? 'text-rose-400' : sev === 'MAJOR' ? 'text-amber-400' : 'text-sky-400';
+    return `<div class="defect-card hover:border-amber-400/30 transition-colors" style="border:1px solid #1e293b;">
+      <div class="flex items-start justify-between mb-2">
+        <span class="text-xs font-bold text-white">${d.defect_type || 'Unknown'}</span>
+        <span class="text-xs ${sevColor} font-semibold">${sev}</span>
+      </div>
+      <div class="text-xs text-slate-500 mb-3">Station ${d.station_id || '?'} · Seat <span class="text-sky-400">${d.seat_id || '—'}</span></div>
+      ${d.description ? `<p class="text-xs text-slate-400 mb-3">${d.description}</p>` : ''}
+      ${conf ? `<div class="flex items-center gap-2 mb-2">
+        <span class="text-xs text-slate-500">Confidence</span>
+        <div class="flex-1 progress-bar"><div class="progress-fill bg-amber-400" style="width:${conf}"></div></div>
+        <span class="text-xs text-amber-400 font-bold">${conf}</span>
+      </div>` : ''}
+      ${d.bbox ? `<div class="text-xs text-slate-600 font-mono mt-2">ROI: [${d.bbox}]</div>` : ''}
+      ${d.measured_value != null ? `<div class="text-xs text-slate-500 mt-1">Measured: <span class="text-white">${d.measured_value}</span>${d.unit || ''}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ─────────────────────────  SYSTEM HEALTH  ─────────────────────────
+async function fetchHealth() {
+  try {
+    const data = await api('/api/v1/dashboard/system-health');
+
+    const stations = data.stations || [];
+    document.getElementById('health-stations').innerHTML = stations.length
+      ? stations.map(s => {
+          const ok = s.status === 'ok' || s.last_seen_s != null && s.last_seen_s < 30;
+          const cls = ok ? 'health-ok' : 'health-warn';
+          const col = ok ? 'text-emerald-400' : 'text-amber-400';
+          return `<div class="health-station-card ${cls}">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm"
+              style="background:${ok ? 'rgba(52,211,153,0.15)' : 'rgba(251,191,36,0.15)'}; color:${ok ? '#34d399' : '#fbbf24'}">S${s.station_id}</div>
+            <div class="flex-1">
+              <div class="font-semibold text-white text-sm">Station ${s.station_id}</div>
+              <div class="text-xs text-slate-500">${s.description || s.status || '—'}</div>
+            </div>
+            <div class="text-right">
+              <div class="${col} text-xs font-bold">${ok ? 'ONLINE' : 'STALE'}</div>
+              ${s.last_seen_s != null ? `<div class="text-xs text-slate-500">${s.last_seen_s.toFixed(0)}s ago</div>` : ''}
+            </div>
+          </div>`;
+        }).join('')
+      : '<div class="text-slate-600 text-sm">No station data.</div>';
+
+    const plcEl = document.getElementById('health-plc');
+    const plc = data.plc || {};
+    plcEl.innerHTML = `
+      <div class="space-y-3 text-sm">
+        <div class="flex justify-between items-center py-2 border-b border-slate-800">
+          <span class="text-slate-400">PLC Type</span>
+          <span class="text-white font-mono">${plc.type || '—'}</span>
+        </div>
+        <div class="flex justify-between items-center py-2 border-b border-slate-800">
+          <span class="text-slate-400">PLC Status</span>
+          <span class="${plc.connected ? 'text-emerald-400' : 'text-rose-400'} font-semibold">${plc.connected ? '● Connected' : '○ Disconnected'}</span>
+        </div>
+        <div class="flex justify-between items-center py-2 border-b border-slate-800">
+          <span class="text-slate-400">Label Printer</span>
+          <span class="${plc.printer_enabled ? 'text-emerald-400' : 'text-slate-500'} font-semibold">${plc.printer_enabled ? '✓ Enabled' : '— Disabled'}</span>
+        </div>
+        <div class="flex justify-between items-center py-2 border-b border-slate-800">
+          <span class="text-slate-400">Mechanism Sensor</span>
+          <span class="text-white">${plc.mechanism_sensor ?? '—'}</span>
+        </div>
+        ${data.uptime_s != null ? `
+        <div class="flex justify-between items-center py-2 border-b border-slate-800">
+          <span class="text-slate-400">System Uptime</span>
+          <span class="text-white">${formatUptime(data.uptime_s)}</span>
+        </div>` : ''}
+        ${data.queue_depth != null ? `
+        <div class="flex justify-between items-center py-2">
+          <span class="text-slate-400">Review Queue Depth</span>
+          <span class="text-amber-400 font-bold">${data.queue_depth}</span>
+        </div>` : ''}
+      </div>`;
+  } catch (e) {
+    document.getElementById('health-stations').innerHTML = `<div class="text-rose-400 text-sm">${e.message}</div>`;
+    document.getElementById('health-plc').innerHTML = `<div class="text-rose-400 text-sm">${e.message}</div>`;
+  }
+}
+
+function formatUptime(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return `${h}h ${m}m ${sec}s`;
+}
+
+// ─────────────────────────  REVIEW QUEUE  ─────────────────────────
+async function fetchReviews() {
+  try {
+    const data = await api('/api/v1/reviews/pending');
+    const items = data.pending_reviews || [];
+    document.getElementById('review-count-badge').textContent = `${items.length} pending`;
+
+    if (!items.length) {
+      document.getElementById('review-list').innerHTML = '<div class="text-slate-600 text-sm py-16 text-center">✓ No pending reviews</div>';
+      return;
+    }
+
+    document.getElementById('review-list').innerHTML = items.map(r => `
+      <div class="review-item" id="review-${r.id}">
+        <div class="flex flex-wrap items-start justify-between gap-4 mb-3">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-sky-400 font-mono font-bold text-sm">${r.seat_id}</span>
+              <span class="badge-review text-xs px-2 py-0.5 rounded">Station ${r.station_id}</span>
+            </div>
+            <div class="text-xs text-slate-500">${r.reason || 'No reason given'}</div>
+            ${r.defect_summary ? `<div class="text-xs text-slate-400 mt-1">${r.defect_summary}</div>` : ''}
+          </div>
+          <span class="text-xs text-slate-500">${fmtTs(r.created_at)}</span>
+        </div>
+        <div class="flex flex-wrap gap-3 items-end">
+          <div class="flex-1 min-w-[180px]">
+            <label class="block text-xs text-slate-500 mb-1">Inspector ID</label>
+            <input type="text" id="insp-${r.id}" value="inspector_1" class="w-full" />
+          </div>
+          <div class="flex-1 min-w-[120px]">
+            <label class="block text-xs text-slate-500 mb-1">Decision</label>
+            <select id="dec-${r.id}" class="w-full">
+              <option value="PASS">PASS</option>
+              <option value="REWORK">REWORK</option>
+              <option value="SCRAP">SCRAP</option>
+            </select>
+          </div>
+          <div class="flex-2 min-w-[200px]">
+            <label class="block text-xs text-slate-500 mb-1">Notes</label>
+            <input type="text" id="notes-${r.id}" placeholder="Optional notes…" class="w-full" />
+          </div>
+          <button class="btn-primary" onclick="submitReview(${r.id})">Submit Decision</button>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    document.getElementById('review-list').innerHTML = `<div class="text-rose-400 text-sm py-10 text-center">${e.message}</div>`;
+  }
+}
+
+async function submitReview(id) {
+  const inspector_id = document.getElementById(`insp-${id}`)?.value || 'inspector_1';
+  const decision = document.getElementById(`dec-${id}`)?.value || 'PASS';
+  const notes = document.getElementById(`notes-${id}`)?.value || '';
+  try {
+    await api(`/api/v1/reviews/${id}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ inspector_id, decision, notes }),
+    });
+    showToast(`Review #${id} submitted as ${decision}`, 'success');
+    document.getElementById(`review-${id}`)?.remove();
+    fetchReviews();
+  } catch (e) {
+    showToast(`Failed: ${e.message}`, 'error');
+  }
+}
+
+// ─────────────────────────  AUDIT LOG  ─────────────────────────
+async function fetchAudit() {
+  const seatFilter = document.getElementById('audit-seat-filter').value.trim();
+  const limit = document.getElementById('audit-limit').value;
+  const qs = new URLSearchParams({ limit });
+  if (seatFilter) qs.set('seat_id', seatFilter);
+  try {
+    const data = await api('/api/v1/audit?' + qs);
+    const entries = data.audit_log || data.entries || data || [];
+    document.getElementById('audit-count').textContent = `${entries.length} entries`;
+    if (!entries.length) {
+      document.getElementById('audit-tbody').innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-600">No audit records found.</td></tr>';
+      return;
+    }
+    document.getElementById('audit-tbody').innerHTML = entries.map(e => `
+      <tr class="audit-row border-b border-slate-800 hover:bg-slate-800/20">
+        <td class="px-4 py-2.5 text-slate-500 font-mono whitespace-nowrap">${fmtTs(e.created_at || e.timestamp)}</td>
+        <td class="px-4 py-2.5 text-sky-400 font-mono">${e.seat_id || '—'}</td>
+        <td class="px-4 py-2.5">
+          <span class="px-2 py-0.5 rounded text-xs font-semibold"
+            style="background:rgba(56,189,248,0.1);color:#38bdf8;border:1px solid rgba(56,189,248,0.2);">${e.event_type || e.event || '—'}</span>
+        </td>
+        <td class="px-4 py-2.5 text-slate-400">${e.actor || e.inspector_id || '—'}</td>
+        <td class="px-4 py-2.5 text-slate-500 max-w-xs truncate">${e.details || e.notes || '—'}</td>
+      </tr>`).join('');
+  } catch (e) {
+    document.getElementById('audit-tbody').innerHTML = `<tr><td colspan="5" class="px-4 py-8 text-center text-rose-400">${e.message}</td></tr>`;
+  }
+}
+
+// ─────────────────────────  SHADOW MODE  ─────────────────────────
+async function fetchShadow() {
+  try {
+    const data = await api('/api/v1/dashboard/shadow-mode');
+    document.getElementById('sm-agreement').textContent = fmtPct(data.agreement_rate);
+    document.getElementById('sm-escape').textContent = fmtPct(data.escape_rate);
+    document.getElementById('sm-false-reject').textContent = fmtPct(data.false_reject_rate);
+    document.getElementById('sm-reviews').textContent = data.total_reviewed ?? '—';
+
+    const details = document.getElementById('shadow-details');
+    details.innerHTML = `
+      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Total seats reviewed</span><span>${data.total_reviewed ?? '—'}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Agreed decisions</span><span class="text-emerald-400">${data.agreed_count ?? '—'}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Escape count (camera PASS → human FAIL)</span><span class="text-rose-400">${data.escape_count ?? '—'}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">False-reject count (camera FAIL → human PASS)</span><span class="text-amber-400">${data.false_reject_count ?? '—'}</span></div>
+      ${data.shadow_enabled != null ? `<div class="flex justify-between py-2"><span class="text-slate-500">Shadow mode enabled</span><span>${data.shadow_enabled ? 'Yes' : 'No'}</span></div>` : ''}`;
+
+    // Chart
+    const sCtx = document.getElementById('shadow-chart').getContext('2d');
+    if (shadowChart) shadowChart.destroy();
+    shadowChart = new Chart(sCtx, {
+      type: 'bar',
+      data: {
+        labels: ['Agreed', 'Escapes\n(PASS→FAIL)', 'False Rejects\n(FAIL→PASS)'],
+        datasets: [{
+          label: 'Count',
+          data: [data.agreed_count || 0, data.escape_count || 0, data.false_reject_count || 0],
+          backgroundColor: ['rgba(52,211,153,0.7)', 'rgba(248,113,113,0.7)', 'rgba(251,191,36,0.7)'],
+          borderRadius: 6,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
+          y: { grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
+        },
+      }
+    });
+  } catch (e) {
+    document.getElementById('sm-agreement').textContent = 'Error';
+    console.error(e);
+  }
+}
+
+// ─────────────────────────  SEAT DETAIL MODAL  ─────────────────────────
+async function openSeatModal(seatId) {
+  document.getElementById('modal-seat-id').textContent = 'Seat: ' + seatId;
+  document.getElementById('modal-body').innerHTML = '<div class="flex justify-center py-10"><div class="spinner"></div></div>';
+  document.getElementById('seat-modal').classList.remove('hidden');
+  try {
+    const data = await api('/api/v1/seats/' + encodeURIComponent(seatId));
+    const sr = data.station_results || [];
+    document.getElementById('modal-body').innerHTML = `
+      <div class="grid grid-cols-2 gap-4 mb-5">
+        <div class="stat-card"><div class="stat-label">Overall</div>${outcomeBadge(data.outcome)}</div>
+        <div class="stat-card"><div class="stat-label">Variant</div><div class="text-white text-sm font-semibold mt-1">${data.variant_id || '—'}</div></div>
+        <div class="stat-card"><div class="stat-label">Label Printer</div><div class="mt-1">${data.label_printer_enabled ? '<span class="text-emerald-400 font-bold">✓ Enabled</span>' : '<span class="text-slate-500">— Disabled</span>'}</div></div>
+        <div class="stat-card"><div class="stat-label">Finalized At</div><div class="text-xs text-slate-400 mt-1">${data.created_at || '—'}</div></div>
+      </div>
+      <div class="section-title mb-3">Station Results</div>
+      <div class="space-y-2">
+        ${sr.map(s => `
+          <div class="p-3 rounded-lg border border-slate-700/50 bg-slate-800/30">
+            <div class="flex justify-between items-center mb-2">
+              <span class="font-semibold text-white text-sm">Station ${s.station_id}</span>
+              ${outcomeBadge(s.outcome)}
+            </div>
+            ${s.cycle_time_ms ? `<div class="text-xs text-slate-500">Cycle time: ${s.cycle_time_ms} ms</div>` : ''}
+            ${s.defects && s.defects.length ? `<div class="mt-2 space-y-1">${s.defects.map(d => `
+              <div class="text-xs px-2 py-1 rounded bg-rose-900/20 border border-rose-700/30">
+                <span class="text-rose-300 font-semibold">${d.defect_type}</span>
+                ${d.severity ? `<span class="text-slate-500 ml-1">${d.severity}</span>` : ''}
+                ${d.description ? ` — <span class="text-slate-400">${d.description}</span>` : ''}
+              </div>`).join('')}</div>` : ''}
+          </div>`).join('')}
+      </div>`;
+  } catch (e) {
+    document.getElementById('modal-body').innerHTML = `<div class="text-rose-400 text-sm">${e.message}</div>`;
+  }
+}
+
+function closeModal() {
+  document.getElementById('seat-modal').classList.add('hidden');
+}
+document.getElementById('seat-modal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('seat-modal')) closeModal();
+});
+
+// ─────────────────────────  SETTINGS  ─────────────────────────
+function saveSettings() {
+  cfg.apiUrl = document.getElementById('cfg-api-url').value.trim();
+  cfg.apiKey = document.getElementById('cfg-api-key').value.trim();
+  cfg.refreshInterval = parseInt(document.getElementById('cfg-refresh-interval').value || '5', 10) * 1000;
+  localStorage.setItem('sg_api_url', cfg.apiUrl);
+  localStorage.setItem('sg_api_key', cfg.apiKey);
+  localStorage.setItem('sg_refresh_s', String(cfg.refreshInterval / 1000));
+  document.getElementById('settings-result').innerHTML = '<span class="text-emerald-400">✓ Settings saved</span>';
+  updateSettingsDisplay();
+  restartAutoRefresh();
+  showToast('Settings saved', 'success');
+}
+
+async function testConnection() {
+  try {
+    const h = await api('/health');
+    document.getElementById('settings-result').innerHTML = `<span class="text-emerald-400">✓ Connected — ${JSON.stringify(h)}</span>`;
+  } catch (e) {
+    document.getElementById('settings-result').innerHTML = `<span class="text-rose-400">✗ ${e.message}</span>`;
+  }
+}
+
+function updateSettingsDisplay() {
+  document.getElementById('info-url').textContent = cfg.apiUrl;
+  document.getElementById('info-interval').textContent = (cfg.refreshInterval / 1000) + 's';
+  document.getElementById('cfg-api-url').value = cfg.apiUrl;
+  document.getElementById('cfg-api-key').value = cfg.apiKey;
+  document.getElementById('cfg-refresh-interval').value = String(cfg.refreshInterval / 1000);
+  document.getElementById('link-docs').href = cfg.apiUrl + '/docs';
+  document.getElementById('link-redoc').href = cfg.apiUrl + '/redoc';
+  document.getElementById('link-health').href = cfg.apiUrl + '/health';
+}
+
+// ─────────────────────────  Auto-Refresh  ─────────────────────────
+let refreshTimer = null;
+
+function refreshCurrentSection() {
+  switch (currentSection) {
+    case 'live':    fetchLive();    break;
+    case 'quality': fetchQuality(); break;
+    case 'gallery': fetchGallery(); break;
+    case 'health':  fetchHealth();  break;
+    case 'review':  fetchReviews(); break;
+    case 'audit':   fetchAudit();   break;
+    case 'shadow':  fetchShadow();  break;
+  }
+}
+
+function refreshAll() {
+  checkApiStatus();
+  refreshCurrentSection();
+}
+
+function restartAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(refreshAll, cfg.refreshInterval);
+}
+
+// ─────────────────────────  Bootstrap  ─────────────────────────
+updateSettingsDisplay();
+updateClock();
+setInterval(updateClock, 1000);
+checkApiStatus();
+setInterval(checkApiStatus, 15000);
+fetchLive();
+restartAutoRefresh();
+</script>
+</body>
+</html>

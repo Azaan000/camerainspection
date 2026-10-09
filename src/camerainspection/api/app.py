@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Header, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from camerainspection.core.logging import get_logger
@@ -53,6 +54,15 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
         title="Automated Car Seat Inspection System API",
         version="v0.1.0",
         description="REST service for live station results, human review queue, and OEM audit logs.",
+    )
+
+    # Allow the standalone HTML UI (served from file:// or a dev server) to call the API.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.get("/health")
