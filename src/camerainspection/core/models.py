@@ -67,11 +67,27 @@ class DefectDetail(BaseModel):
     confidence: float | None = None
     bounding_box: BoundingBox | None = None
     roi_name: str | None = None
+    camera_name: str | None = None
+    view: str | None = None
     description: str = ""
 
 
+class CameraInspectionResult(BaseModel):
+    """Structured inspection outcome from an individual camera view on a station."""
+
+    camera_name: str
+    view: str
+    outcome: Outcome
+    defects: list[DefectDetail] = Field(default_factory=list)
+    measurements: dict[str, float] = Field(default_factory=dict)
+    raw_image_path: str | None = None
+    annotated_image_path: str | None = None
+    pixel_size_mm: float = 0.08
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class StationInspectionResult(BaseModel):
-    """Structured inspection outcome from a single station."""
+    """Structured inspection outcome from a single station aggregating all camera views."""
 
     model_config = ConfigDict(protected_namespaces=())
 
@@ -81,6 +97,8 @@ class StationInspectionResult(BaseModel):
     outcome: Outcome
     defects: list[DefectDetail] = Field(default_factory=list)
     measurements: dict[str, float] = Field(default_factory=dict)
+    camera_results: dict[str, CameraInspectionResult] = Field(default_factory=dict)
+    camera_image_paths: dict[str, str] = Field(default_factory=dict)
     raw_image_path: str | None = None
     annotated_image_path: str | None = None
     model_version: str = "v0.0.0"

@@ -1,91 +1,135 @@
-"""FastAPI Application providing REST APIs for line operations, review queue, and dashboard."""
+"""FastAPI application factory defining secure inspection ingestion, review, and analytics APIs."""
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import secrets
+import zipfile
 from typing import Any
-from fastapi import Depends, FastAPI, HTTPException, Header, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Header, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from camerainspection.coordinator.service import InspectionCoordinator
 from camerainspection.core.logging import get_logger
-from camerainspection.core.models import Outcome, OverallSeatInspectionResult, StationInspectionResult
+from camerainspection.core.models import Outcome, StationInspectionResult
 from camerainspection.storage.db import DatabaseManager
 from camerainspection.storage.entities import (
     AuditLogRecord,
+    AuditSampleRecord,
+    CameraResultRecord,
     DefectRecord,
     HumanReviewRecord,
     SeatInspectionRecord,
+    ShadowDecisionRecord,
     StationResultRecord,
 )
+from camerainspection.tools.shift_report import generate_shift_report_dict
 
-logger = get_logger("api.service")
+logger = get_logger("api.app")
 
-# Authentication key configurable via environment variable
-_DEFAULT_API_KEY = "inspector_secret_token_123"
+EXPECTED_API_KEY = os.getenv("INSPECTION_API_KEY", "inspector_secret_token_123")
 
 
 def verify_api_key(
-    x_api_key: str | None = Header(None),
-    authorization: str | None = Header(None),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    authorization: str | None = Header(None, alias="Authorization"),
 ) -> str:
-    """Validate bearer / API key authentication using constant-time comparison."""
-    token = x_api_key
-    if not token and authorization:
-        parts = authorization.split()
+    """Validate API key via constant-time comparison against header or Bearer token."""
+    provided_key: str | None = None
+    if x_api_key:
+        provided_key = x_api_key.strip()
+    elif authorization:
+        parts = authorization.strip().split(" ", 1)
         if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
+            provided_key = parts[1].strip()
 
-    expected_key = os.getenv("INSPECTION_API_KEY", _DEFAULT_API_KEY)
-    if not expected_key:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server authentication key is not configured.",
-        )
-
-    if not token or not secrets.compare_digest(token, expected_key):
+    if not provided_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing authentication credentials (X-API-Key or Bearer token).",
+            detail="Authentication failed: Missing X-API-Key or Authorization Bearer header.",
         )
-    return "inspector_authorized"
+
+    expected = EXPECTED_API_KEY.encode("utf-8")
+    provided = provided_key.encode("utf-8")
+    if not (secrets.compare_digest(provided, expected) and len(expected) > 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed: Invalid inspection API key.",
+        )
+
+    return "authenticated_inspector"
 
 
-class ReviewDecisionRequest(BaseModel):
-    inspector_id: str
-    decision: str = Field(..., description="PASS, REWORK, or SCRAP")
-    notes: str = ""
+class ReviewDecisionPayload(BaseModel):
+    decision: str = Field(..., description="Decision outcome: PASS, REWORK, or SCRAP")
+    notes: str = Field("", description="Review notes / explanation")
+    inspector_id: str | None = Field(None, description="Self-declared inspector badge ID")
 
 
 class StationResultIngestRequest(BaseModel):
-    result: StationInspectionResult
+    result: StationInspectionResult | None = None
+    seat_id: str | None = None
+    station_id: str | None = None
+    variant_id: str | None = None
+    outcome: Outcome | None = None
+    cycle_time_ms: float = 0.0
+    model_version: str = "v0.1.0"
+    config_version: str = "v0.1.0"
+    defects: list[Any] = Field(default_factory=list)
+    measurements: dict[str, float] = Field(default_factory=dict)
+    camera_results: dict[str, Any] = Field(default_factory=dict)
+    camera_image_paths: dict[str, str] = Field(default_factory=dict)
 
 
-def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
-    """Application factory for inspection line REST API."""
+class ShadowDecisionPayload(BaseModel):
+    seat_id: str
+    inspector_id: str
+    decision: str = Field(..., description="PASS or FAIL")
+    notes: str = ""
+
+
+class AuditDecisionPayload(BaseModel):
+    auditor_id: str
+    decision: str = Field(..., description="PASS or FAIL")
+    discrepancy_details: str = ""
+
+
+def create_app(
+    db_manager: DatabaseManager,
+    coordinator: InspectionCoordinator | None = None,
+) -> FastAPI:
+    """Create and configure FastAPI application."""
     app = FastAPI(
-        title="Automated Car Seat Inspection System API",
-        version="v0.1.0",
-        description="REST service for live station results, human review queue, and OEM audit logs.",
+        title="Automated Camera Inspection System API",
+        version="0.1.0",
+        description="End-of-line car seat camera inspection service with fail-safe safety gating.",
     )
 
-    cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
-    allow_wildcard = "*" in cors_origins
+    allowed_origins = [
+        orig.strip()
+        for orig in os.getenv(
+            "CORS_ALLOWED_ORIGINS",
+            "http://127.0.0.1:8000,http://localhost:8000",
+        ).split(",")
+        if orig.strip()
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if allow_wildcard else cors_origins,
-        allow_credentials=not allow_wildcard,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=allowed_origins if allowed_origins else ["http://127.0.0.1:8000"],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["X-API-Key", "Authorization", "Content-Type"],
     )
 
     @app.get("/health")
     def health_check() -> dict[str, str]:
-        return {"status": "ok", "service": "camera-inspection-system"}
+        return {"status": "ok", "service": "camera-inspection-system", "version": "0.1.0"}
 
     # -------------------------------------------------------------
-    # Coordinator & Inspection Results Endpoints (Authenticated)
+    # Ingestion & Seat Query Endpoints
     # -------------------------------------------------------------
 
     @app.post("/api/v1/stations/result", status_code=status.HTTP_201_CREATED)
@@ -93,40 +137,70 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
         payload: StationResultIngestRequest,
         auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
-        """Ingest a completed inspection result from a station (Authenticated)."""
-        st_id = db_manager.record_station_result(payload.result)
-        finalized = None
-        if coordinator is not None:
-            finalized = coordinator.register_station_result(payload.result)
+        """Submit station result from camera inspection node."""
+        if payload.result is not None:
+            st_result = payload.result
+        else:
+            if not payload.seat_id or not payload.station_id or not payload.variant_id or not payload.outcome:
+                raise HTTPException(status_code=422, detail="Missing required station result fields.")
+            st_result = StationInspectionResult(
+                seat_id=payload.seat_id,
+                station_id=payload.station_id,
+                variant_id=payload.variant_id,
+                outcome=payload.outcome,
+                cycle_time_ms=payload.cycle_time_ms,
+                model_version=payload.model_version,
+                config_version=payload.config_version,
+                defects=payload.defects,
+                measurements=payload.measurements,
+                camera_results=payload.camera_results,
+                camera_image_paths=payload.camera_image_paths,
+            )
+
+        st_id = db_manager.record_station_result(st_result)
+        db_manager.log_audit(
+            event_type="STATION_RESULT_SUBMITTED",
+            details=f"Station {st_result.station_id} reported {st_result.outcome.value} (Auth: {auth_user})",
+            seat_id=st_result.seat_id,
+            station_id=st_result.station_id,
+        )
+
+        overall = None
+        if coordinator:
+            overall = coordinator.register_station_result(st_result)
 
         return {
             "recorded": True,
             "station_result_id": st_id,
-            "finalized": finalized is not None,
-            "overall_outcome": finalized.outcome.value if finalized else None,
+            "finalized": overall is not None,
+            "overall_outcome": overall.outcome.value if overall else None,
+            "overall_status": overall.outcome.value if overall else "IN_PROGRESS",
+            "printer_enabled": overall.label_printer_enabled if overall else False,
         }
 
     @app.get("/api/v1/seats/{seat_id}")
-    def get_seat_inspection_result(seat_id: str) -> dict[str, Any]:
-        """Fetch consolidated inspection result for a seat by ID with all measurements and defects."""
+    def get_seat_status(seat_id: str) -> dict[str, Any]:
+        """Retrieve complete inspection history and outcome for a given seat ID."""
         with db_manager.session_scope() as session:
             record = (
-                session.query(SeatInspectionRecord).filter_by(seat_id=seat_id).first()
+                session.query(SeatInspectionRecord)
+                .filter(SeatInspectionRecord.seat_id == seat_id)
+                .first()
             )
             if not record:
-                # Fallback: check station records
                 st_records = (
                     session.query(StationResultRecord)
-                    .filter_by(seat_id=seat_id)
+                    .filter(StationResultRecord.seat_id == seat_id)
                     .all()
                 )
                 if not st_records:
                     raise HTTPException(
-                        status_code=404, detail=f"Seat '{seat_id}' not found."
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Seat ID '{seat_id}' not found.",
                     )
                 return {
                     "seat_id": seat_id,
-                    "variant_id": st_records[0].variant_id,
+                    "variant_id": st_records[0].variant_id if st_records else "UNKNOWN",
                     "outcome": "IN_PROGRESS",
                     "shadow_mode": False,
                     "label_printer_enabled": False,
@@ -139,6 +213,8 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
                             "cycle_time_ms": s.cycle_time_ms,
                             "model_version": s.model_version,
                             "config_version": s.config_version,
+                            "camera_results": json.loads(s.camera_results_json) if s.camera_results_json else {},
+                            "camera_image_paths": json.loads(s.camera_image_paths_json) if s.camera_image_paths_json else {},
                             "defects": [
                                 {
                                     "defect_type": d.defect_type,
@@ -149,6 +225,8 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
                                     "confidence": d.confidence,
                                     "bbox": [d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h] if d.bbox_x is not None else None,
                                     "roi_name": d.roi_name,
+                                    "camera_name": d.camera_name,
+                                    "view": d.view,
                                     "description": d.description,
                                 }
                                 for d in s.defects
@@ -175,6 +253,8 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
                         "cycle_time_ms": s.cycle_time_ms,
                         "model_version": s.model_version,
                         "config_version": s.config_version,
+                        "camera_results": json.loads(s.camera_results_json) if s.camera_results_json else {},
+                        "camera_image_paths": json.loads(s.camera_image_paths_json) if s.camera_image_paths_json else {},
                         "defects": [
                             {
                                 "defect_type": d.defect_type,
@@ -185,6 +265,8 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
                                 "confidence": d.confidence,
                                 "bbox": [d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h] if d.bbox_x is not None else None,
                                 "roi_name": d.roi_name,
+                                "camera_name": d.camera_name,
+                                "view": d.view,
                                 "description": d.description,
                             }
                             for d in s.defects
@@ -194,128 +276,169 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
                 ],
             }
 
+    @app.get("/api/v1/seats/{seat_id}/export")
+    def export_seat_trace(seat_id: str, format: str = Query("zip")) -> Response:
+        """Phase 9 Export endpoint: Returns zip file containing JSON audit trace + defect images."""
+        status_info = get_seat_status(seat_id)
+        with db_manager.session_scope() as session:
+            logs = session.query(AuditLogRecord).filter_by(seat_id=seat_id).all()
+            reviews = session.query(HumanReviewRecord).filter_by(seat_id=seat_id).all()
+            shadow = session.query(ShadowDecisionRecord).filter_by(seat_id=seat_id).all()
+
+            status_info["audit_logs"] = [
+                {
+                    "event_type": l.event_type,
+                    "details": l.details,
+                    "timestamp": l.timestamp.isoformat() if l.timestamp else None,
+                }
+                for l in logs
+            ]
+            status_info["reviews"] = [
+                {
+                    "inspector_id": r.inspector_id,
+                    "decision": r.decision,
+                    "notes": r.notes,
+                    "status": r.status,
+                    "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+                }
+                for r in reviews
+            ]
+            status_info["shadow_decisions"] = [
+                {
+                    "inspector_id": s.inspector_id,
+                    "decision": s.decision,
+                    "notes": s.notes,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                }
+                for s in shadow
+            ]
+
+        if format.lower() == "json":
+            return Response(
+                content=json.dumps(status_info, indent=2),
+                media_type="application/json",
+            )
+
+        # Create ZIP in memory
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("audit_trace.json", json.dumps(status_info, indent=2))
+
+            # Include any defect or camera images
+            for sr in status_info.get("station_results", []):
+                for cam_name, img_path in sr.get("camera_image_paths", {}).items():
+                    if img_path and os.path.exists(img_path):
+                        arcname = f"images/{sr.get('station_id')}_{cam_name}_{os.path.basename(img_path)}"
+                        zf.write(img_path, arcname=arcname)
+
+        zip_buf.seek(0)
+        return Response(
+            content=zip_buf.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="trace_{seat_id}.zip"',
+            },
+        )
+
     # -------------------------------------------------------------
     # Human Review Queue Endpoints (Authenticated)
     # -------------------------------------------------------------
 
     @app.get("/api/v1/reviews/pending")
-    def get_pending_reviews(auth_user: str = Depends(verify_api_key)) -> list[dict[str, Any]]:
-        """List seats currently enqueued for human review (Authenticated)."""
+    def list_pending_reviews(
+        auth_user: str = Depends(verify_api_key),
+    ) -> list[dict[str, Any]]:
+        """List inspections currently held in the REVIEW state."""
         with db_manager.session_scope() as session:
-            pending = session.query(HumanReviewRecord).filter_by(status="PENDING").all()
-            return [
-                {
+            pending = (
+                session.query(HumanReviewRecord)
+                .filter(HumanReviewRecord.status == "PENDING")
+                .all()
+            )
+            out = []
+            for r in pending:
+                st_res = (
+                    session.query(StationResultRecord)
+                    .filter_by(seat_id=r.seat_id)
+                    .first()
+                )
+                out.append({
                     "review_id": r.id,
                     "seat_id": r.seat_id,
                     "station_id": r.station_id,
-                    "status": r.status,
                     "created_at": r.created_at.isoformat() if r.created_at else None,
-                }
-                for r in pending
-            ]
+                    "annotated_image_path": st_res.annotated_image_path if st_res else None,
+                    "camera_image_paths": json.loads(st_res.camera_image_paths_json) if st_res and st_res.camera_image_paths_json else {},
+                })
+            return out
 
     @app.post("/api/v1/reviews/{review_id}/decision")
-    def submit_review_decision(
+    def resolve_review(
         review_id: int,
-        payload: ReviewDecisionRequest,
+        payload: ReviewDecisionPayload,
         auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
-        """Submit inspector adjudication (PASS, REWORK, SCRAP) - Authenticated."""
-        if payload.decision not in ("PASS", "REWORK", "SCRAP"):
+        """Record human inspector verdict and release pallet if approved."""
+        allowed = {"PASS", "REWORK", "SCRAP"}
+        if payload.decision not in allowed:
             raise HTTPException(
-                status_code=400,
-                detail="Invalid decision. Must be one of: PASS, REWORK, SCRAP.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid decision '{payload.decision}'. Allowed: {sorted(allowed)}",
             )
 
         with db_manager.session_scope() as session:
             rev = session.query(HumanReviewRecord).filter_by(id=review_id).first()
             if not rev:
-                raise HTTPException(status_code=404, detail=f"Review ID {review_id} not found.")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Review ID {review_id} not found.",
+                )
+            if rev.status == "RESOLVED":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Review ID {review_id} has already been resolved.",
+                )
 
-        # Bind inspector identity: use declared inspector or authenticated actor
-        inspector = payload.inspector_id.strip() or auth_user
+            inspector = payload.inspector_id or auth_user
+            db_manager.resolve_review(
+                review_id=review_id,
+                inspector_id=inspector,
+                decision=payload.decision,
+                notes=payload.notes,
+            )
 
-        db_manager.resolve_review(
-            review_id=review_id,
-            inspector_id=inspector,
-            decision=payload.decision,
-            notes=payload.notes,
-        )
+            seat = session.query(SeatInspectionRecord).filter_by(seat_id=rev.seat_id).first()
+            if seat:
+                if payload.decision == "PASS":
+                    st_results = session.query(StationResultRecord).filter_by(seat_id=rev.seat_id).all()
+                    can_pass = True
+                    for sr in st_results:
+                        if sr.station_id != rev.station_id and sr.outcome == "FAIL":
+                            can_pass = False
+                            break
 
-        # Operational release: If approved as PASS, release pallet hold on PLC and update printer
-        if coordinator is not None and getattr(coordinator, "plc", None) is not None:
-            target_station = rev.station_id
-            if payload.decision == "PASS":
-                # Release pallet hold only on the specific station that held this seat
-                if target_station:
-                    try:
-                        coordinator.plc.hold_pallet(target_station, hold=False)
-                    except Exception as e:
-                        logger.warning(f"Failed to clear pallet hold for {target_station}: {e}")
-
-                # Update the database and check if PLC accepts printer enablement
-                with db_manager.session_scope() as session:
-                    seat_rec = session.query(SeatInspectionRecord).filter_by(seat_id=rev.seat_id).first()
-                    if target_station:
-                        st_rec = (
-                            session.query(StationResultRecord)
-                            .filter_by(seat_id=rev.seat_id, station_id=target_station)
-                            .first()
-                        )
-                        if st_rec:
-                            st_rec.outcome = Outcome.PASS.value
-
-                    if seat_rec:
-                        lock_ok = coordinator.plc.is_mechanism_locked()
-                        if target_station:
-                            coordinator.plc.set_station_result(
-                                target_station, Outcome.PASS, seat_id=rev.seat_id
-                            )
-
-                        # If station 4 was reviewed, human approval confirms mechanism cycle
-                        if target_station == "STATION_4":
-                            st4_pass = True
-                        else:
-                            st4_rec = (
-                                session.query(StationResultRecord)
-                                .filter_by(seat_id=rev.seat_id, station_id="STATION_4")
-                                .first()
-                            )
-                            st4_pass = (
-                                (st4_rec is not None and st4_rec.outcome == Outcome.PASS.value)
-                                or seat_rec.mechanism_cycle_passed
-                                or (coordinator.plc._seat_station_results.get(rev.seat_id, {}).get("STATION_4") == Outcome.PASS)
-                            )
-
-                        mech_cycle_ok = st4_pass and lock_ok
-                        if mech_cycle_ok:
-                            seat_rec.mechanism_cycle_passed = True
-
-                        # Verify all stations for seat are PASS (check DB records or PLC seat results)
-                        if seat_rec.station_results:
-                            all_st_pass = all(
-                                s.outcome == Outcome.PASS.value for s in seat_rec.station_results
-                            )
-                        else:
-                            seat_st_res = coordinator.plc._seat_station_results.get(rev.seat_id, {})
-                            all_st_pass = all(
-                                seat_st_res.get(st) == Outcome.PASS for st in coordinator.expected_stations
-                            )
-
-                        if all_st_pass and mech_cycle_ok and lock_ok:
-                            coordinator.plc.set_label_printer_enable(True, seat_id=rev.seat_id)
-                            seat_rec.label_printer_enabled = coordinator.plc.is_label_printer_enabled()
-                            seat_rec.outcome = Outcome.PASS.value
-            else:
-                # REWORK or SCRAP: Ensure pallet remains held
-                if target_station:
-                    coordinator.plc.hold_pallet(target_station, hold=True)
-                coordinator.plc.set_label_printer_enable(False)
-                with db_manager.session_scope() as session:
-                    seat_rec = session.query(SeatInspectionRecord).filter_by(seat_id=rev.seat_id).first()
-                    if seat_rec:
-                        seat_rec.label_printer_enabled = False
-                        seat_rec.outcome = Outcome.FAIL.value
+                    if can_pass:
+                        seat.outcome = "PASS"
+                        if rev.station_id == "STATION_4":
+                            seat.mechanism_cycle_passed = True
+                        if coordinator and coordinator.plc:
+                            coordinator.plc.set_station_result(rev.station_id, Outcome.PASS, seat_id=rev.seat_id)
+                            coordinator.plc.hold_pallet(rev.station_id, hold=False)
+                            lock_sensor_ok = coordinator.plc.is_mechanism_locked()
+                            if lock_sensor_ok:
+                                coordinator.plc.set_label_printer_enable(True, seat_id=rev.seat_id)
+                                seat.label_printer_enabled = coordinator.plc.is_label_printer_enabled()
+                            else:
+                                seat.label_printer_enabled = False
+                    else:
+                        seat.outcome = "FAIL"
+                        seat.label_printer_enabled = False
+                else:
+                    seat.outcome = "FAIL"
+                    seat.label_printer_enabled = False
+                    if coordinator and coordinator.plc:
+                        coordinator.plc.hold_pallet(rev.station_id, hold=True)
+                        coordinator.plc.set_label_printer_enable(False, seat_id=rev.seat_id)
 
         db_manager.log_audit(
             event_type="HUMAN_REVIEW_RESOLVED",
@@ -325,7 +448,7 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
         return {"review_id": review_id, "resolved": True, "decision": payload.decision}
 
     # -------------------------------------------------------------
-    # Audit Log Endpoints (Authenticated)
+    # Audit Trail Query Endpoint
     # -------------------------------------------------------------
 
     @app.get("/api/v1/audit")
@@ -334,12 +457,12 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
         limit: int = Query(50, ge=1, le=500),
         auth_user: str = Depends(verify_api_key),
     ) -> list[dict[str, Any]]:
-        """Query immutable OEM audit log trail (Authenticated)."""
+        """Query immutable OEM audit log trail."""
         with db_manager.session_scope() as session:
-            q = session.query(AuditLogRecord).order_by(AuditLogRecord.timestamp.desc())
+            query = session.query(AuditLogRecord)
             if seat_id:
-                q = q.filter(AuditLogRecord.seat_id == seat_id)
-            records = q.limit(limit).all()
+                query = query.filter_by(seat_id=seat_id)
+            records = query.order_by(AuditLogRecord.timestamp.desc()).limit(limit).all()
             return [
                 {
                     "id": a.id,
@@ -353,7 +476,145 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
             ]
 
     # -------------------------------------------------------------
-    # Live Monitoring Dashboard Endpoints (7 Views)
+    # Shadow Mode & Shift Report Endpoints (Phase 8)
+    # -------------------------------------------------------------
+
+    @app.post("/api/v1/shadow-mode/decision")
+    def record_shadow_decision(
+        payload: ShadowDecisionPayload,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Record human inspector shadow-mode decision for a seat ID."""
+        allowed = {"PASS", "FAIL"}
+        dec_clean = payload.decision.upper().strip()
+        if dec_clean not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid decision '{payload.decision}'. Allowed: {sorted(allowed)}",
+            )
+
+        with db_manager.session_scope() as session:
+            rec = ShadowDecisionRecord(
+                seat_id=payload.seat_id,
+                inspector_id=payload.inspector_id or auth_user,
+                decision=dec_clean,
+                notes=payload.notes,
+            )
+            session.add(rec)
+
+        db_manager.log_audit(
+            event_type="SHADOW_DECISION_RECORDED",
+            details=f"Seat {payload.seat_id} rated {dec_clean} by {payload.inspector_id}",
+            seat_id=payload.seat_id,
+        )
+        return {"recorded": True, "seat_id": payload.seat_id, "decision": dec_clean}
+
+    @app.get("/api/v1/dashboard/shift-report")
+    def get_shift_report(
+        threshold_pct: float = Query(3.0, ge=0.1, le=50.0),
+    ) -> dict[str, Any]:
+        """Generate comprehensive end-of-shift quality report comparing camera vs inspector."""
+        with db_manager.session_scope() as session:
+            return generate_shift_report_dict(session, false_reject_threshold_pct=threshold_pct)
+
+    # -------------------------------------------------------------
+    # Audit Sampling Endpoints (Phase 8)
+    # -------------------------------------------------------------
+
+    @app.post("/api/v1/audit/sample")
+    def trigger_audit_sample(
+        count: int = Query(5, ge=1, le=50),
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Randomly select N PASS seats for quality auditor to verify against master."""
+        with db_manager.session_scope() as session:
+            # Find already sampled seat IDs
+            sampled_ids = {r.seat_id for r in session.query(AuditSampleRecord).all()}
+
+            # Candidates: PASS seats not yet sampled
+            candidates = (
+                session.query(SeatInspectionRecord)
+                .filter(SeatInspectionRecord.outcome == "PASS")
+                .all()
+            )
+            eligible = [s for s in candidates if s.seat_id not in sampled_ids]
+
+            import random
+            selected = random.sample(eligible, min(count, len(eligible)))
+
+            new_records = []
+            for s in selected:
+                rec = AuditSampleRecord(
+                    seat_id=s.seat_id,
+                    auditor_id=auth_user,
+                    status="PENDING",
+                )
+                session.add(rec)
+                new_records.append(s.seat_id)
+
+        db_manager.log_audit(
+            event_type="AUDIT_SAMPLE_GENERATED",
+            details=f"Selected {len(new_records)} seats for quality audit: {new_records}",
+        )
+        return {"sampled_count": len(new_records), "seats": new_records}
+
+    @app.get("/api/v1/audit/samples")
+    def list_audit_samples() -> list[dict[str, Any]]:
+        """List active and completed auditor sample checks."""
+        with db_manager.session_scope() as session:
+            records = session.query(AuditSampleRecord).order_by(AuditSampleRecord.sampled_at.desc()).all()
+            return [
+                {
+                    "id": r.id,
+                    "seat_id": r.seat_id,
+                    "auditor_id": r.auditor_id,
+                    "status": r.status,
+                    "decision": r.decision,
+                    "discrepancy_details": r.discrepancy_details,
+                    "sampled_at": r.sampled_at.isoformat() if r.sampled_at else None,
+                    "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                }
+                for r in records
+            ]
+
+    @app.post("/api/v1/audit/sample/{sample_id}/decision")
+    def submit_audit_decision(
+        sample_id: int,
+        payload: AuditDecisionPayload,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Record quality auditor inspection outcome against a sampled seat."""
+        allowed = {"PASS", "FAIL"}
+        dec_clean = payload.decision.upper().strip()
+        if dec_clean not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid decision '{payload.decision}'. Allowed: {sorted(allowed)}",
+            )
+
+        with db_manager.session_scope() as session:
+            from datetime import datetime, timezone
+            rec = session.query(AuditSampleRecord).filter_by(id=sample_id).first()
+            if not rec:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Audit sample ID {sample_id} not found.",
+                )
+            rec.auditor_id = payload.auditor_id or auth_user
+            rec.status = "COMPLETED"
+            rec.decision = dec_clean
+            rec.discrepancy_details = payload.discrepancy_details
+            rec.completed_at = datetime.now(timezone.utc)
+
+        db_manager.log_audit(
+            event_type="AUDIT_SAMPLE_DECIDED",
+            details=f"Audit sample {sample_id} (Seat: {rec.seat_id}) decided {dec_clean}",
+            seat_id=rec.seat_id,
+        )
+        return {"sample_id": sample_id, "status": "COMPLETED", "decision": dec_clean}
+
+    # -------------------------------------------------------------
+    # Live Monitoring Dashboard Endpoints
     # -------------------------------------------------------------
 
     @app.get("/api/v1/dashboard/live")
@@ -397,7 +658,6 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
             for d in defects:
                 pareto[d.defect_type] = pareto.get(d.defect_type, 0) + 1
 
-            # Sorted Pareto
             sorted_pareto = dict(sorted(pareto.items(), key=lambda item: item[1], reverse=True))
 
             return {
@@ -433,67 +693,7 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
     def get_shadow_mode_stats() -> dict[str, Any]:
         """View 4: Shadow mode agreement comparison, escape & false-reject tracking."""
         with db_manager.session_scope() as session:
-            shadow_seats = session.query(SeatInspectionRecord).filter_by(shadow_mode=True).all()
-            if not shadow_seats:
-                return {
-                    "sample_size": 0,
-                    "agreement_rate": None,
-                    "reviewed_sample_size": 0,
-                    "camera_catches": 0,
-                    "human_catches": 0,
-                    "false_reject_count": 0,
-                    "false_reject_rate": None,
-                    "escape_count": 0,
-                    "escape_rate": None,
-                }
-
-            seat_ids = [s.seat_id for s in shadow_seats]
-            reviews = (
-                session.query(HumanReviewRecord)
-                .filter(HumanReviewRecord.seat_id.in_(seat_ids), HumanReviewRecord.status == "RESOLVED")
-                .all()
-            )
-            review_map = {r.seat_id: r.decision for r in reviews}
-
-            reviewed_seats = [s for s in shadow_seats if s.seat_id in review_map]
-            camera_catches = sum(1 for s in shadow_seats if s.outcome in ("FAIL", "REVIEW"))
-            human_catches = sum(1 for d in review_map.values() if d in ("REWORK", "SCRAP"))
-
-            # False reject: camera flagged REVIEW/FAIL, but human adjudicated PASS
-            false_rejects = sum(
-                1 for s in reviewed_seats
-                if s.outcome in ("FAIL", "REVIEW") and review_map[s.seat_id] == "PASS"
-            )
-
-            # Escape: camera decided PASS, but human audited as non-pass (REWORK/SCRAP)
-            escapes = sum(
-                1 for s in reviewed_seats
-                if s.outcome == "PASS" and review_map[s.seat_id] in ("REWORK", "SCRAP")
-            )
-
-            # Agreement: both agree on PASS or both agree on non-pass
-            agreed = sum(
-                1 for s in reviewed_seats
-                if (s.outcome == "PASS" and review_map[s.seat_id] == "PASS")
-                or (s.outcome in ("FAIL", "REVIEW") and review_map[s.seat_id] in ("REWORK", "SCRAP"))
-            )
-
-            n_rev = len(reviewed_seats)
-            agreement_rate = round(agreed / n_rev, 4) if n_rev > 0 else None
-            false_reject_rate = round(false_rejects / n_rev, 4) if n_rev > 0 else None
-            escape_rate = round(escapes / n_rev, 4) if n_rev > 0 else None
-
-            return {
-                "sample_size": len(shadow_seats),
-                "reviewed_sample_size": n_rev,
-                "agreement_rate": agreement_rate,
-                "camera_catches": camera_catches,
-                "human_catches": human_catches,
-                "false_reject_count": false_rejects,
-                "false_reject_rate": false_reject_rate,
-                "escape_count": escapes,
-                "escape_rate": escape_rate,
-            }
+            return generate_shift_report_dict(session)
 
     @app.get("/api/v1/dashboard/system-health")
     def get_system_health() -> dict[str, Any]:

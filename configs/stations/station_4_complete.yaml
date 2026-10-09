@@ -3,6 +3,34 @@ name: "Complete Seat & Mechanism Cycle Test"
 description: "Cosmetics, component presence, full travel recliner and track, sensor lock confirmation."
 enabled: true
 
+# Multi-camera configuration
+# Resolution targets: 0.15 to 0.20 mm/pixel
+cameras:
+  - name: "recliner_track"
+    view: "recliner_track"
+    enabled: true
+    adapter: "replay"
+    replay_dir: "data/station_4/replay/recliner_track"
+    resolution: [2592, 1944]
+    exposure_us: 14000
+    gain_db: 0.0
+    pixel_size_mm: 0.15 # Target: 0.15 to 0.20 mm/pixel
+    timeout_ms: 3000
+    regions_of_interest:
+      recliner_pivot:
+        x: 400
+        y: 800
+        w: 500
+        h: 500
+      track_travel:
+        x: 200
+        y: 1400
+        w: 2000
+        h: 400
+    lighting:
+      ambient_intensity_pct: 100
+
+# Backwards compatibility single camera block
 camera:
   adapter: "replay"
   replay_dir: "data/station_4/replay"
@@ -11,9 +39,6 @@ camera:
   gain_db: 0.0
   pixel_size_mm: 0.15
   timeout_ms: 3000
-
-lighting:
-  ambient_intensity_pct: 100
 
 regions_of_interest:
   recliner_pivot:
@@ -31,6 +56,11 @@ mechanism:
   command_full_cycle: true
   sensor_poll_timeout_s: 10.0
   verify_sensor_lock_strictly: true
+  min_lock_torque_nm: 15.0
+  max_slip_back_mm: 1.0
+
+lighting:
+  ambient_intensity_pct: 100
 
 model:
   backend: "mock"

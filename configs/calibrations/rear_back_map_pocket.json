@@ -1,0 +1,11 @@
+{
+  "camera_name": "rear_back_map_pocket",
+  "pixel_size_mm": 0.18,
+  "calibrated_at": "2026-10-09T21:23:15.493935Z",
+  "operator_id": "FACTORY_CAL",
+  "image_path": "",
+  "pattern_type": "checkerboard",
+  "target_dimension_mm": 20.0,
+  "category": "leather",
+  "metadata": {}
+}

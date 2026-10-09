@@ -3,6 +3,53 @@ name: "Plastic Parts and Shield Inspection"
 description: "Presence and correct hand (LH/RH), color match, golden image matching, crack & short shot detection."
 enabled: true
 
+# Multi-camera configuration
+# Resolution targets: 0.15 to 0.25 mm/pixel (coarser is fine for plastic presence)
+cameras:
+  - name: "side_shield_handle_lever"
+    view: "side_shield_handle_lever"
+    enabled: true
+    adapter: "replay"
+    replay_dir: "data/station_3/replay/side_shield_handle_lever"
+    resolution: [2592, 1944]
+    exposure_us: 10000
+    gain_db: 0.0
+    pixel_size_mm: 0.18 # Target: 0.15 to 0.25 mm/pixel
+    timeout_ms: 3000
+    regions_of_interest:
+      side_shield:
+        x: 200
+        y: 400
+        w: 1200
+        h: 800
+      lever_handle:
+        x: 1500
+        y: 500
+        w: 600
+        h: 500
+    lighting:
+      diffuse_intensity_pct: 85
+
+  - name: "underside"
+    view: "underside"
+    enabled: true
+    adapter: "replay"
+    replay_dir: "data/station_3/replay/underside"
+    resolution: [2592, 1944]
+    exposure_us: 12000
+    gain_db: 0.0
+    pixel_size_mm: 0.22 # Target: 0.15 to 0.25 mm/pixel
+    timeout_ms: 3000
+    regions_of_interest:
+      underside_clips:
+        x: 300
+        y: 300
+        w: 1800
+        h: 1200
+    lighting:
+      diffuse_intensity_pct: 90
+
+# Backwards compatibility single camera block
 camera:
   adapter: "replay"
   replay_dir: "data/station_3/replay"
@@ -11,9 +58,6 @@ camera:
   gain_db: 0.0
   pixel_size_mm: 0.10
   timeout_ms: 3000
-
-lighting:
-  diffuse_intensity_pct: 85
 
 regions_of_interest:
   side_shield:
@@ -30,6 +74,9 @@ regions_of_interest:
 matching:
   golden_match_threshold: 0.85
   color_check_enabled: true
+
+lighting:
+  diffuse_intensity_pct: 85
 
 model:
   backend: "mock"

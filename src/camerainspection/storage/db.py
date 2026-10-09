@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+import json
 from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -16,6 +17,7 @@ from camerainspection.core.models import (
 from camerainspection.storage.entities import (
     AuditLogRecord,
     Base,
+    CameraResultRecord,
     DefectRecord,
     SeatInspectionRecord,
     StationResultRecord,
@@ -70,7 +72,7 @@ class DatabaseManager:
             session.close()
 
     def record_station_result(self, res: StationInspectionResult) -> int:
-        """Persist a single station result and its defect records."""
+        """Persist a single station result, per-camera results, and defect records."""
         with self.session_scope() as session:
             # Ensure seat record exists
             seat_rec = session.query(SeatInspectionRecord).filter_by(seat_id=res.seat_id).first()
@@ -82,6 +84,16 @@ class DatabaseManager:
                 )
                 session.add(seat_rec)
 
+            cam_json = (
+                json.dumps(
+                    {k: v.model_dump() for k, v in res.camera_results.items()},
+                    default=str,
+                )
+                if res.camera_results
+                else None
+            )
+            paths_json = json.dumps(res.camera_image_paths) if res.camera_image_paths else None
+
             st_rec = StationResultRecord(
                 seat_id=res.seat_id,
                 station_id=res.station_id,
@@ -91,9 +103,25 @@ class DatabaseManager:
                 config_version=res.config_version,
                 raw_image_path=res.raw_image_path,
                 annotated_image_path=res.annotated_image_path,
+                camera_results_json=cam_json,
+                camera_image_paths_json=paths_json,
             )
             session.add(st_rec)
             session.flush()
+
+            # Record per-camera view records
+            for cam_name, cam_res in res.camera_results.items():
+                cam_rec = CameraResultRecord(
+                    station_result_id=st_rec.id,
+                    camera_name=cam_res.camera_name,
+                    view=cam_res.view,
+                    outcome=cam_res.outcome.value,
+                    pixel_size_mm=cam_res.pixel_size_mm,
+                    raw_image_path=cam_res.raw_image_path,
+                    annotated_image_path=cam_res.annotated_image_path,
+                    measurements_json=json.dumps(cam_res.measurements) if cam_res.measurements else None,
+                )
+                session.add(cam_rec)
 
             for d in res.defects:
                 def_rec = DefectRecord(
@@ -109,6 +137,8 @@ class DatabaseManager:
                     bbox_w=d.bounding_box.w if d.bounding_box else None,
                     bbox_h=d.bounding_box.h if d.bounding_box else None,
                     roi_name=d.roi_name,
+                    camera_name=d.camera_name,
+                    view=d.view,
                     description=d.description,
                 )
                 session.add(def_rec)
@@ -186,4 +216,3 @@ class DatabaseManager:
                 rev.decision = decision
                 rev.notes = notes
                 rev.reviewed_at = datetime.now(timezone.utc)
-

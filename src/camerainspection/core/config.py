@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from camerainspection.core.exceptions import ConfigurationError, UnknownVariantError
 
@@ -46,7 +46,17 @@ class BooleanRule(BaseModel):
     required: bool = False
 
 
+class ROIConfig(BaseModel):
+    x: int
+    y: int
+    w: int
+    h: int
+
+
 class CameraConfig(BaseModel):
+    name: str = "main"
+    view: str = "main"
+    enabled: bool = True
     adapter: str = "replay"
     replay_dir: str = ""
     resolution: list[int] = Field(default_factory=lambda: [2592, 1944])
@@ -55,13 +65,12 @@ class CameraConfig(BaseModel):
     pixel_size_mm: float = 0.08
     timeout_ms: int = 3000
     camera_id: int | str = 0
-
-
-class ROIConfig(BaseModel):
-    x: int
-    y: int
-    w: int
-    h: int
+    serial_number: str | None = None
+    loop: bool = True
+    pattern: str = "solid_black"
+    regions_of_interest: dict[str, ROIConfig] = Field(default_factory=dict)
+    lighting: dict[str, Any] = Field(default_factory=dict)
+    poses: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class StationModelConfig(BaseModel):
@@ -84,12 +93,34 @@ class StationConfig(BaseModel):
     description: str = ""
     enabled: bool = True
     camera: CameraConfig
+    cameras: list[CameraConfig] = Field(default_factory=list)
     lighting: dict[str, Any] = Field(default_factory=dict)
     regions_of_interest: dict[str, ROIConfig] = Field(default_factory=dict)
     matching: dict[str, Any] = Field(default_factory=dict)
     mechanism: dict[str, Any] = Field(default_factory=dict)
     model: StationModelConfig = Field(default_factory=StationModelConfig)
     trigger: TriggerConfig = Field(default_factory=TriggerConfig)
+    capture_sequence: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def harmonize_cameras(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            raw_camera = data.get("camera")
+            raw_cameras = data.get("cameras")
+            if raw_cameras and isinstance(raw_cameras, list):
+                if not raw_camera and len(raw_cameras) > 0:
+                    data["camera"] = raw_cameras[0]
+            elif raw_camera:
+                cam_dict = dict(raw_camera) if isinstance(raw_camera, dict) else raw_camera.model_dump()
+                cam_dict.setdefault("name", "main")
+                cam_dict.setdefault("view", "main")
+                data["cameras"] = [cam_dict]
+            elif not raw_cameras and not raw_camera:
+                default_cam = {"name": "main", "view": "main", "adapter": "replay"}
+                data["camera"] = default_cam
+                data["cameras"] = [default_cam]
+        return data
 
 
 class ComponentSpec(BaseModel):

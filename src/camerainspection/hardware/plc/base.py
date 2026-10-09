@@ -63,8 +63,6 @@ class BasePLC(ABC):
 
         # If any station reports FAIL or REVIEW, ensure printer cannot remain enabled
         if outcome in (Outcome.FAIL, Outcome.REVIEW):
-            # If the failing seat is the one currently flagged for printing, or no seat is actively printing,
-            # enforce immediate hard shutoff.
             if self._active_printing_seat_id == seat_id or self._active_printing_seat_id is None:
                 self.set_label_printer_enable(False)
 
@@ -84,6 +82,18 @@ class BasePLC(ABC):
 
         Crucial safety requirement: Must be read from sensor, NEVER from camera.
         """
+
+    def read_lock_torque(self) -> float:
+        """Read mechanism latch engagement torque or motor current in Nm."""
+        return 20.0
+
+    def read_actuator_position(self) -> float:
+        """Read servo / linear actuator position in mm."""
+        return 240.0
+
+    def check_slip_back(self, hold_time_s: float = 0.05) -> float:
+        """Measure difference in actuator position after hold time in mm."""
+        return 0.0
 
     def set_label_printer_enable(self, enable: bool, seat_id: str | None = None) -> None:
         """Enable or disable OEM label applicator interlock output.

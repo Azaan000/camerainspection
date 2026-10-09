@@ -80,6 +80,16 @@ def test_insufficient_stitches_returns_zero() -> None:
 
 # ------ ThreadColorEngine ---------------------------------------------------
 
+def test_thread_color_zero_delta_e() -> None:
+    """When the reference patch matches the extracted thread sample, ΔE is exactly 0.0."""
+    good_seam = make_stitch_seam(thread_color_bgr=(210, 210, 210))
+    good_meas = StitchGeometryEngine.analyze_seam(good_seam, pixel_size_mm=0.05)
+    ref_sample = ThreadColorEngine.extract_thread_sample(good_seam, good_meas.stitch_centers)
+    assert ref_sample is not None, "Could not extract reference from good seam"
+    de = ThreadColorEngine.compute_thread_delta_e(good_seam, good_meas.stitch_centers, ref_sample)
+    assert de == 0.0 or de < 1e-4, f"Self-reference ΔE should be zero, got {de}"
+
+
 def test_thread_color_matching_lower_than_wrong_color() -> None:
     """Matching thread color must give much lower ΔE than wrong (red) thread."""
     # Build a per-scene reference from a good frame sample so both share the
@@ -110,4 +120,3 @@ def test_thread_color_none_reference_returns_sentinel() -> None:
     de = ThreadColorEngine.compute_thread_delta_e(good_seam, good_meas.stitch_centers, None)
     from camerainspection.vision.station2.thread_color import _NO_REFERENCE_SENTINEL
     assert de == _NO_REFERENCE_SENTINEL, f"Expected sentinel, got {de}"
-

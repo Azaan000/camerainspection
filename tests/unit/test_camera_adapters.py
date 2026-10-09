@@ -1,17 +1,21 @@
-"""Unit tests for camera adapters."""
+"""Unit tests for camera adapters and camera factory."""
 
 from pathlib import Path
 import cv2
 import numpy as np
 import pytest
 
+from camerainspection.core.config import CameraConfig
 from camerainspection.core.exceptions import (
     CameraOfflineError,
     CameraTimeoutError,
     CorruptImageError,
 )
+from camerainspection.hardware.camera.base import BaseCamera
+from camerainspection.hardware.camera.factory import build_camera
 from camerainspection.hardware.camera.replay import FolderReplayCamera
 from camerainspection.hardware.camera.synthetic import SyntheticCamera
+from camerainspection.hardware.camera.webcam import WebcamCamera
 
 
 def test_synthetic_camera() -> None:
@@ -91,3 +95,42 @@ def test_folder_replay_corrupt_file(tmp_path: Path) -> None:
     with pytest.raises(CorruptImageError):
         cam.capture()
     cam.disconnect()
+
+
+def test_camera_factory_selection(tmp_path: Path) -> None:
+    # 1. Synthetic
+    syn_cfg = CameraConfig(adapter="synthetic", resolution=[640, 480])
+    cam = build_camera(syn_cfg)
+    assert isinstance(cam, SyntheticCamera)
+
+    # 2. Replay
+    rep_cfg = CameraConfig(adapter="replay", replay_dir=str(tmp_path))
+    cam = build_camera(rep_cfg)
+    assert isinstance(cam, FolderReplayCamera)
+
+    # 3. Webcam with int device
+    web_cfg = CameraConfig(adapter="webcam", camera_id=0, resolution=[1280, 720])
+    cam = build_camera(web_cfg)
+    assert isinstance(cam, WebcamCamera)
+    assert cam.camera_id == 0
+
+    # 4. Webcam with URL string (phone IP camera)
+    url_cfg = CameraConfig(adapter="webcam", camera_id="http://192.168.1.100:8080/video")
+    cam = build_camera(url_cfg)
+    assert isinstance(cam, WebcamCamera)
+    assert cam.camera_id == "http://192.168.1.100:8080/video"
+
+    # 5. CLI override
+    cam = build_camera(rep_cfg, adapter_override="synthetic")
+    assert isinstance(cam, SyntheticCamera)
+
+
+def test_webcam_warning_logged(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+    with caplog.at_level(logging.WARNING):
+        cam = WebcamCamera(camera_id="http://invalid.stream:8080/video")
+        try:
+            cam.connect()
+        except Exception:
+            pass
+    assert any("Non-industrial camera" in r.message for r in caplog.records)

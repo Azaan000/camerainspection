@@ -31,6 +31,9 @@ class PLCSimulator(BasePLC):
 
         # Mechanism and printer safety interlocks
         self._mechanism_locked = False
+        self._lock_torque_nm = 20.0
+        self._actuator_position_mm = 240.0
+        self._slip_back_mm = 0.0
 
     def connect(self) -> None:
         with self._lock:
@@ -94,6 +97,38 @@ class PLCSimulator(BasePLC):
         self._ensure_connected()
         with self._lock:
             return self._mechanism_locked
+
+    def read_lock_torque(self) -> float:
+        self._ensure_connected()
+        with self._lock:
+            return self._lock_torque_nm
+
+    def read_actuator_position(self) -> float:
+        self._ensure_connected()
+        with self._lock:
+            return self._actuator_position_mm
+
+    def check_slip_back(self, hold_time_s: float = 0.05) -> float:
+        self._ensure_connected()
+        if hold_time_s > 0:
+            time.sleep(hold_time_s)
+        with self._lock:
+            return self._slip_back_mm
+
+    def simulate_mechanism_metrics(
+        self,
+        torque_nm: float = 20.0,
+        actuator_pos_mm: float = 240.0,
+        slip_back_mm: float = 0.0,
+    ) -> None:
+        """Configure simulated load cell, actuator travel, and slip-back values."""
+        with self._lock:
+            self._lock_torque_nm = torque_nm
+            self._actuator_position_mm = actuator_pos_mm
+            self._slip_back_mm = slip_back_mm
+            self._tags["LOCK_TORQUE_NM"] = torque_nm
+            self._tags["ACTUATOR_POS_MM"] = actuator_pos_mm
+            self._tags["SLIP_BACK_MM"] = slip_back_mm
 
     def _write_label_printer_hardware(self, enable: bool) -> None:
         self._ensure_connected()

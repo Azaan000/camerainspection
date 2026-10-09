@@ -41,10 +41,16 @@ class SeatInspectionRecord(Base):
     reviews = relationship(
         "HumanReviewRecord", back_populates="seat", cascade="all, delete-orphan"
     )
+    shadow_decisions = relationship(
+        "ShadowDecisionRecord", back_populates="seat", cascade="all, delete-orphan"
+    )
+    audit_samples = relationship(
+        "AuditSampleRecord", back_populates="seat", cascade="all, delete-orphan"
+    )
 
 
 class StationResultRecord(Base):
-    """Inspection outcome and metrics from an individual station."""
+    """Inspection outcome and metrics from an individual station aggregating all camera views."""
 
     __tablename__ = "station_results"
 
@@ -59,6 +65,8 @@ class StationResultRecord(Base):
     config_version = Column(String(32), default="v0.0.0")
     raw_image_path = Column(String(512), nullable=True)
     annotated_image_path = Column(String(512), nullable=True)
+    camera_results_json = Column(Text, nullable=True)
+    camera_image_paths_json = Column(Text, nullable=True)
     created_at = Column(
         DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
     )
@@ -67,6 +75,30 @@ class StationResultRecord(Base):
     defects = relationship(
         "DefectRecord", back_populates="station_result", cascade="all, delete-orphan"
     )
+    camera_results = relationship(
+        "CameraResultRecord", back_populates="station_result", cascade="all, delete-orphan"
+    )
+
+
+class CameraResultRecord(Base):
+    """Per-camera view inspection outcome within a station inspection."""
+
+    __tablename__ = "camera_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    station_result_id = Column(
+        Integer, ForeignKey("station_results.id"), nullable=False, index=True
+    )
+    camera_name = Column(String(64), nullable=False, index=True)
+    view = Column(String(64), nullable=False)
+    outcome = Column(String(16), nullable=False)
+    pixel_size_mm = Column(Float, default=0.08)
+    raw_image_path = Column(String(512), nullable=True)
+    annotated_image_path = Column(String(512), nullable=True)
+    measurements_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    station_result = relationship("StationResultRecord", back_populates="camera_results")
 
 
 class DefectRecord(Base):
@@ -89,6 +121,8 @@ class DefectRecord(Base):
     bbox_w = Column(Integer, nullable=True)
     bbox_h = Column(Integer, nullable=True)
     roi_name = Column(String(64), nullable=True)
+    camera_name = Column(String(64), nullable=True)
+    view = Column(String(64), nullable=True)
     description = Column(Text, default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -118,6 +152,46 @@ class HumanReviewRecord(Base):
     reviewed_at = Column(DateTime, nullable=True)
 
     seat = relationship("SeatInspectionRecord", back_populates="reviews")
+
+
+class ShadowDecisionRecord(Base):
+    """Inspector decision recorded in shadow mode for comparison against camera verdicts."""
+
+    __tablename__ = "shadow_decisions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    seat_id = Column(
+        String(64), ForeignKey("seat_inspections.seat_id"), nullable=False, index=True
+    )
+    inspector_id = Column(String(64), nullable=False, index=True)
+    decision = Column(String(16), nullable=False)  # PASS, FAIL
+    notes = Column(Text, default="")
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
+    )
+
+    seat = relationship("SeatInspectionRecord", back_populates="shadow_decisions")
+
+
+class AuditSampleRecord(Base):
+    """Quality auditor random sample check against a master reference."""
+
+    __tablename__ = "audit_samples"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    seat_id = Column(
+        String(64), ForeignKey("seat_inspections.seat_id"), nullable=False, index=True
+    )
+    auditor_id = Column(String(64), nullable=False, index=True)
+    status = Column(String(16), default="PENDING", nullable=False)  # PENDING, COMPLETED
+    decision = Column(String(16), nullable=True)  # PASS, FAIL
+    discrepancy_details = Column(Text, default="")
+    sampled_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
+    )
+    completed_at = Column(DateTime, nullable=True)
+
+    seat = relationship("SeatInspectionRecord", back_populates="audit_samples")
 
 
 class AuditLogRecord(Base):

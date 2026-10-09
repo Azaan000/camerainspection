@@ -11,6 +11,7 @@ from camerainspection.api.app import create_app
 from camerainspection.coordinator.service import InspectionCoordinator
 from camerainspection.core.config import load_system_config
 from camerainspection.core.logging import get_logger
+from camerainspection.hardware.camera.factory import build_camera
 from camerainspection.hardware.plc.base import BasePLC
 from camerainspection.hardware.plc.modbus import ModbusPLC
 from camerainspection.hardware.plc.opcua import OPCUAPLC
@@ -56,6 +57,11 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=Path("configs/system.yaml"), help="Path to system config")
     parser.add_argument("--plc-adapter", default=None, help="Override PLC adapter (simulator, modbus, snap7, opcua)")
     parser.add_argument("--lock-sensor", action="store_true", default=None, help="Force lock sensor state in simulator")
+    parser.add_argument(
+        "--camera-adapter",
+        default=None,
+        help="Override camera adapter (replay, synthetic, webcam, basler, hikrobot)",
+    )
     args = parser.parse_args()
 
     # Load system settings
@@ -64,6 +70,8 @@ def main() -> None:
         f"Loaded system configuration: env={sys_cfg.environment}, "
         f"shadow_mode={sys_cfg.shadow_mode}, config_version={sys_cfg.config_version}"
     )
+    if args.camera_adapter:
+        logger.info(f"CLI camera adapter override active: {args.camera_adapter}")
 
     # Initialize Database: read DATABASE_URL env var (e.g. from Docker) or fallback to config
     db_url = os.getenv("DATABASE_URL") or sys_cfg.database.url

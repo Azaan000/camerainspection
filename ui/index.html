@@ -98,55 +98,64 @@
       background: linear-gradient(135deg, #111d35, #0d1526);
       border: 1px solid #1e293b;
       border-radius: 12px;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
+      padding: 18px 20px;
     }
-    .stat-value { font-size: 2rem; font-weight: 800; line-height: 1; }
-    .stat-label { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #64748b; }
-
-    .defect-card {
-      background: linear-gradient(135deg, #111d35, #0d1526);
-      border: 1px solid #1e293b;
-      border-radius: 12px;
-      padding: 16px;
+    .stat-value {
+      font-size: 1.85rem;
+      font-weight: 800;
+      line-height: 1.1;
+      margin-top: 4px;
     }
-
-    .review-item {
-      background: rgba(17,29,53,0.8);
-      border: 1px solid #1e293b;
-      border-radius: 10px;
-      padding: 16px;
-      margin-bottom: 10px;
+    .stat-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #94a3b8;
     }
 
-    .audit-row:nth-child(even) { background: rgba(22,36,68,0.4); }
+    /* Pulse dot */
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.15); opacity: 0.4; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .pulse-dot { animation: pulse-ring 2s infinite ease-in-out; }
 
-    .nav-link { color: #64748b; font-size: 0.82rem; font-weight: 500; padding: 6px 14px; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
-    .nav-link:hover, .nav-link.active { background: rgba(251,191,36,0.1); color: #fbbf24; }
-
-    .pulse-dot { animation: pulse 2s infinite; }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
+    /* Navigation tabs */
+    .nav-link {
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: #94a3b8;
+      transition: all 0.15s;
+    }
+    .nav-link:hover { color: #f8fafc; background: rgba(255,255,255,0.05); }
+    .nav-link.active {
+      color: #fbbf24;
+      background: rgba(251,191,36,0.1);
+      font-weight: 600;
     }
 
+    /* Tooltip */
     .tooltip-wrapper { position: relative; }
     .tooltip-wrapper:hover .tooltip-box { display: block; }
     .tooltip-box {
       display: none;
       position: absolute;
-      bottom: calc(100% + 6px);
+      bottom: 105%;
       left: 50%;
       transform: translateX(-50%);
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 6px;
+      background: #0d1526;
+      border: 1px solid #263348;
+      color: #f8fafc;
+      font-size: 0.7rem;
       padding: 6px 10px;
-      font-size: 0.72rem;
-      color: #cbd5e1;
+      border-radius: 6px;
       white-space: nowrap;
+      pointer-events: none;
       z-index: 50;
     }
 
@@ -230,33 +239,29 @@
       transition: all 0.25s;
       pointer-events: none;
     }
-    .toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
-    .toast-success { background: rgba(52,211,153,0.2); border: 1px solid rgba(52,211,153,0.5); color: #34d399; }
-    .toast-error   { background: rgba(248,113,113,0.2); border: 1px solid rgba(248,113,113,0.5); color: #f87171; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast-success { background: #10b981; color: #0a0f1e; }
+    .toast-error   { background: #ef4444; color: #fff; }
+    .toast-info    { background: #38bdf8; color: #0a0f1e; }
 
-    .health-station-card {
-      border-radius: 10px;
-      border: 1px solid;
-      padding: 14px 18px;
-      display: flex;
-      align-items: center;
-      gap: 14px;
+    .review-item {
+      background: #0d1526;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 12px;
+      transition: border-color 0.15s;
     }
-    .health-ok   { border-color: rgba(52,211,153,0.3);  background: rgba(52,211,153,0.05); }
-    .health-warn { border-color: rgba(251,191,36,0.3);  background: rgba(251,191,36,0.05); }
-    .health-err  { border-color: rgba(248,113,113,0.3); background: rgba(248,113,113,0.05); }
+    .review-item:hover { border-color: #f59e0b; }
   </style>
 </head>
+<body class="text-slate-100 min-h-screen flex flex-col">
 
-<body class="dark text-slate-200 min-h-screen">
-
-<!-- ============================  TOP NAV  ============================ -->
-<header class="sticky top-0 z-40 flex items-center justify-between px-6 py-3"
-  style="background: rgba(10,15,30,0.92); backdrop-filter: blur(12px); border-bottom: 1px solid #1e293b;">
-
+<!-- ============================  HEADER  ============================ -->
+<header class="border-b border-slate-800 bg-navy-800 px-6 py-3 flex items-center justify-between sticky top-0 z-40">
+  <!-- Brand -->
   <div class="flex items-center gap-3">
-    <!-- Logo mark -->
-    <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect width="32" height="32" rx="8" fill="url(#lg)"/>
       <path d="M8 20 L16 8 L24 20" stroke="#0a0f1e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
       <circle cx="16" cy="22" r="3" fill="#0a0f1e"/>
@@ -280,6 +285,7 @@
     <span class="nav-link" onclick="setSection('gallery')">Defect Gallery</span>
     <span class="nav-link" onclick="setSection('health')">System Health</span>
     <span class="nav-link" onclick="setSection('review')">Review Queue</span>
+    <span class="nav-link" onclick="setSection('rework')">Rework Bench</span>
     <span class="nav-link" onclick="setSection('audit')">Audit Log</span>
     <span class="nav-link" onclick="setSection('shadow')">Shadow Mode</span>
     <span class="nav-link" onclick="setSection('settings')">Settings</span>
@@ -301,7 +307,6 @@
 
   <!-- ============  SECTION: LIVE LINE  ============ -->
   <section id="section-live" class="section active">
-
     <!-- KPI strip -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
       <div class="stat-card">
@@ -462,6 +467,30 @@
     </div>
   </section>
 
+  <!-- ============  SECTION: REWORK BENCH (Phase 9)  ============ -->
+  <section id="section-rework" class="section">
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+      <div>
+        <h2 class="font-bold text-white text-xl">Rework Bench &amp; Traceability</h2>
+        <p class="text-xs text-slate-400 mt-1">Multi-camera verification, defect bounding boxes, failing rules, and OEM traceability archive export.</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <input type="text" id="rework-seat-input" placeholder="Scan Barcode / RFID Tag or enter Seat ID…" class="w-64 font-mono text-sm"
+          onkeydown="if(event.key==='Enter') loadReworkSeat()" />
+        <button class="btn-primary" onclick="loadReworkSeat()">Scan / Fetch</button>
+        <button class="btn-ghost" onclick="fetchLatestPendingRework()">Next Reject</button>
+        <button class="btn-ghost text-sky-400" onclick="exportCurrentSeatTrace()">Export Trace (.ZIP)</button>
+      </div>
+    </div>
+
+    <!-- Active Rework Details -->
+    <div id="rework-container" class="space-y-6">
+      <div class="card p-8 text-center text-slate-500">
+        Scan an RFID tag or enter a Seat ID to view multi-camera inspection views, defect crops, and rules.
+      </div>
+    </div>
+  </section>
+
   <!-- ============  SECTION: AUDIT LOG  ============ -->
   <section id="section-audit" class="section">
     <div class="card">
@@ -607,7 +636,7 @@
 // ─────────────────────────  Config  ─────────────────────────
 const cfg = {
   apiUrl: localStorage.getItem('sg_api_url') || 'http://127.0.0.1:8000',
-  apiKey: localStorage.getItem('sg_api_key') || '',
+  apiKey: localStorage.getItem('sg_api_key') || 'inspector_secret_token_123',
   refreshInterval: parseInt(localStorage.getItem('sg_refresh_s') || '5', 10) * 1000,
 };
 
@@ -627,6 +656,7 @@ let doughnutChart = null, paretoChart = null, stationChart = null, shadowChart =
 
 // Cached data
 let galleryData = [];
+let currentReworkSeatId = null;
 
 // ─────────────────────────  Utilities  ─────────────────────────
 const api = async (path, opts = {}) => {
@@ -649,82 +679,83 @@ const api = async (path, opts = {}) => {
 const fmtPct = (v) => v == null ? '—' : (v * 100).toFixed(1) + '%';
 const fmtTs = (ts) => {
   if (!ts) return '—';
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  try {
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? ts : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return ts; }
 };
 
-const outcomeBadge = (outcome) => {
-  const safe = escapeHtml(outcome);
-  const map = {
-    'PASS':        '<span class="badge-pass  text-xs font-bold px-2 py-0.5 rounded">PASS</span>',
-    'FAIL':        '<span class="badge-fail  text-xs font-bold px-2 py-0.5 rounded">FAIL</span>',
-    'REVIEW':      '<span class="badge-review text-xs font-bold px-2 py-0.5 rounded">REVIEW</span>',
-    'IN_PROGRESS': '<span class="badge-ok    text-xs font-bold px-2 py-0.5 rounded">IN PROGRESS</span>',
-  };
-  return map[outcome] || `<span class="text-slate-500 text-xs">${safe || '—'}</span>`;
-};
-
-function showToast(msg, type = 'success') {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = `toast toast-${type} show`;
-  setTimeout(() => { t.className = 'toast'; }, 3500);
+function showToast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast show toast-${type}`;
+  setTimeout(() => el.classList.remove('show'), 3500);
 }
 
-// Global click event delegation for safe seat detail clicks
-document.addEventListener('click', (e) => {
-  const trigger = e.target.closest('[data-seat-id]');
-  if (trigger && trigger.dataset.seatId) {
-    openSeatModal(trigger.dataset.seatId);
+function outcomeBadge(outcome) {
+  const safe = escapeHtml(outcome);
+  switch (outcome) {
+    case 'PASS':   return `<span class="badge-pass px-2 py-0.5 rounded text-xs font-bold">✓ PASS</span>`;
+    case 'FAIL':   return `<span class="badge-fail px-2 py-0.5 rounded text-xs font-bold">✗ FAIL</span>`;
+    case 'REVIEW': return `<span class="badge-review px-2 py-0.5 rounded text-xs font-bold">⚑ REVIEW</span>`;
+    default:       return `<span class="badge-ok px-2 py-0.5 rounded text-xs">${safe || '—'}</span>`;
   }
-});
+}
 
-// ─────────────────────────  API Status  ─────────────────────────
+// ─────────────────────────  Navigation  ─────────────────────────
+let currentSection = 'live';
+function setSection(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  const target = document.getElementById('section-' + id);
+  if (target) {
+    target.classList.add('active');
+    currentSection = id;
+    const links = document.querySelectorAll('.nav-link');
+    links.forEach(l => {
+      if (l.getAttribute('onclick')?.includes(`'${id}'`)) l.classList.add('active');
+    });
+    refreshCurrentSection();
+  }
+}
+
+// Clock
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleDateString() + ' ' + now.toLocaleTimeString();
+}
+
+// API Health Check
 async function checkApiStatus() {
   const dot = document.getElementById('status-dot');
   const txt = document.getElementById('status-text');
   try {
     const h = await api('/health');
-    dot.className = 'w-2 h-2 rounded-full bg-emerald-400 pulse-dot';
-    txt.textContent = h.status === 'ok' ? 'API Online' : h.status;
-    txt.className = 'text-emerald-400';
-    document.getElementById('info-api-status').textContent = 'Online';
-  } catch {
-    dot.className = 'w-2 h-2 rounded-full bg-rose-500 pulse-dot';
-    txt.textContent = 'API Offline';
-    txt.className = 'text-rose-400';
+    dot.className = 'w-2 h-2 rounded-full bg-emerald-400';
+    txt.textContent = 'ONLINE';
+    txt.className = 'text-emerald-400 font-semibold';
+    document.getElementById('info-api-status').textContent = 'Online (' + (h.service || 'Ready') + ')';
+  } catch (e) {
+    dot.className = 'w-2 h-2 rounded-full bg-rose-500';
+    txt.textContent = 'OFFLINE';
+    txt.className = 'text-rose-400 font-semibold';
     document.getElementById('info-api-status').textContent = 'Offline';
   }
-}
-
-// ─────────────────────────  Clock  ─────────────────────────
-function updateClock() {
-  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
-}
-
-// ─────────────────────────  Navigation  ─────────────────────────
-let currentSection = 'live';
-function setSection(name) {
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-  document.getElementById('section-' + name).classList.add('active');
-  document.querySelector(`.nav-link[onclick="setSection('${name}')"]`)?.classList.add('active');
-  currentSection = name;
-  refreshCurrentSection();
 }
 
 // ─────────────────────────  LIVE LINE  ─────────────────────────
 async function fetchLive() {
   try {
     const data = await api('/api/v1/dashboard/live');
-
     const seats = data.recent_strip || [];
-    const total = data.sample_size ?? seats.length;
+
+    // KPI calculation
+    const total = seats.length;
     const passes = seats.filter(s => s.outcome === 'PASS').length;
     const reviews = seats.filter(s => s.outcome === 'REVIEW').length;
     const fails = seats.filter(s => s.outcome === 'FAIL').length;
 
-    document.getElementById('kpi-total').textContent = total;
+    document.getElementById('kpi-total').textContent = total || '—';
     document.getElementById('kpi-pass').textContent = total ? fmtPct(passes / total) : '—';
     document.getElementById('kpi-review').textContent = reviews;
     document.getElementById('kpi-fail').textContent = total ? fmtPct(fails / total) : '—';
@@ -770,18 +801,12 @@ async function fetchLive() {
 async function fetchQuality() {
   try {
     const data = await api('/api/v1/dashboard/quality-trends');
-
-    const pass = data.pass_rate ?? 0;
-    const review = data.review_rate ?? 0;
-    const fail = data.fail_rate ?? 0;
-
-    document.getElementById('qt-pass-rate').textContent = fmtPct(pass);
-    document.getElementById('qt-review-rate').textContent = fmtPct(review);
-    document.getElementById('qt-fail-rate').textContent = fmtPct(fail);
-
-    document.getElementById('qt-pass-bar').style.width = (pass * 100) + '%';
-    document.getElementById('qt-review-bar').style.width = (review * 100) + '%';
-    document.getElementById('qt-fail-bar').style.width = (fail * 100) + '%';
+    document.getElementById('qt-pass-rate').textContent = fmtPct(data.pass_rate);
+    document.getElementById('qt-pass-bar').style.width = ((data.pass_rate || 0) * 100) + '%';
+    document.getElementById('qt-review-rate').textContent = fmtPct(data.review_rate);
+    document.getElementById('qt-review-bar').style.width = ((data.review_rate || 0) * 100) + '%';
+    document.getElementById('qt-fail-rate').textContent = fmtPct(data.fail_rate);
+    document.getElementById('qt-fail-bar').style.width = ((data.fail_rate || 0) * 100) + '%';
 
     // Doughnut chart
     const dCtx = document.getElementById('doughnut-chart').getContext('2d');
@@ -789,98 +814,62 @@ async function fetchQuality() {
     doughnutChart = new Chart(dCtx, {
       type: 'doughnut',
       data: {
-        labels: ['Pass', 'Review', 'Fail'],
+        labels: ['PASS', 'REVIEW', 'FAIL'],
         datasets: [{
           data: [
-            Math.round(pass * (data.sample_size || 1)),
-            Math.round(review * (data.sample_size || 1)),
-            Math.round(fail * (data.sample_size || 1)),
+            Math.round((data.pass_rate || 0) * (data.sample_size || 1)),
+            Math.round((data.review_rate || 0) * (data.sample_size || 1)),
+            Math.round((data.fail_rate || 0) * (data.sample_size || 1)),
           ],
-          backgroundColor: ['rgba(52,211,153,0.8)', 'rgba(251,191,36,0.8)', 'rgba(248,113,113,0.8)'],
-          borderColor: ['#34d399', '#fbbf24', '#f87171'],
-          borderWidth: 2,
-        }],
+          backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+          borderColor: '#0d1526',
+          borderWidth: 3,
+        }]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: {
-          legend: { labels: { color: '#94a3b8', boxWidth: 12, padding: 16 } },
-        },
-        cutout: '65%',
+          legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 11 } } },
+        }
       }
     });
 
     // Pareto chart
-    const paretoObj = data.pareto_defects || {};
-    const labels = Object.keys(paretoObj);
-    const counts = Object.values(paretoObj);
+    const pareto = data.pareto_defects || {};
     const pCtx = document.getElementById('pareto-chart').getContext('2d');
     if (paretoChart) paretoChart.destroy();
     paretoChart = new Chart(pCtx, {
       type: 'bar',
       data: {
-        labels: labels,
+        labels: Object.keys(pareto).slice(0, 8),
         datasets: [{
-          label: 'Count',
-          data: counts,
-          backgroundColor: 'rgba(251,191,36,0.75)',
-          borderColor: '#fbbf24',
-          borderWidth: 1,
-          borderRadius: 4,
-        }],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
-          y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } },
-        },
-      }
-    });
-
-    // Station performance chart
-    const sCtx = document.getElementById('station-chart').getContext('2d');
-    if (stationChart) stationChart.destroy();
-    stationChart = new Chart(sCtx, {
-      type: 'bar',
-      data: {
-        labels: ['Station 1', 'Station 2', 'Station 3', 'Station 4'],
-        datasets: [
-          { label: 'Pass', data: [pass * totalSeats(), pass * totalSeats(), pass * totalSeats(), pass * totalSeats()], backgroundColor: 'rgba(52,211,153,0.7)', borderRadius: 4 },
-        ],
+          label: 'Defect Count',
+          data: Object.values(pareto).slice(0, 8),
+          backgroundColor: 'rgba(239,68,68,0.7)',
+          borderRadius: 6,
+        }]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } },
+        plugins: { legend: { display: false } },
         scales: {
-          x: { stacked: false, grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } },
-          y: { stacked: false, grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
-        },
+          x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
+          y: { grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
+        }
       }
     });
-
   } catch (e) {
-    console.error('Quality fetch error:', e);
+    console.error('Failed to load quality stats', e);
   }
-}
-
-function totalSeats() {
-  const val = parseInt(document.getElementById('kpi-total')?.textContent || '1', 10);
-  return isNaN(val) ? 1 : val;
 }
 
 // ─────────────────────────  DEFECT GALLERY  ─────────────────────────
 async function fetchGallery() {
   try {
-    const data = await api('/api/v1/dashboard/defect-gallery?limit=100');
-    galleryData = data || [];
-
-    // Populate type filter
+    galleryData = await api('/api/v1/dashboard/defect-gallery?limit=48');
     const types = [...new Set(galleryData.map(d => d.defect_type).filter(Boolean))];
     const sel = document.getElementById('gallery-filter-type');
     sel.innerHTML = '<option value="">All Types</option>' + types.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
-
     renderGallery();
   } catch (e) {
     document.getElementById('gallery-grid').innerHTML = `<div class="col-span-4 text-rose-400 text-sm py-10 text-center">${escapeHtml(e.message)}</div>`;
@@ -888,33 +877,30 @@ async function fetchGallery() {
 }
 
 function renderGallery() {
-  const typeF = document.getElementById('gallery-filter-type').value;
+  const typeFilter = document.getElementById('gallery-filter-type')?.value;
   let data = galleryData;
-  if (typeF) data = data.filter(d => d.defect_type === typeF);
+  if (typeFilter) data = data.filter(d => d.defect_type === typeFilter);
 
   if (!data.length) {
     document.getElementById('gallery-grid').innerHTML = '<div class="col-span-4 text-slate-600 text-sm py-10 text-center">No defects match the current filter.</div>';
     return;
   }
   document.getElementById('gallery-grid').innerHTML = data.slice(0, 48).map(d => {
-    const conf = d.confidence != null ? (d.confidence * 100).toFixed(0) + '%' : '';
-    const safeType = escapeHtml(d.defect_type || 'Unknown');
-    const safeDesc = escapeHtml(d.description || '');
-    const safeRoi = escapeHtml(d.roi_name || '');
-    return `<div class="defect-card hover:border-amber-400/30 transition-colors" style="border:1px solid #1e293b;">
-      <div class="flex items-start justify-between mb-2">
-        <span class="text-xs font-bold text-white">${safeType}</span>
-        <span class="text-xs text-amber-400 font-semibold">${escapeHtml(d.outcome)}</span>
+    const safeType = escapeHtml(d.defect_type);
+    const safeRoi = escapeHtml(d.roi_name || '—');
+    const safeDesc = escapeHtml(d.description || '—');
+    return `
+    <div class="card p-4 hover:border-amber-400/50 transition">
+      <div class="flex justify-between items-start mb-2">
+        <span class="font-bold text-sm text-white">${safeType}</span>
+        ${outcomeBadge(d.outcome)}
       </div>
-      ${safeRoi ? `<div class="text-xs text-slate-500 mb-2">ROI: ${safeRoi}</div>` : ''}
-      ${safeDesc ? `<p class="text-xs text-slate-400 mb-3">${safeDesc}</p>` : ''}
-      ${conf ? `<div class="flex items-center gap-2 mb-2">
-        <span class="text-xs text-slate-500">Confidence</span>
-        <div class="flex-1 progress-bar"><div class="progress-fill bg-amber-400" style="width:${conf}"></div></div>
-        <span class="text-xs text-amber-400 font-bold">${conf}</span>
-      </div>` : ''}
-      ${d.bbox ? `<div class="text-xs text-slate-600 font-mono mt-2">ROI: [${escapeHtml(JSON.stringify(d.bbox))}]</div>` : ''}
-      ${d.measured_value != null ? `<div class="text-xs text-slate-500 mt-1">Measured: <span class="text-white">${escapeHtml(d.measured_value)}</span> ${escapeHtml(d.unit || 'mm')}</div>` : ''}
+      <div class="space-y-1 text-xs text-slate-400">
+        <div><span class="text-slate-600">ROI:</span> ${safeRoi}</div>
+        <div><span class="text-slate-600">Measured:</span> ${escapeHtml(d.measured_value)} ${escapeHtml(d.unit || '')}</div>
+        ${d.confidence != null ? `<div><span class="text-slate-600">Confidence:</span> ${fmtPct(d.confidence)}</div>` : ''}
+        <div class="truncate text-slate-500 text-[11px]">${safeDesc}</div>
+      </div>
     </div>`;
   }).join('');
 }
@@ -922,45 +908,39 @@ function renderGallery() {
 // ─────────────────────────  SYSTEM HEALTH  ─────────────────────────
 async function fetchHealth() {
   try {
-    const data = await api('/api/v1/dashboard/system-health');
-
-    const stationsObj = data.stations || {};
-    const stations = Object.entries(stationsObj).map(([id, info]) => ({
-      station_id: id,
-      ...info,
-    }));
-
+    const h = await api('/api/v1/dashboard/system-health');
+    const stations = Object.entries(h.stations || {});
     document.getElementById('health-stations').innerHTML = stations.length
-      ? stations.map(s => {
-          const ok = s.status === 'ONLINE';
-          const cls = ok ? 'health-ok' : 'health-warn';
-          const col = ok ? 'text-emerald-400' : 'text-amber-400';
-          const safeId = escapeHtml(s.station_id);
-          return `<div class="health-station-card ${cls}">
-            <div class="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm"
-              style="background:${ok ? 'rgba(52,211,153,0.15)' : 'rgba(251,191,36,0.15)'}; color:${ok ? '#34d399' : '#fbbf24'}">${safeId.slice(0,3)}</div>
-            <div class="flex-1">
-              <div class="font-semibold text-white text-sm">${safeId}</div>
-              <div class="text-xs text-slate-500">Model: ${escapeHtml(s.model_version || 'v0.1.0')}</div>
+      ? stations.map(([id, st]) => {
+          const safeId = escapeHtml(id);
+          const safeStatus = escapeHtml(st.status || 'OFFLINE');
+          const safeVer = escapeHtml(st.model_version || '—');
+          return `
+          <div class="flex items-center justify-between p-3 rounded-lg bg-slate-800/40 border border-slate-700/50">
+            <div>
+              <div class="font-semibold text-sm text-white">${safeId}</div>
+              <div class="text-xs text-slate-500">Model: ${safeVer}</div>
             </div>
-            <div class="text-right">
-              <div class="${col} text-xs font-bold">${ok ? 'ONLINE' : 'STALE'}</div>
-            </div>
+            <span class="badge-pass px-2 py-0.5 rounded text-xs font-bold">${safeStatus}</span>
           </div>`;
         }).join('')
-      : '<div class="text-slate-600 text-sm">No station data.</div>';
+      : '<div class="text-slate-500 text-sm">No stations registered</div>';
 
     const plcEl = document.getElementById('health-plc');
     plcEl.innerHTML = `
-      <div class="space-y-3 text-sm">
-        <div class="flex justify-between items-center py-2 border-b border-slate-800">
-          <span class="text-slate-400">PLC Status</span>
-          <span class="${data.plc_connected ? 'text-emerald-400' : 'text-rose-400'} font-semibold">${data.plc_connected ? '● Connected' : '○ Disconnected'}</span>
+      <div class="flex items-center justify-between p-3 rounded-lg bg-slate-800/40 border border-slate-700/50">
+        <div>
+          <div class="font-semibold text-sm text-white">PLC Controller</div>
+          <div class="text-xs text-slate-500">Siemens S7 / Modbus TCP</div>
         </div>
-        <div class="flex justify-between items-center py-2 border-b border-slate-800">
-          <span class="text-slate-400">Database Status</span>
-          <span class="text-emerald-400 font-semibold">${escapeHtml(data.database_status || 'healthy')}</span>
+        ${h.plc_connected ? '<span class="badge-pass px-2 py-0.5 rounded text-xs font-bold">CONNECTED</span>' : '<span class="badge-fail px-2 py-0.5 rounded text-xs font-bold">DISCONNECTED</span>'}
+      </div>
+      <div class="flex items-center justify-between p-3 rounded-lg bg-slate-800/40 border border-slate-700/50">
+        <div>
+          <div class="font-semibold text-sm text-white">Inspection Storage</div>
+          <div class="text-xs text-slate-500">SQLite / PostgreSQL DB</div>
         </div>
+        <span class="badge-pass px-2 py-0.5 rounded text-xs font-bold">READY</span>
       </div>`;
   } catch (e) {
     document.getElementById('health-stations').innerHTML = `<div class="text-rose-400 text-sm">${escapeHtml(e.message)}</div>`;
@@ -968,7 +948,7 @@ async function fetchHealth() {
   }
 }
 
-// ─────────────────────────  REVIEW QUEUE  ─────────────────────────
+// ─────────────────────────  HUMAN REVIEW QUEUE  ─────────────────────────
 async function fetchReviews() {
   try {
     const items = await api('/api/v1/reviews/pending');
@@ -1037,6 +1017,243 @@ async function submitReview(id) {
   }
 }
 
+// ─────────────────────────  REWORK BENCH (Phase 9)  ─────────────────────────
+async function loadReworkSeat(seatIdParam) {
+  const inputEl = document.getElementById('rework-seat-input');
+  const seatId = (seatIdParam || inputEl?.value || '').trim();
+  if (!seatId) {
+    showToast('Please enter or scan a Seat ID', 'error');
+    return;
+  }
+  currentReworkSeatId = seatId;
+  const container = document.getElementById('rework-container');
+  container.innerHTML = '<div class="flex justify-center py-16"><div class="spinner"></div></div>';
+
+  try {
+    const data = await api(`/api/v1/seats/${encodeURIComponent(seatId)}`);
+    let auditLogs = [];
+    try {
+      auditLogs = await api(`/api/v1/audit?seat_id=${encodeURIComponent(seatId)}&limit=10`);
+    } catch (_) {}
+
+    renderReworkBench(data, auditLogs);
+  } catch (e) {
+    container.innerHTML = `
+      <div class="card p-6 border-rose-500/40 text-center">
+        <div class="text-rose-400 font-bold mb-2">Failed to load Seat trace: ${escapeHtml(seatId)}</div>
+        <div class="text-xs text-slate-500">${escapeHtml(e.message)}</div>
+      </div>`;
+  }
+}
+
+async function fetchLatestPendingRework() {
+  try {
+    const pending = await api('/api/v1/reviews/pending');
+    if (pending && pending.length > 0) {
+      const sid = pending[0].seat_id;
+      document.getElementById('rework-seat-input').value = sid;
+      loadReworkSeat(sid);
+      showToast(`Loaded pending review seat: ${sid}`, 'info');
+    } else {
+      showToast('No pending reviews in queue', 'info');
+    }
+  } catch (e) {
+    showToast(`Failed: ${e.message}`, 'error');
+  }
+}
+
+function exportCurrentSeatTrace() {
+  const sid = currentReworkSeatId || document.getElementById('rework-seat-input')?.value?.trim();
+  if (!sid) {
+    showToast('No seat loaded to export', 'error');
+    return;
+  }
+  const downloadUrl = `${cfg.apiUrl}/api/v1/seats/${encodeURIComponent(sid)}/export`;
+  window.open(downloadUrl, '_blank');
+  showToast(`Downloading trace ZIP for ${sid}`, 'success');
+}
+
+function renderReworkBench(data, auditLogs) {
+  const safeSeatId = escapeHtml(data.seat_id);
+  const safeVariant = escapeHtml(data.variant_id);
+  const stResults = data.station_results || [];
+
+  // Extract all defects across stations
+  const allDefects = [];
+  stResults.forEach(sr => {
+    (sr.defects || []).forEach(d => {
+      allDefects.push({ ...d, station_id: sr.station_id });
+    });
+  });
+
+  const container = document.getElementById('rework-container');
+  container.innerHTML = `
+    <!-- Top Metadata Card -->
+    <div class="card p-5">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+          <div class="text-xl font-bold font-mono text-sky-400">${safeSeatId}</div>
+          <div class="text-sm text-slate-400">Variant: <span class="text-white font-semibold">${safeVariant}</span></div>
+          ${outcomeBadge(data.outcome)}
+        </div>
+        <div class="flex items-center gap-3">
+          <button class="btn-ghost text-xs" onclick="exportCurrentSeatTrace()">📥 Download Audit Package (.ZIP)</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-800 text-xs">
+        <div><span class="text-slate-500">Label Printer:</span> <span class="font-bold ${data.label_printer_enabled ? 'text-emerald-400' : 'text-slate-400'}">${data.label_printer_enabled ? '✓ ARMED' : '— DISABLED'}</span></div>
+        <div><span class="text-slate-500">Mechanism Lock:</span> <span class="font-bold ${data.lock_sensor_confirmed ? 'text-emerald-400' : 'text-slate-400'}">${data.lock_sensor_confirmed ? '✓ CONFIRMED' : '— UNCONFIRMED'}</span></div>
+        <div><span class="text-slate-500">Mechanism Cycle:</span> <span class="font-bold ${data.mechanism_cycle_passed ? 'text-emerald-400' : 'text-slate-400'}">${data.mechanism_cycle_passed ? '✓ PASSED' : '— FAIL/HELD'}</span></div>
+        <div><span class="text-slate-500">Shadow Mode:</span> <span class="text-slate-300 font-mono">${data.shadow_mode ? 'ACTIVE' : 'OFF'}</span></div>
+      </div>
+    </div>
+
+    <!-- Multi-Camera Views Grid -->
+    <div class="card p-5">
+      <div class="section-title mb-4">Multi-Camera Station Views</div>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        ${stResults.map(sr => {
+          const safeSt = escapeHtml(sr.station_id);
+          const camResults = sr.camera_results || {};
+          const camPaths = sr.camera_image_paths || {};
+          const camKeys = Object.keys(camResults);
+          return `
+          <div class="p-4 rounded-xl bg-slate-800/40 border border-slate-700/60 flex flex-col justify-between">
+            <div>
+              <div class="flex justify-between items-center mb-2">
+                <span class="font-bold text-sm text-white">${safeSt}</span>
+                ${outcomeBadge(sr.outcome)}
+              </div>
+              <div class="text-xs text-slate-500 mb-3">Cycle time: ${sr.cycle_time_ms ? sr.cycle_time_ms.toFixed(1) : 0} ms</div>
+              <div class="space-y-1.5 text-xs">
+                ${camKeys.length ? camKeys.map(ck => {
+                  const cr = camResults[ck] || {};
+                  return `
+                  <div class="flex items-center justify-between py-1 border-b border-slate-700/40">
+                    <span class="text-slate-300 font-mono text-[11px] truncate" title="${escapeHtml(ck)}">${escapeHtml(ck)}</span>
+                    <span class="px-1.5 py-0.2 rounded text-[10px] font-bold ${cr.outcome === 'PASS' ? 'text-emerald-400' : 'text-rose-400'}">${escapeHtml(cr.outcome || '—')}</span>
+                  </div>`;
+                }).join('') : '<div class="text-slate-500 text-xs">No multi-camera telemetry</div>'}
+              </div>
+            </div>
+            <div class="mt-4 pt-2 border-t border-slate-700/40 text-[11px] text-slate-500">
+              ${sr.defects?.length ? `<span class="text-rose-400 font-semibold">${sr.defects.length} defect(s) detected</span>` : '<span class="text-emerald-400">All checks cleared</span>'}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Failing Rules & Detected Defects -->
+    <div class="card p-5">
+      <div class="section-title mb-4">Failing Rules &amp; Detected Defect Details</div>
+      ${allDefects.length ? `
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr style="border-bottom: 1px solid #1e293b;">
+              <th class="px-3 py-2 text-left text-slate-500 font-semibold uppercase">Station</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-semibold uppercase">Defect Type</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-semibold uppercase">Outcome</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-semibold uppercase">Measured</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-semibold uppercase">Nominal</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-semibold uppercase">Unit</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-semibold uppercase">ROI / View</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-semibold uppercase">Bounding Box</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allDefects.map(d => `
+            <tr class="border-b border-slate-800 hover:bg-slate-800/30">
+              <td class="px-3 py-2 text-white font-mono">${escapeHtml(d.station_id)}</td>
+              <td class="px-3 py-2 text-rose-400 font-bold">${escapeHtml(d.defect_type)}</td>
+              <td class="px-3 py-2">${outcomeBadge(d.outcome)}</td>
+              <td class="px-3 py-2 text-slate-200">${escapeHtml(d.measured_value ?? '—')}</td>
+              <td class="px-3 py-2 text-slate-400">${escapeHtml(d.nominal_value ?? '—')}</td>
+              <td class="px-3 py-2 text-slate-400">${escapeHtml(d.unit ?? '—')}</td>
+              <td class="px-3 py-2 text-slate-300">${escapeHtml(d.roi_name || d.view || '—')}</td>
+              <td class="px-3 py-2 font-mono text-slate-400">${d.bbox ? `[${d.bbox.join(', ')}]` : '—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : '<div class="text-slate-500 text-sm py-4">No defects or failing rules recorded for this seat.</div>'}
+    </div>
+
+    <!-- Rework Action & Adjudication -->
+    <div class="card p-5">
+      <div class="section-title mb-4">Operator Rework Disposition</div>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Inspector ID</label>
+          <input type="text" id="rework-inspector-id" value="rework_operator" class="w-full" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Rework Decision</label>
+          <select id="rework-decision" class="w-full">
+            <option value="PASS">PASS (Approved Rework)</option>
+            <option value="REWORK">REWORK (Return to Station)</option>
+            <option value="SCRAP">SCRAP (Permanently Reject)</option>
+          </select>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-xs text-slate-500 mb-1">Disposition Notes</label>
+          <div class="flex gap-2">
+            <input type="text" id="rework-notes" placeholder="e.g. Corrected seam alignment, re-clamped..." class="w-full" />
+            <button class="btn-primary" onclick="submitReworkDisposition('${safeSeatId}')">Save Verdict</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audit Log Trail for Seat -->
+    <div class="card p-5">
+      <div class="section-title mb-3">Seat Traceability Audit Trail</div>
+      <div class="space-y-1.5 text-xs">
+        ${auditLogs.length ? auditLogs.map(l => `
+        <div class="flex items-center justify-between py-1.5 border-b border-slate-800">
+          <div class="flex items-center gap-3">
+            <span class="text-slate-500 font-mono">${fmtTs(l.timestamp)}</span>
+            <span class="text-sky-400 font-semibold">${escapeHtml(l.event_type)}</span>
+            <span class="text-slate-400">${escapeHtml(l.details)}</span>
+          </div>
+          <span class="text-slate-500">${escapeHtml(l.station_id || 'LINE')}</span>
+        </div>`).join('') : '<div class="text-slate-500">No audit log entries found for this seat.</div>'}
+      </div>
+    </div>
+  `;
+}
+
+async function submitReworkDisposition(seatId) {
+  const inspector_id = document.getElementById('rework-inspector-id')?.value || 'rework_operator';
+  const decision = document.getElementById('rework-decision')?.value || 'PASS';
+  const notes = document.getElementById('rework-notes')?.value || '';
+
+  try {
+    // Check if there is an active review record for this seat
+    const pending = await api('/api/v1/reviews/pending');
+    const match = pending.find(p => p.seat_id === seatId);
+
+    if (match) {
+      await api(`/api/v1/reviews/${match.review_id}/decision`, {
+        method: 'POST',
+        body: JSON.stringify({ inspector_id, decision, notes }),
+      });
+      showToast(`Rework disposition submitted for ${seatId}`, 'success');
+    } else {
+      // Record shadow decision as disposition fallback
+      await api('/api/v1/shadow-mode/decision', {
+        method: 'POST',
+        body: JSON.stringify({ seat_id: seatId, inspector_id, decision: decision === 'PASS' ? 'PASS' : 'FAIL', notes }),
+      });
+      showToast(`Audit disposition recorded for ${seatId}`, 'success');
+    }
+    loadReworkSeat(seatId);
+  } catch (e) {
+    showToast(`Disposition error: ${e.message}`, 'error');
+  }
+}
+
 // ─────────────────────────  AUDIT LOG  ─────────────────────────
 async function fetchAudit() {
   const seatFilter = document.getElementById('audit-seat-filter').value.trim();
@@ -1073,14 +1290,16 @@ async function fetchShadow() {
     document.getElementById('sm-agreement').textContent = fmtPct(data.agreement_rate);
     document.getElementById('sm-escape').textContent = fmtPct(data.escape_rate);
     document.getElementById('sm-false-reject').textContent = fmtPct(data.false_reject_rate);
-    document.getElementById('sm-reviews').textContent = data.reviewed_sample_size ?? '—';
+    document.getElementById('sm-reviews').textContent = data.compared_sample_size ?? data.reviewed_sample_size ?? '—';
 
     const details = document.getElementById('shadow-details');
     details.innerHTML = `
-      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Shadow Mode Total Inspected</span><span>${escapeHtml(data.sample_size ?? 0)}</span></div>
-      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Audited Reviews Sampled</span><span>${escapeHtml(data.reviewed_sample_size ?? 0)}</span></div>
-      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Escape count (camera PASS → human non-pass)</span><span class="text-rose-400">${escapeHtml(data.escape_count ?? 0)}</span></div>
-      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">False-reject count (camera non-pass → human PASS)</span><span class="text-amber-400">${escapeHtml(data.false_reject_count ?? 0)}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Total Seats Inspected</span><span>${escapeHtml(data.total_inspected ?? data.sample_size ?? 0)}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Human Inspector Decisions</span><span>${escapeHtml(data.human_decisions_count ?? data.reviewed_sample_size ?? 0)}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Direct Comparison Sample</span><span>${escapeHtml(data.compared_sample_size ?? 0)}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">Escape count (camera PASS → human FAIL)</span><span class="text-rose-400 font-bold">${escapeHtml(data.escape_count ?? 0)}</span></div>
+      <div class="flex justify-between py-2 border-b border-slate-800"><span class="text-slate-500">False-reject count (camera FAIL → human PASS)</span><span class="text-amber-400 font-bold">${escapeHtml(data.false_reject_count ?? 0)}</span></div>
+      ${data.flagged_false_reject_warning ? '<div class="py-2 text-rose-400 font-bold text-center bg-rose-950/30 rounded border border-rose-800/40">⚠️ Shift Quality Warning: False Reject Rate exceeds 3% threshold</div>' : ''}
     `;
 
     // Chart
@@ -1089,11 +1308,16 @@ async function fetchShadow() {
     shadowChart = new Chart(sCtx, {
       type: 'bar',
       data: {
-        labels: ['Camera Catches', 'Human Catches', 'Escapes', 'False Rejects'],
+        labels: ['Camera PASS', 'Camera FAIL', 'Escapes', 'False Rejects'],
         datasets: [{
           label: 'Count',
-          data: [data.camera_catches || 0, data.human_catches || 0, data.escape_count || 0, data.false_reject_count || 0],
-          backgroundColor: ['rgba(52,211,153,0.7)', 'rgba(56,189,248,0.7)', 'rgba(248,113,113,0.7)', 'rgba(251,191,36,0.7)'],
+          data: [
+            data.camera_pass_count || 0,
+            data.camera_fail_count || 0,
+            data.escape_count || 0,
+            data.false_reject_count || 0
+          ],
+          backgroundColor: ['rgba(52,211,153,0.7)', 'rgba(239,68,68,0.7)', 'rgba(244,63,94,0.7)', 'rgba(251,191,36,0.7)'],
           borderRadius: 6,
         }],
       },
@@ -1148,6 +1372,9 @@ async function openSeatModal(seatId) {
               </div>`).join('')}</div>` : ''}
           </div>`;
         }).join('')}
+      </div>
+      <div class="mt-4 pt-4 border-t border-slate-800 flex justify-end">
+        <button class="btn-primary text-xs" onclick="closeModal(); setSection('rework'); loadReworkSeat('${safeSeatId}');">Open in Rework Bench</button>
       </div>`;
   } catch (e) {
     document.getElementById('modal-body').innerHTML = `<div class="text-rose-400 text-sm">${escapeHtml(e.message)}</div>`;
@@ -1159,6 +1386,15 @@ function closeModal() {
 }
 document.getElementById('seat-modal').addEventListener('click', (e) => {
   if (e.target === document.getElementById('seat-modal')) closeModal();
+});
+
+// Event delegation for opening seat modal
+document.addEventListener('click', (e) => {
+  const tile = e.target.closest('[data-seat-id]');
+  if (tile) {
+    const sid = tile.getAttribute('data-seat-id');
+    if (sid) openSeatModal(sid);
+  }
 });
 
 // ─────────────────────────  SETTINGS  ─────────────────────────
