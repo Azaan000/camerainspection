@@ -37,7 +37,17 @@ class DatabaseManager:
                 db_path = Path(path_str).resolve()
                 db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.engine = create_engine(self.db_url, echo=echo)
+        if db_url in ("sqlite:///:memory:", "sqlite://"):
+            from sqlalchemy.pool import StaticPool
+            self.engine = create_engine(
+                self.db_url,
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+                echo=echo,
+            )
+        else:
+            self.engine = create_engine(self.db_url, echo=echo)
+
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def init_tables(self) -> None:
@@ -140,3 +150,40 @@ class DatabaseManager:
                 details=details,
             )
             session.add(audit)
+
+    def queue_for_review(self, seat_id: str, station_id: str | None = None) -> int:
+        """Enqueue an inspection that requires human adjudication."""
+        from datetime import datetime, timezone
+        from camerainspection.storage.entities import HumanReviewRecord
+
+        with self.session_scope() as session:
+            rev = HumanReviewRecord(
+                seat_id=seat_id,
+                station_id=station_id,
+                inspector_id="SYSTEM",
+                status="PENDING",
+            )
+            session.add(rev)
+            session.flush()
+            return int(rev.id)
+
+    def resolve_review(
+        self,
+        review_id: int,
+        inspector_id: str,
+        decision: str,
+        notes: str = "",
+    ) -> None:
+        """Resolve a human review record (decision: PASS, REWORK, SCRAP)."""
+        from datetime import datetime, timezone
+        from camerainspection.storage.entities import HumanReviewRecord
+
+        with self.session_scope() as session:
+            rev = session.query(HumanReviewRecord).filter_by(id=review_id).first()
+            if rev:
+                rev.inspector_id = inspector_id
+                rev.status = "RESOLVED"
+                rev.decision = decision
+                rev.notes = notes
+                rev.reviewed_at = datetime.now(timezone.utc)
+

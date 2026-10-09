@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models for seat inspections, station results, defects, and audit logs."""
+"""SQLAlchemy ORM models for seat inspections, station results, defects, audit logs, and human review queue."""
 
 from __future__ import annotations
 
@@ -37,6 +37,9 @@ class SeatInspectionRecord(Base):
 
     station_results = relationship(
         "StationResultRecord", back_populates="seat", cascade="all, delete-orphan"
+    )
+    reviews = relationship(
+        "HumanReviewRecord", back_populates="seat", cascade="all, delete-orphan"
     )
 
 
@@ -90,6 +93,31 @@ class DefectRecord(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     station_result = relationship("StationResultRecord", back_populates="defects")
+
+
+class HumanReviewRecord(Base):
+    """Human inspector decision on items in the REVIEW band.
+
+    Stores inspector adjudication and acts as newly labeled dataset feedback.
+    """
+
+    __tablename__ = "human_reviews"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    seat_id = Column(
+        String(64), ForeignKey("seat_inspections.seat_id"), nullable=False, index=True
+    )
+    station_id = Column(String(32), nullable=True, index=True)
+    inspector_id = Column(String(64), nullable=False, index=True)
+    status = Column(String(16), default="PENDING", nullable=False, index=True)  # PENDING, RESOLVED
+    decision = Column(String(16), nullable=True, index=True)  # PASS, REWORK, SCRAP
+    notes = Column(Text, default="")
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
+    )
+    reviewed_at = Column(DateTime, nullable=True)
+
+    seat = relationship("SeatInspectionRecord", back_populates="reviews")
 
 
 class AuditLogRecord(Base):
