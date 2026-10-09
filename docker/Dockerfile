@@ -21,4 +21,5 @@ RUN pip install --upgrade pip && \
 COPY . .
 RUN pip install -e .
 
-CMD ["pytest", "-v"]
+CMD ["python", "-m", "camerainspection.main", "--host", "0.0.0.0", "--port", "8000"]
+

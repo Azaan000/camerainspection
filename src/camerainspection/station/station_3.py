@@ -59,6 +59,14 @@ class Station3Service(BaseStation):
             y1, y2 = max(0, roi.y), min(image.shape[0], roi.y + roi.h)
             x1, x2 = max(0, roi.x), min(image.shape[1], roi.x + roi.w)
             search_crop = image[y1:y2, x1:x2]
+            if search_crop.size == 0:
+                defects.append(DefectDetail(
+                    defect_type="station.invalid_roi",
+                    outcome=Outcome.FAIL,
+                    roi_name=roi_name,
+                    description=f"Component ROI '{roi_name}' is empty or out-of-bounds.",
+                ))
+                continue
 
             golden_template = self.load_golden_template(variant_id, roi_name)
             opp_template = (

@@ -59,22 +59,30 @@ class Station4Service(BaseStation):
             ry2 = min(image.shape[0], recliner_roi_cfg.y + recliner_roi_cfg.h)
             recliner_crop = image[ry1:ry2, rx1:rx2]
 
-            measured_angle = MechanismVisionEngine.measure_recliner_angle(recliner_crop)
-            measurements["recliner_angle_deg"] = measured_angle
+            if recliner_crop.size == 0:
+                defects.append(DefectDetail(
+                    defect_type="station.invalid_roi",
+                    outcome=Outcome.FAIL,
+                    roi_name="recliner_pivot",
+                    description=f"Recliner ROI is out-of-bounds or empty ({recliner_roi_cfg.w}x{recliner_roi_cfg.h} at {recliner_roi_cfg.x},{recliner_roi_cfg.y}).",
+                ))
+            else:
+                measured_angle = MechanismVisionEngine.measure_recliner_angle(recliner_crop)
+                measurements["recliner_angle_deg"] = measured_angle
 
-            # Tolerance check against nominal
-            angle_d = evaluator.evaluate_check(
-                "mechanism", "recliner_angle_deg", measured_angle, nominal=nom_recliner_deg
-            )
-            angle_d.roi_name = "recliner_pivot"
-            if angle_d.outcome != Outcome.PASS:
-                defects.append(angle_d)
+                # Tolerance check against nominal
+                angle_d = evaluator.evaluate_check(
+                    "mechanism", "recliner_angle_deg", measured_angle, nominal=nom_recliner_deg
+                )
+                angle_d.roi_name = "recliner_pivot"
+                if angle_d.outcome != Outcome.PASS:
+                    defects.append(angle_d)
 
-            cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), (255, 200, 0), 2)
-            cv2.putText(
-                annotated, f"Angle: {measured_angle:.1f} deg",
-                (rx1, max(0, ry1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
-            )
+                cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), (255, 200, 0), 2)
+                cv2.putText(
+                    annotated, f"Angle: {measured_angle:.1f} deg",
+                    (rx1, max(0, ry1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
+                )
         else:
             defects.append(DefectDetail(
                 defect_type="station.config",
@@ -90,24 +98,32 @@ class Station4Service(BaseStation):
             ty2 = min(image.shape[0], track_roi_cfg.y + track_roi_cfg.h)
             track_crop = image[ty1:ty2, tx1:tx2]
 
-            measured_pos = MechanismVisionEngine.measure_track_position_mm(
-                track_crop, pixel_size_mm=pixel_size_mm, reference_datum_x=0.0
-            )
-            measurements["track_end_position_mm"] = measured_pos
+            if track_crop.size == 0:
+                defects.append(DefectDetail(
+                    defect_type="station.invalid_roi",
+                    outcome=Outcome.FAIL,
+                    roi_name="track_travel",
+                    description=f"Track travel ROI is out-of-bounds or empty ({track_roi_cfg.w}x{track_roi_cfg.h} at {track_roi_cfg.x},{track_roi_cfg.y}).",
+                ))
+            else:
+                measured_pos = MechanismVisionEngine.measure_track_position_mm(
+                    track_crop, pixel_size_mm=pixel_size_mm, reference_datum_x=0.0
+                )
+                measurements["track_end_position_mm"] = measured_pos
 
-            # Tolerance check against nominal
-            pos_d = evaluator.evaluate_check(
-                "mechanism", "track_end_position_mm", measured_pos, nominal=nom_track_pos_mm
-            )
-            pos_d.roi_name = "track_travel"
-            if pos_d.outcome != Outcome.PASS:
-                defects.append(pos_d)
+                # Tolerance check against nominal
+                pos_d = evaluator.evaluate_check(
+                    "mechanism", "track_end_position_mm", measured_pos, nominal=nom_track_pos_mm
+                )
+                pos_d.roi_name = "track_travel"
+                if pos_d.outcome != Outcome.PASS:
+                    defects.append(pos_d)
 
-            cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), (255, 200, 0), 2)
-            cv2.putText(
-                annotated, f"Track: {measured_pos:.1f} mm",
-                (tx1, max(0, ty1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
-            )
+                cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), (255, 200, 0), 2)
+                cv2.putText(
+                    annotated, f"Track: {measured_pos:.1f} mm",
+                    (tx1, max(0, ty1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
+                )
         else:
             defects.append(DefectDetail(
                 defect_type="station.config",

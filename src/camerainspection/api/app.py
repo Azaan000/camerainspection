@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Header, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,17 +26,30 @@ logger = get_logger("api.service")
 _DEFAULT_API_KEY = "inspector_secret_token_123"
 
 
-def verify_api_key(x_api_key: str | None = Header(None)) -> str:
-    """Validate bearer / API key authentication for protected endpoints."""
+def verify_api_key(
+    x_api_key: str | None = Header(None),
+    authorization: str | None = Header(None),
+) -> str:
+    """Validate bearer / API key authentication using constant-time comparison."""
+    token = x_api_key
+    if not token and authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+
     expected_key = os.getenv("INSPECTION_API_KEY", _DEFAULT_API_KEY)
-    # If explicitly configured as None/empty, authentication can be bypassed in local dev
-    if expected_key and x_api_key != expected_key:
-        # Check Authorization header bearer token fallback
+    if not expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server authentication key is not configured.",
+        )
+
+    if not token or not secrets.compare_digest(token, expected_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing X-API-Key authentication header.",
+            detail="Invalid or missing authentication credentials (X-API-Key or Bearer token).",
         )
-    return x_api_key or "anonymous"
+    return "inspector_authorized"
 
 
 class ReviewDecisionRequest(BaseModel):
@@ -56,11 +70,12 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
         description="REST service for live station results, human review queue, and OEM audit logs.",
     )
 
-    # Allow the standalone HTML UI (served from file:// or a dev server) to call the API.
+    cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+    allow_wildcard = "*" in cors_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=["*"] if allow_wildcard else cors_origins,
+        allow_credentials=not allow_wildcard,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -70,12 +85,15 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
         return {"status": "ok", "service": "camera-inspection-system"}
 
     # -------------------------------------------------------------
-    # Coordinator & Inspection Results Endpoints
+    # Coordinator & Inspection Results Endpoints (Authenticated)
     # -------------------------------------------------------------
 
     @app.post("/api/v1/stations/result", status_code=status.HTTP_201_CREATED)
-    def submit_station_result(payload: StationResultIngestRequest) -> dict[str, Any]:
-        """Ingest a completed inspection result from a station."""
+    def submit_station_result(
+        payload: StationResultIngestRequest,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Ingest a completed inspection result from a station (Authenticated)."""
         st_id = db_manager.record_station_result(payload.result)
         finalized = None
         if coordinator is not None:
@@ -90,7 +108,7 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
 
     @app.get("/api/v1/seats/{seat_id}")
     def get_seat_inspection_result(seat_id: str) -> dict[str, Any]:
-        """Fetch consolidated inspection result for a seat by ID."""
+        """Fetch consolidated inspection result for a seat by ID with all measurements and defects."""
         with db_manager.session_scope() as session:
             record = (
                 session.query(SeatInspectionRecord).filter_by(seat_id=seat_id).first()
@@ -110,11 +128,31 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
                     "seat_id": seat_id,
                     "variant_id": st_records[0].variant_id,
                     "outcome": "IN_PROGRESS",
+                    "shadow_mode": False,
+                    "label_printer_enabled": False,
+                    "mechanism_cycle_passed": False,
+                    "lock_sensor_confirmed": False,
                     "station_results": [
                         {
                             "station_id": s.station_id,
                             "outcome": s.outcome,
                             "cycle_time_ms": s.cycle_time_ms,
+                            "model_version": s.model_version,
+                            "config_version": s.config_version,
+                            "defects": [
+                                {
+                                    "defect_type": d.defect_type,
+                                    "outcome": d.outcome,
+                                    "measured_value": d.measured_value,
+                                    "nominal_value": d.nominal_value,
+                                    "unit": d.unit,
+                                    "confidence": d.confidence,
+                                    "bbox": [d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h] if d.bbox_x is not None else None,
+                                    "roi_name": d.roi_name,
+                                    "description": d.description,
+                                }
+                                for d in s.defects
+                            ],
                         }
                         for s in st_records
                     ],
@@ -124,13 +162,33 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
                 "seat_id": record.seat_id,
                 "variant_id": record.variant_id,
                 "outcome": record.outcome,
+                "shadow_mode": record.shadow_mode,
                 "label_printer_enabled": record.label_printer_enabled,
+                "mechanism_cycle_passed": record.mechanism_cycle_passed,
+                "lock_sensor_confirmed": record.lock_sensor_confirmed,
                 "created_at": record.created_at.isoformat() if record.created_at else None,
+                "completed_at": record.completed_at.isoformat() if record.completed_at else None,
                 "station_results": [
                     {
                         "station_id": s.station_id,
                         "outcome": s.outcome,
                         "cycle_time_ms": s.cycle_time_ms,
+                        "model_version": s.model_version,
+                        "config_version": s.config_version,
+                        "defects": [
+                            {
+                                "defect_type": d.defect_type,
+                                "outcome": d.outcome,
+                                "measured_value": d.measured_value,
+                                "nominal_value": d.nominal_value,
+                                "unit": d.unit,
+                                "confidence": d.confidence,
+                                "bbox": [d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h] if d.bbox_x is not None else None,
+                                "roi_name": d.roi_name,
+                                "description": d.description,
+                            }
+                            for d in s.defects
+                        ],
                     }
                     for s in record.station_results
                 ],
@@ -141,8 +199,8 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
     # -------------------------------------------------------------
 
     @app.get("/api/v1/reviews/pending")
-    def get_pending_reviews() -> list[dict[str, Any]]:
-        """List seats currently enqueued for human review."""
+    def get_pending_reviews(auth_user: str = Depends(verify_api_key)) -> list[dict[str, Any]]:
+        """List seats currently enqueued for human review (Authenticated)."""
         with db_manager.session_scope() as session:
             pending = session.query(HumanReviewRecord).filter_by(status="PENDING").all()
             return [
@@ -174,9 +232,12 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
             if not rev:
                 raise HTTPException(status_code=404, detail=f"Review ID {review_id} not found.")
 
+        # Bind inspector identity: use declared inspector or authenticated actor
+        inspector = payload.inspector_id.strip() or auth_user
+
         db_manager.resolve_review(
             review_id=review_id,
-            inspector_id=payload.inspector_id,
+            inspector_id=inspector,
             decision=payload.decision,
             notes=payload.notes,
         )
@@ -195,16 +256,54 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
                 # Update the database and check if PLC accepts printer enablement
                 with db_manager.session_scope() as session:
                     seat_rec = session.query(SeatInspectionRecord).filter_by(seat_id=rev.seat_id).first()
+                    if target_station:
+                        st_rec = (
+                            session.query(StationResultRecord)
+                            .filter_by(seat_id=rev.seat_id, station_id=target_station)
+                            .first()
+                        )
+                        if st_rec:
+                            st_rec.outcome = Outcome.PASS.value
+
                     if seat_rec:
                         lock_ok = coordinator.plc.is_mechanism_locked()
-                        # Override station outcome in coordinator/PLC for this passed review
                         if target_station:
-                            coordinator.plc.set_station_result(target_station, Outcome.PASS)
+                            coordinator.plc.set_station_result(
+                                target_station, Outcome.PASS, seat_id=rev.seat_id
+                            )
 
-                        # Check if overall seat is now passing
-                        if lock_ok:
-                            coordinator.plc.set_label_printer_enable(True)
-                            # Align DB record strictly with actual PLC state
+                        # If station 4 was reviewed, human approval confirms mechanism cycle
+                        if target_station == "STATION_4":
+                            st4_pass = True
+                        else:
+                            st4_rec = (
+                                session.query(StationResultRecord)
+                                .filter_by(seat_id=rev.seat_id, station_id="STATION_4")
+                                .first()
+                            )
+                            st4_pass = (
+                                (st4_rec is not None and st4_rec.outcome == Outcome.PASS.value)
+                                or seat_rec.mechanism_cycle_passed
+                                or (coordinator.plc._seat_station_results.get(rev.seat_id, {}).get("STATION_4") == Outcome.PASS)
+                            )
+
+                        mech_cycle_ok = st4_pass and lock_ok
+                        if mech_cycle_ok:
+                            seat_rec.mechanism_cycle_passed = True
+
+                        # Verify all stations for seat are PASS (check DB records or PLC seat results)
+                        if seat_rec.station_results:
+                            all_st_pass = all(
+                                s.outcome == Outcome.PASS.value for s in seat_rec.station_results
+                            )
+                        else:
+                            seat_st_res = coordinator.plc._seat_station_results.get(rev.seat_id, {})
+                            all_st_pass = all(
+                                seat_st_res.get(st) == Outcome.PASS for st in coordinator.expected_stations
+                            )
+
+                        if all_st_pass and mech_cycle_ok and lock_ok:
+                            coordinator.plc.set_label_printer_enable(True, seat_id=rev.seat_id)
                             seat_rec.label_printer_enabled = coordinator.plc.is_label_printer_enabled()
                             seat_rec.outcome = Outcome.PASS.value
             else:
@@ -220,21 +319,22 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
 
         db_manager.log_audit(
             event_type="HUMAN_REVIEW_RESOLVED",
-            details=f"ReviewID {review_id} resolved as {payload.decision} by {payload.inspector_id} (Auth: {auth_user}). Notes: {payload.notes}",
+            details=f"ReviewID {review_id} resolved as {payload.decision} by {inspector} (Auth: {auth_user}). Notes: {payload.notes}",
             seat_id=rev.seat_id,
         )
         return {"review_id": review_id, "resolved": True, "decision": payload.decision}
 
     # -------------------------------------------------------------
-    # Audit Log Endpoints
+    # Audit Log Endpoints (Authenticated)
     # -------------------------------------------------------------
 
     @app.get("/api/v1/audit")
     def query_audit_logs(
         seat_id: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
+        auth_user: str = Depends(verify_api_key),
     ) -> list[dict[str, Any]]:
-        """Query immutable OEM audit log trail."""
+        """Query immutable OEM audit log trail (Authenticated)."""
         with db_manager.session_scope() as session:
             q = session.query(AuditLogRecord).order_by(AuditLogRecord.timestamp.desc())
             if seat_id:

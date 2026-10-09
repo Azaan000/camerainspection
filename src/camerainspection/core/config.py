@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 from typing import Any
 import yaml
@@ -110,7 +111,9 @@ class VariantConfig(BaseModel):
 
 
 class SystemDatabaseConfig(BaseModel):
-    url: str = "sqlite:///./data/inspection.db"
+    url: str = Field(
+        default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///./data/inspection.db")
+    )
     echo_sql: bool = False
 
 

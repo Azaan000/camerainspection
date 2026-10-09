@@ -18,11 +18,23 @@ class SiemensSnap7PLC(BasePLC):
     Gracefully falls back to mock simulation if python-snap7 is not installed or PLC is offline.
     """
 
-    def __init__(self, host: str = "127.0.0.1", rack: int = 0, slot: int = 1) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        rack: int = 0,
+        slot: int = 1,
+        expected_stations: list[str] | None = None,
+        db_number: int = 1,
+        printer_byte: int = 0,
+        printer_bit: int = 0,
+    ) -> None:
+        super().__init__(expected_stations=expected_stations)
         self.host = host
         self.rack = rack
         self.slot = slot
+        self.db_number = db_number
+        self.printer_byte = printer_byte
+        self.printer_bit = printer_bit
         self._connected = False
         self._client: Any = None
         self._lock = threading.Lock()
@@ -81,8 +93,25 @@ class SiemensSnap7PLC(BasePLC):
             return self._mechanism_locked
 
     def _write_label_printer_hardware(self, enable: bool) -> None:
-        # Snap7 DB write to printer interlock tag
-        pass
+        """Physical Snap7 DB write to printer interlock tag."""
+        with self._lock:
+            if self._client is not None and getattr(self._client, "get_connected", lambda: False)():
+                try:
+                    # Read current byte to modify only the targeted bit
+                    data = self._client.db_read(self.db_number, self.printer_byte, 1)
+                    byte_val = data[0]
+                    if enable:
+                        byte_val |= (1 << self.printer_bit)
+                    else:
+                        byte_val &= ~(1 << self.printer_bit)
+                    self._client.db_write(self.db_number, self.printer_byte, bytes([byte_val]))
+                    logger.info(
+                        f"Snap7 DB{self.db_number}.DBX{self.printer_byte}.{self.printer_bit} written: {enable}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to write Snap7 printer bit: {e}")
+            else:
+                logger.debug(f"Snap7 simulated printer bit state: {enable}")
 
     def simulate_mechanism_sensor(self, locked: bool) -> None:
         with self._lock:

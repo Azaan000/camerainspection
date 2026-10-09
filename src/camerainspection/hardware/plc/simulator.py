@@ -17,8 +17,8 @@ logger = get_logger("plc.simulator")
 class PLCSimulator(BasePLC):
     """Thread-safe PLC simulator replicating line indexers, barcode scanners, and printer interlocks."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, expected_stations: list[str] | None = None) -> None:
+        super().__init__(expected_stations=expected_stations)
         self._lock = threading.Lock()
         self._connected = False
         self._tags: dict[str, Any] = {}

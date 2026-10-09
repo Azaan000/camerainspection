@@ -20,16 +20,18 @@ from camerainspection.storage.db import DatabaseManager
 logger = get_logger("coordinator")
 
 _DEFAULT_CYCLE_TIMEOUT_S = 60.0
+_DEFAULT_PRINT_PULSE_TIMEOUT_S = 5.0
 
 
 class InspectionCoordinator:
     """Aggregates results across inspection stations and coordinates line interlocks.
 
     Safety interlocks:
-    - Per-seat tracking for label printing so new pallet arrivals don't prematurely abort printing of a finalized seat.
     - Label printer enabled ONLY when ALL expected stations pass AND mechanism cycle test
       passes AND lock sensor is confirmed.
-    - Background watchdog thread continuously enforces cycle_timeout_s even if the line stalls.
+    - Per-seat tracking for label printing so new pallet arrivals don't prematurely abort printing of a finalized seat.
+    - When a new seat arrives or any station reports FAIL/REVIEW, printer output is immediately disabled.
+    - Background watchdog thread continuously enforces cycle_timeout_s and print_pulse_timeout_s.
     - Seats that do not fully report within ``cycle_timeout_s`` are auto-finalised as FAIL.
     """
 
@@ -40,6 +42,7 @@ class InspectionCoordinator:
         expected_stations: list[str] | None = None,
         shadow_mode: bool = False,
         cycle_timeout_s: float = _DEFAULT_CYCLE_TIMEOUT_S,
+        print_pulse_timeout_s: float = _DEFAULT_PRINT_PULSE_TIMEOUT_S,
         enable_watchdog: bool = True,
     ) -> None:
         self.plc = plc
@@ -52,6 +55,7 @@ class InspectionCoordinator:
         ]
         self.shadow_mode = shadow_mode
         self.cycle_timeout_s = cycle_timeout_s
+        self.print_pulse_timeout_s = print_pulse_timeout_s
         self._lock = threading.Lock()
 
         # In-memory buffer of partial station results keyed by seat_id
@@ -62,6 +66,7 @@ class InspectionCoordinator:
 
         # Per-seat printer enablement state tracking
         self._seat_printer_eligible: dict[str, bool] = {}
+        self._seat_print_time: dict[str, datetime] = {}
         self._currently_printing_seat_id: str | None = None
 
         # Background watchdog timer thread
@@ -80,20 +85,40 @@ class InspectionCoordinator:
             self._watchdog_thread.join(timeout=1.0)
 
     def _watchdog_loop(self) -> None:
-        """Background thread checking for cycle timeouts every 1.0s."""
+        """Background thread checking for cycle timeouts and printer auto-disable every 0.5s."""
         while self._running:
             try:
                 with self._lock:
                     self._purge_timed_out_seats_unlocked()
+                    self._enforce_printer_timeout_unlocked()
             except Exception as e:
                 logger.error(f"Error in watchdog loop: {e}")
-            time.sleep(1.0)
+            time.sleep(0.5)
+
+    def _enforce_printer_timeout_unlocked(self) -> None:
+        """Auto-disable printer pulse if duration exceeds print_pulse_timeout_s."""
+        if self._currently_printing_seat_id is not None:
+            now = datetime.now(timezone.utc)
+            t = self._seat_print_time.get(self._currently_printing_seat_id)
+            if t and (now - t).total_seconds() >= self.print_pulse_timeout_s:
+                sid = self._currently_printing_seat_id
+                logger.info(
+                    f"Print pulse window ({self.print_pulse_timeout_s}s) elapsed for {sid}. Disabling printer."
+                )
+                self._currently_printing_seat_id = None
+                self._seat_print_time.pop(sid, None)
+                self._seat_printer_eligible.pop(sid, None)
+                if not self.shadow_mode and self.plc is not None:
+                    self.plc.set_label_printer_enable(False)
+                    self.plc.clear_seat(sid)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def register_station_result(self, res: StationInspectionResult) -> OverallSeatInspectionResult | None:
+    def register_station_result(
+        self, res: StationInspectionResult
+    ) -> OverallSeatInspectionResult | None:
         """Register an incoming result from a station.
 
         Returns:
@@ -110,16 +135,29 @@ class InspectionCoordinator:
                 self._seat_first_seen[seat_id] = datetime.now(timezone.utc)
                 self._seat_printer_eligible[seat_id] = False
 
-                # If no seat is actively utilizing the printer, ensure printer output is safe
-                if self._currently_printing_seat_id is None:
-                    if not self.shadow_mode and self.plc is not None:
-                        self.plc.set_label_printer_enable(False)
+                # Crucial safety rule: Disable printer as soon as a new seat arrives / starts inspection
+                if self._currently_printing_seat_id is not None:
+                    logger.info(
+                        f"New seat {seat_id} entered line. Shutting off printer previously enabled for {self._currently_printing_seat_id}."
+                    )
+                    self._seat_printer_eligible.pop(self._currently_printing_seat_id, None)
+                    self._seat_print_time.pop(self._currently_printing_seat_id, None)
+                    self._currently_printing_seat_id = None
+                if not self.shadow_mode and self.plc is not None:
+                    self.plc.set_label_printer_enable(False)
 
             self._seat_buffers[seat_id][res.station_id] = res
 
-            # Reflect station outcome into PLC tags
+            # Reflect station outcome into PLC tags with seat_id awareness
             if not self.shadow_mode and self.plc is not None:
-                self.plc.set_station_result(res.station_id, res.outcome)
+                self.plc.set_station_result(res.station_id, res.outcome, seat_id=seat_id)
+
+            # If station result is FAIL or REVIEW, ensure printer is off
+            if res.outcome in (Outcome.FAIL, Outcome.REVIEW):
+                if not self.shadow_mode and self.plc is not None:
+                    self.plc.set_label_printer_enable(False)
+                if self._currently_printing_seat_id == seat_id:
+                    self._currently_printing_seat_id = None
 
             # Check if all expected stations reported for this seat
             reported_stations = set(self._seat_buffers[seat_id].keys())
@@ -135,9 +173,12 @@ class InspectionCoordinator:
         with self._lock:
             if self._currently_printing_seat_id == seat_id:
                 self._currently_printing_seat_id = None
-                if not self.shadow_mode and self.plc is not None:
-                    self.plc.set_label_printer_enable(False)
-                logger.info(f"Seat {seat_id} label applied. Printer output disabled.")
+            self._seat_printer_eligible.pop(seat_id, None)
+            self._seat_print_time.pop(seat_id, None)
+            if not self.shadow_mode and self.plc is not None:
+                self.plc.set_label_printer_enable(False)
+                self.plc.clear_seat(seat_id)
+            logger.info(f"Seat {seat_id} label applied. Printer output disabled and tracking cleared.")
 
     def finalize_seat(self, seat_id: str) -> OverallSeatInspectionResult:
         """Manually force completion of a seat inspection cycle (e.g. on timeout)."""
@@ -210,17 +251,22 @@ class InspectionCoordinator:
             and all(r.outcome == Outcome.PASS for r in results.values())
         )
         can_enable_printer = all_stations_pass and mech_passed and lock_confirmed
-        self._seat_printer_eligible[seat_id] = can_enable_printer
 
         if can_enable_printer:
+            self._seat_printer_eligible[seat_id] = True
             self._currently_printing_seat_id = seat_id
+            self._seat_print_time[seat_id] = datetime.now(timezone.utc)
             if not self.shadow_mode and self.plc is not None:
-                self.plc.set_label_printer_enable(True)
+                self.plc.set_label_printer_enable(True, seat_id=seat_id)
         else:
-            if self._currently_printing_seat_id == seat_id:
-                self._currently_printing_seat_id = None
-                if not self.shadow_mode and self.plc is not None:
-                    self.plc.set_label_printer_enable(False)
+            self._seat_printer_eligible.pop(seat_id, None)
+            self._seat_print_time.pop(seat_id, None)
+            # Crucial: On ANY non-passing finalization, immediately disable printer
+            self._currently_printing_seat_id = None
+            if not self.shadow_mode and self.plc is not None:
+                self.plc.set_label_printer_enable(False)
+                if overall_outcome == Outcome.FAIL:
+                    self.plc.clear_seat(seat_id)
 
         overall = OverallSeatInspectionResult(
             seat_id=seat_id,
@@ -239,6 +285,10 @@ class InspectionCoordinator:
             self.db.record_overall_result(overall)
             if overall_outcome == Outcome.REVIEW:
                 self.db.queue_for_review(seat_id)
+            elif self.shadow_mode:
+                # In shadow mode, human audit queue samples PASS seats as well for escape tracking
+                self.db.queue_for_review(seat_id)
+
             self.db.log_audit(
                 event_type="OVERALL_INSPECTION_FINALIZED",
                 details=(

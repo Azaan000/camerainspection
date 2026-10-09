@@ -18,11 +18,19 @@ class ModbusPLC(BasePLC):
     Gracefully falls back to mock simulation if pymodbus is not installed or PLC is offline.
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 502, unit_id: int = 1) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 502,
+        unit_id: int = 1,
+        expected_stations: list[str] | None = None,
+        printer_coil_address: int = 100,
+    ) -> None:
+        super().__init__(expected_stations=expected_stations)
         self.host = host
         self.port = port
         self.unit_id = unit_id
+        self.printer_coil_address = printer_coil_address
         self._connected = False
         self._client: Any = None
         self._lock = threading.Lock()
@@ -78,8 +86,22 @@ class ModbusPLC(BasePLC):
             return self._mechanism_locked
 
     def _write_label_printer_hardware(self, enable: bool) -> None:
-        # Physical Modbus coil write if client connected, else simulator register
-        pass
+        """Physical Modbus coil write for label printer interlock."""
+        with self._lock:
+            if self._client is not None and getattr(self._client, "connected", False):
+                try:
+                    self._client.write_coil(
+                        address=self.printer_coil_address,
+                        value=enable,
+                        slave=self.unit_id,
+                    )
+                    logger.info(
+                        f"Modbus coil {self.printer_coil_address} written: {enable}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to write Modbus printer coil {self.printer_coil_address}: {e}")
+            else:
+                logger.debug(f"Modbus simulated coil {self.printer_coil_address} state: {enable}")
 
     def simulate_mechanism_sensor(self, locked: bool) -> None:
         with self._lock:

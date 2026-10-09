@@ -68,6 +68,14 @@ class Station2Service(BaseStation):
         x1 = max(0, seam_roi_cfg.x)
         x2 = min(image.shape[1], seam_roi_cfg.x + seam_roi_cfg.w)
         seam_roi = image[y1:y2, x1:x2]
+        if seam_roi.size == 0:
+            defects.append(DefectDetail(
+                defect_type="station.invalid_roi",
+                outcome=Outcome.FAIL,
+                roi_name="main_seam",
+                description=f"Main seam ROI is out-of-bounds or zero-sized ({seam_roi_cfg.w}x{seam_roi_cfg.h} at {seam_roi_cfg.x},{seam_roi_cfg.y}).",
+            ))
+            return defects, measurements, annotated
 
         # Style line is the centre of the ROI height (relative to ROI origin)
         style_line_y_px = float(seam_roi.shape[0] / 2)

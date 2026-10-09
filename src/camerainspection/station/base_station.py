@@ -140,6 +140,17 @@ class BaseStation(ABC):
         """Return list of measurement keys that must affirmatively be produced by this station."""
         return []
 
+    def is_valid_measurement(self, key: str, value: Any) -> bool:
+        """Affirmatively validate that a measurement value is numeric and finite (not None, NaN, Inf)."""
+        import math
+        if value is None:
+            return False
+        if not isinstance(value, (int, float)):
+            return False
+        if math.isnan(value) or math.isinf(value):
+            return False
+        return True
+
     def run_cycle(self) -> StationInspectionResult:
         """Execute one complete inspection cycle with strict fail-safe guarantees."""
         start_time = time.perf_counter()
@@ -187,16 +198,19 @@ class BaseStation(ABC):
                 variant_nominals=variant_cfg.nominals,
             )
 
-            # 6. Affirmative verification: check that required measurements were actually performed
+            # 6. Affirmative verification: check that required measurements were actually performed and valid
             required = self.get_required_measurements()
-            missing_checks = [req for req in required if req not in measurements]
-            if missing_checks:
+            invalid_or_missing = [
+                req for req in required
+                if req not in measurements or not self.is_valid_measurement(req, measurements.get(req))
+            ]
+            if invalid_or_missing:
                 defects.append(
                     DefectDetail(
                         defect_type="station.incomplete_checks",
                         outcome=Outcome.FAIL,
                         description=(
-                            f"Station {self.station_id} omitted required inspection checks: {missing_checks}."
+                            f"Station {self.station_id} omitted or produced invalid measurements (NaN, null, or out-of-spec) for required checks: {invalid_or_missing}."
                         ),
                     )
                 )

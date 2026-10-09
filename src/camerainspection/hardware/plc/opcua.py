@@ -18,9 +18,15 @@ class OPCUAPLC(BasePLC):
     Gracefully falls back to mock simulation if asyncua is not installed or server is offline.
     """
 
-    def __init__(self, endpoint: str = "opc.tcp://127.0.0.1:4840") -> None:
-        super().__init__()
+    def __init__(
+        self,
+        endpoint: str = "opc.tcp://127.0.0.1:4840",
+        expected_stations: list[str] | None = None,
+        printer_node_id: str = "ns=2;s=LabelPrinterEnable",
+    ) -> None:
+        super().__init__(expected_stations=expected_stations)
         self.endpoint = endpoint
+        self.printer_node_id = printer_node_id
         self._connected = False
         self._client: Any = None
         self._lock = threading.Lock()
@@ -68,8 +74,23 @@ class OPCUAPLC(BasePLC):
             return self._mechanism_locked
 
     def _write_label_printer_hardware(self, enable: bool) -> None:
-        # OPC UA async node write
-        pass
+        """Physical OPC UA node write for label printer output."""
+        with self._lock:
+            if self._client is not None:
+                try:
+                    import asyncio
+                    # Synchronously execute write in event loop if available
+                    loop = asyncio.get_event_loop()
+                    node = self._client.get_node(self.printer_node_id)
+                    if loop.is_running():
+                        asyncio.ensure_future(node.write_value(enable))
+                    else:
+                        loop.run_until_complete(node.write_value(enable))
+                    logger.info(f"OPC UA node {self.printer_node_id} written: {enable}")
+                except Exception as e:
+                    logger.error(f"Failed to write OPC UA printer node {self.printer_node_id}: {e}")
+            else:
+                logger.debug(f"OPC UA simulated printer node {self.printer_node_id} state: {enable}")
 
     def simulate_mechanism_sensor(self, locked: bool) -> None:
         with self._lock:

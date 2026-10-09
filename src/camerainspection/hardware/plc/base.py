@@ -14,9 +14,18 @@ logger = get_logger("hardware.plc.base")
 class BasePLC(ABC):
     """Abstract interface defining industrial line controller operations with shared safety interlocks."""
 
-    def __init__(self) -> None:
+    def __init__(self, expected_stations: list[str] | None = None) -> None:
+        self.expected_stations = expected_stations or [
+            "STATION_1",
+            "STATION_2",
+            "STATION_3",
+            "STATION_4",
+        ]
         self._shared_station_results: dict[str, Outcome] = {}
+        # Per-seat station outcome tracking to avoid inter-seat timing contamination
+        self._seat_station_results: dict[str, dict[str, Outcome]] = {}
         self._shared_label_printer_enabled = False
+        self._active_printing_seat_id: str | None = None
 
     @abstractmethod
     def connect(self) -> None:
@@ -42,9 +51,23 @@ class BasePLC(ABC):
     def read_barcode(self, station_id: str) -> str:
         """Read scanned pallet or seat barcode."""
 
-    def set_station_result(self, station_id: str, outcome: Outcome) -> None:
+    def set_station_result(
+        self, station_id: str, outcome: Outcome, seat_id: str | None = None
+    ) -> None:
         """Publish station outcome (PASS, REVIEW, FAIL) to PLC memory tag and update shared tracking."""
         self._shared_station_results[station_id] = outcome
+        if seat_id:
+            if seat_id not in self._seat_station_results:
+                self._seat_station_results[seat_id] = {}
+            self._seat_station_results[seat_id][station_id] = outcome
+
+        # If any station reports FAIL or REVIEW, ensure printer cannot remain enabled
+        if outcome in (Outcome.FAIL, Outcome.REVIEW):
+            # If the failing seat is the one currently flagged for printing, or no seat is actively printing,
+            # enforce immediate hard shutoff.
+            if self._active_printing_seat_id == seat_id or self._active_printing_seat_id is None:
+                self.set_label_printer_enable(False)
+
         self._write_station_result_hardware(station_id, outcome)
 
     @abstractmethod
@@ -62,7 +85,7 @@ class BasePLC(ABC):
         Crucial safety requirement: Must be read from sensor, NEVER from camera.
         """
 
-    def set_label_printer_enable(self, enable: bool) -> None:
+    def set_label_printer_enable(self, enable: bool, seat_id: str | None = None) -> None:
         """Enable or disable OEM label applicator interlock output.
 
         Shared Safety Rule:
@@ -71,33 +94,59 @@ class BasePLC(ABC):
         If any station reports FAIL or REVIEW, or the sensor is unlocked, printer is hard-disabled.
         """
         if enable:
-            expected_stations = ["STATION_1", "STATION_2", "STATION_3", "STATION_4"]
-            all_pass = all(
-                self._shared_station_results.get(st) == Outcome.PASS for st in expected_stations
-            )
-            if not all_pass:
-                logger.error(
-                    f"Shared Safety Interlock Blocked: Cannot enable label printer; stations not all PASS: {self._shared_station_results}"
-                )
-                self._shared_label_printer_enabled = False
-                self._write_label_printer_hardware(False)
-                return
-
+            # First check mechanism lock sensor
             if not self.is_mechanism_locked():
                 logger.error(
                     "Shared Safety Interlock Blocked: Cannot enable label printer; mechanism lock sensor not confirmed."
                 )
+                self._active_printing_seat_id = None
                 self._shared_label_printer_enabled = False
                 self._write_label_printer_hardware(False)
                 return
 
+            # If seat_id is provided, check the specific seat's outcomes
+            if seat_id and seat_id in self._seat_station_results:
+                seat_results = self._seat_station_results[seat_id]
+                all_pass = (
+                    all(st in seat_results for st in self.expected_stations)
+                    and all(seat_results.get(st) == Outcome.PASS for st in self.expected_stations)
+                )
+            else:
+                # Fallback to shared latest station outcomes
+                all_pass = (
+                    all(st in self._shared_station_results for st in self.expected_stations)
+                    and all(
+                        self._shared_station_results.get(st) == Outcome.PASS
+                        for st in self.expected_stations
+                    )
+                )
+
+            if not all_pass:
+                logger.error(
+                    f"Shared Safety Interlock Blocked: Cannot enable label printer; stations not all PASS. "
+                    f"Target seat: {seat_id}, Seat results: {self._seat_station_results.get(seat_id or '')}, "
+                    f"Global results: {self._shared_station_results}"
+                )
+                self._active_printing_seat_id = None
+                self._shared_label_printer_enabled = False
+                self._write_label_printer_hardware(False)
+                return
+
+            self._active_printing_seat_id = seat_id
             self._shared_label_printer_enabled = True
             self._write_label_printer_hardware(True)
-            logger.info("Shared Safety Interlock: Label printer output ENABLED.")
+            logger.info(f"Shared Safety Interlock: Label printer output ENABLED for seat {seat_id}.")
         else:
+            self._active_printing_seat_id = None
             self._shared_label_printer_enabled = False
             self._write_label_printer_hardware(False)
             logger.info("Shared Safety Interlock: Label printer output DISABLED.")
+
+    def clear_seat(self, seat_id: str) -> None:
+        """Prune seat tracking memory to prevent unbounded growth."""
+        self._seat_station_results.pop(seat_id, None)
+        if self._active_printing_seat_id == seat_id:
+            self.set_label_printer_enable(False)
 
     @abstractmethod
     def _write_label_printer_hardware(self, enable: bool) -> None:

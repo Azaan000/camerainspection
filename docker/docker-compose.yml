@@ -29,14 +29,14 @@ services:
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-inspection}:${POSTGRES_PASSWORD:-change_me_in_env_file}@db:5432/${POSTGRES_DB:-seat_inspection}"
       PYTHONPATH: "/app/src"
-      INSPECTION_API_KEY: ${INSPECTION_API_KEY:-inspector_secret_token_123}
+      INSPECTION_API_KEY: ${INSPECTION_API_KEY}
     ports:
       - "8000:8000"
     volumes:
       - ../data:/app/data
       - ../storage:/app/storage
       - ../configs:/app/configs
-    command: ["python", "-m", "uvicorn", "camerainspection.main:main", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["python", "-m", "camerainspection.main", "--host", "0.0.0.0", "--port", "8000"]
 
 volumes:
   postgres_data:
