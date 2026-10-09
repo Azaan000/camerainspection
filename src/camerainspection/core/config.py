@@ -150,6 +150,18 @@ class SystemConfig(BaseModel):
     storage: SystemStorageConfig = Field(default_factory=SystemStorageConfig)
     coordinator: SystemCoordinatorConfig = Field(default_factory=SystemCoordinatorConfig)
 
+    @property
+    def environment(self) -> str:
+        return str(self.system.get("environment", "development"))
+
+    @property
+    def shadow_mode(self) -> bool:
+        return bool(self.system.get("shadow_mode", False))
+
+    @property
+    def config_version(self) -> str:
+        return str(self.system.get("config_version", "v0.1.0"))
+
 
 def load_yaml(file_path: Path) -> dict[str, Any]:
     """Safely load a YAML file and return a dictionary."""
