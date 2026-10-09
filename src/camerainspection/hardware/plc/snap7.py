@@ -19,6 +19,7 @@ class SiemensSnap7PLC(BasePLC):
     """
 
     def __init__(self, host: str = "127.0.0.1", rack: int = 0, slot: int = 1) -> None:
+        super().__init__()
         self.host = host
         self.rack = rack
         self.slot = slot
@@ -29,7 +30,6 @@ class SiemensSnap7PLC(BasePLC):
         self._pallet_holds: dict[str, bool] = {}
         self._station_results: dict[str, Outcome] = {}
         self._mechanism_locked = False
-        self._label_printer_enabled = False
 
     def connect(self) -> None:
         try:
@@ -64,11 +64,13 @@ class SiemensSnap7PLC(BasePLC):
     def read_barcode(self, station_id: str) -> str:
         return f"PALLET_SNAP7_{station_id}_FRONT_LH_BLACK"
 
-    def set_station_result(self, station_id: str, outcome: Outcome) -> None:
+    def _write_station_result_hardware(self, station_id: str, outcome: Outcome) -> None:
         with self._lock:
             self._station_results[station_id] = outcome
             if outcome in (Outcome.FAIL, Outcome.REVIEW):
                 self._pallet_holds[station_id] = True
+            elif outcome == Outcome.PASS:
+                self._pallet_holds[station_id] = False
 
     def hold_pallet(self, station_id: str, hold: bool = True) -> None:
         with self._lock:
@@ -78,17 +80,13 @@ class SiemensSnap7PLC(BasePLC):
         with self._lock:
             return self._mechanism_locked
 
-    def set_label_printer_enable(self, enable: bool) -> None:
-        with self._lock:
-            self._label_printer_enabled = enable
+    def _write_label_printer_hardware(self, enable: bool) -> None:
+        # Snap7 DB write to printer interlock tag
+        pass
 
     def simulate_mechanism_sensor(self, locked: bool) -> None:
         with self._lock:
             self._mechanism_locked = locked
-
-    def is_label_printer_enabled(self) -> bool:
-        with self._lock:
-            return self._label_printer_enabled
 
     def read_tag(self, tag_name: str) -> Any:
         return 0

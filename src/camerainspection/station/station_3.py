@@ -21,6 +21,9 @@ logger = get_logger("station.3")
 class Station3Service(BaseStation):
     """Station 3 inspection service: Plastic parts presence, LH/RH hand, color, gap, and cracks."""
 
+    def get_required_measurements(self) -> list[str]:
+        return ["shield_gap_mm", "flash_mm"]
+
     def load_golden_template(self, variant_id: str, component_name: str) -> np.ndarray | None:
         """Load golden reference image for a specific component and variant."""
         var_golden_dir = self.variants_root / variant_id / "golden_images"

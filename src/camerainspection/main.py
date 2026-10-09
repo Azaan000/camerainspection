@@ -46,6 +46,7 @@ def main() -> None:
         db_manager=db,
         expected_stations=sys_cfg.coordinator.expected_stations,
         shadow_mode=sys_cfg.shadow_mode,
+        cycle_timeout_s=sys_cfg.coordinator.cycle_timeout_s,
     )
     logger.info(f"Coordinator active for stations: {sys_cfg.coordinator.expected_stations}")
 

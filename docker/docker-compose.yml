@@ -5,15 +5,15 @@ services:
     image: postgres:15-alpine
     container_name: camerainspection-db
     environment:
-      POSTGRES_USER: inspection
-      POSTGRES_PASSWORD: inspection_secret
-      POSTGRES_DB: seat_inspection
+      POSTGRES_USER: ${POSTGRES_USER:-inspection}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_env_file}
+      POSTGRES_DB: ${POSTGRES_DB:-seat_inspection}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U inspection -d seat_inspection"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inspection} -d ${POSTGRES_DB:-seat_inspection}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -27,13 +27,16 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: "postgresql://inspection:inspection_secret@db:5432/seat_inspection"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-inspection}:${POSTGRES_PASSWORD:-change_me_in_env_file}@db:5432/${POSTGRES_DB:-seat_inspection}"
       PYTHONPATH: "/app/src"
+      INSPECTION_API_KEY: ${INSPECTION_API_KEY:-inspector_secret_token_123}
+    ports:
+      - "8000:8000"
     volumes:
       - ../data:/app/data
       - ../storage:/app/storage
       - ../configs:/app/configs
-    command: ["pytest", "-v"]
+    command: ["python", "-m", "uvicorn", "camerainspection.main:main", "--host", "0.0.0.0", "--port", "8000"]
 
 volumes:
   postgres_data:

@@ -136,6 +136,10 @@ class BaseStation(ABC):
             tuple[defects_list, measurements_dict, annotated_image_optional]
         """
 
+    def get_required_measurements(self) -> list[str]:
+        """Return list of measurement keys that must affirmatively be produced by this station."""
+        return []
+
     def run_cycle(self) -> StationInspectionResult:
         """Execute one complete inspection cycle with strict fail-safe guarantees."""
         start_time = time.perf_counter()
@@ -183,9 +187,20 @@ class BaseStation(ABC):
                 variant_nominals=variant_cfg.nominals,
             )
 
-            # 6. Aggregate check outcomes with affirmative verification
-            # If no defects were returned AND no measurements or ROIs were evaluated,
-            # fail safe instead of silently passing an uninspected or misconfigured part.
+            # 6. Affirmative verification: check that required measurements were actually performed
+            required = self.get_required_measurements()
+            missing_checks = [req for req in required if req not in measurements]
+            if missing_checks:
+                defects.append(
+                    DefectDetail(
+                        defect_type="station.incomplete_checks",
+                        outcome=Outcome.FAIL,
+                        description=(
+                            f"Station {self.station_id} omitted required inspection checks: {missing_checks}."
+                        ),
+                    )
+                )
+
             if not defects and not measurements:
                 no_check_defect = DefectDetail(
                     defect_type="station.no_checks_performed",

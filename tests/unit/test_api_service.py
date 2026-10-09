@@ -60,13 +60,16 @@ def test_api_review_queue_workflow(api_client: TestClient, in_memory_db: Databas
     pending_items = pending_res.json()
     assert any(item["seat_id"] == "SEAT-TO-REVIEW" for item in pending_items)
 
-    # Submit human decision
     dec_payload = {
         "inspector_id": "OPERATOR_42",
         "decision": "PASS",
         "notes": "Reviewed boundary stitch sample under magnification. Acceptable.",
     }
-    dec_res = api_client.post(f"/api/v1/reviews/{rev_id}/decision", json=dec_payload)
+    dec_res = api_client.post(
+        f"/api/v1/reviews/{rev_id}/decision",
+        json=dec_payload,
+        headers={"X-API-Key": "inspector_secret_token_123"},
+    )
     assert dec_res.status_code == 200
     assert dec_res.json()["resolved"] is True
 

@@ -39,10 +39,16 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Local Scratch & Git Artifacts
+scratch/
+.env
+
 # Inspection Database & Images
 *.db
 *.sqlite
 *.sqlite3
+data/*.db
+data/inspection.db
 storage/raw_images/*
 !storage/raw_images/.gitkeep
 storage/annotated_images/*

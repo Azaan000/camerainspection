@@ -55,32 +55,46 @@ def run_line_simulation(seats_to_run: int = 5) -> None:
     plc.connect()
     plc.simulate_mechanism_sensor(locked=True)
 
-    coordinator = InspectionCoordinator(plc=plc, db_manager=db)
+    coordinator = InspectionCoordinator(
+        plc=plc,
+        db_manager=db,
+        expected_stations=sys_cfg.coordinator.expected_stations,
+        shadow_mode=sys_cfg.shadow_mode,
+        cycle_timeout_s=sys_cfg.coordinator.cycle_timeout_s,
+    )
 
-    # Initialize all 4 station services
+    # Initialize all 4 station services with system config_version
     st1 = Station1Service(
         station_config=load_station_config(Path("configs/stations/station_1_leather.yaml")),
         variants_root=variants_dir,
         camera=FolderReplayCamera(data_root / "station_1" / "replay", loop=True),
-        plc=plc, db_manager=db,
+        plc=plc,
+        db_manager=db,
+        config_version=sys_cfg.config_version,
     )
     st2 = Station2Service(
         station_config=load_station_config(Path("configs/stations/station_2_stitch.yaml")),
         variants_root=variants_dir,
         camera=FolderReplayCamera(data_root / "station_2" / "replay", loop=True),
-        plc=plc, db_manager=db,
+        plc=plc,
+        db_manager=db,
+        config_version=sys_cfg.config_version,
     )
     st3 = Station3Service(
         station_config=load_station_config(Path("configs/stations/station_3_plastic.yaml")),
         variants_root=variants_dir,
         camera=FolderReplayCamera(data_root / "station_3" / "replay", loop=True),
-        plc=plc, db_manager=db,
+        plc=plc,
+        db_manager=db,
+        config_version=sys_cfg.config_version,
     )
     st4 = Station4Service(
         station_config=load_station_config(Path("configs/stations/station_4_complete.yaml")),
         variants_root=variants_dir,
         camera=FolderReplayCamera(data_root / "station_4" / "replay", loop=True),
-        plc=plc, db_manager=db,
+        plc=plc,
+        db_manager=db,
+        config_version=sys_cfg.config_version,
     )
 
     stations = [("STATION_1", st1), ("STATION_2", st2), ("STATION_3", st3), ("STATION_4", st4)]

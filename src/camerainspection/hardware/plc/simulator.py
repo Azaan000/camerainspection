@@ -18,6 +18,7 @@ class PLCSimulator(BasePLC):
     """Thread-safe PLC simulator replicating line indexers, barcode scanners, and printer interlocks."""
 
     def __init__(self) -> None:
+        super().__init__()
         self._lock = threading.Lock()
         self._connected = False
         self._tags: dict[str, Any] = {}
@@ -30,7 +31,6 @@ class PLCSimulator(BasePLC):
 
         # Mechanism and printer safety interlocks
         self._mechanism_locked = False
-        self._label_printer_enabled = False
 
     def connect(self) -> None:
         with self._lock:
@@ -59,7 +59,6 @@ class PLCSimulator(BasePLC):
 
         triggered = ev.wait(timeout=timeout_s)
         if triggered:
-            # Auto-clear trigger event after consumption
             with self._lock:
                 ev.clear()
         return triggered
@@ -69,7 +68,7 @@ class PLCSimulator(BasePLC):
         with self._lock:
             return self._station_barcodes.get(station_id, "")
 
-    def set_station_result(self, station_id: str, outcome: Outcome) -> None:
+    def _write_station_result_hardware(self, station_id: str, outcome: Outcome) -> None:
         self._ensure_connected()
         with self._lock:
             self._station_outcomes[station_id] = outcome
@@ -96,45 +95,10 @@ class PLCSimulator(BasePLC):
         with self._lock:
             return self._mechanism_locked
 
-    def set_label_printer_enable(self, enable: bool) -> None:
-        """Enable label printer interlock.
-
-        Fail-Safe Rule:
-        The OEM label printer may only be enabled when every station has PASS
-        and the mechanism cycle test lock sensor is confirmed.
-        """
+    def _write_label_printer_hardware(self, enable: bool) -> None:
         self._ensure_connected()
         with self._lock:
-            if enable:
-                # Validate gating condition
-                expected_stations = ["STATION_1", "STATION_2", "STATION_3", "STATION_4"]
-                all_passed = all(
-                    self._station_outcomes.get(st) == Outcome.PASS for st in expected_stations
-                )
-                if not all_passed:
-                    logger.error(
-                        "Safety Violation: Cannot enable label printer; not all stations are PASS: "
-                        f"{self._station_outcomes}"
-                    )
-                    self._label_printer_enabled = False
-                    self._tags["LABEL_PRINTER_ENABLE"] = False
-                    return
-
-                if not self._mechanism_locked:
-                    logger.error(
-                        "Safety Violation: Cannot enable label printer; mechanism lock sensor not confirmed."
-                    )
-                    self._label_printer_enabled = False
-                    self._tags["LABEL_PRINTER_ENABLE"] = False
-                    return
-
-                self._label_printer_enabled = True
-                self._tags["LABEL_PRINTER_ENABLE"] = True
-                logger.info("Label printer ENABLED (all safety gates confirmed).")
-            else:
-                self._label_printer_enabled = False
-                self._tags["LABEL_PRINTER_ENABLE"] = False
-                logger.info("Label printer DISABLED.")
+            self._tags["LABEL_PRINTER_ENABLE"] = enable
 
     def read_tag(self, tag_name: str) -> Any:
         self._ensure_connected()
@@ -164,9 +128,4 @@ class PLCSimulator(BasePLC):
     def is_pallet_held(self, station_id: str) -> bool:
         """Query if pallet is currently held by indexer pin."""
         with self._lock:
-            return self._pallet_held.get(station_id, True)  # Fail safe: defaults to True
-
-    def is_label_printer_enabled(self) -> bool:
-        """Query state of label printer interlock."""
-        with self._lock:
-            return self._label_printer_enabled
+            return self._pallet_held.get(station_id, True)

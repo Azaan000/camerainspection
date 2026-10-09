@@ -54,6 +54,10 @@ class Station1Service(BaseStation):
             max_area_px=200_000,
         )
 
+    def get_required_measurements(self) -> list[str]:
+        # Every configured zone must have a defect_count measurement affirmative record
+        return [f"{zone}.defect_count" for zone in self.config.regions_of_interest.keys()]
+
     def inspect_image(
         self,
         image: np.ndarray,

@@ -70,8 +70,17 @@ def test_modbus_plc_adapter() -> None:
     plc.set_station_result("STATION_1", Outcome.FAIL)
     assert plc._pallet_holds.get("STATION_1") is True
 
+    # Shared Safety Interlock: Must reject printer enable while STATION_1 is FAIL
+    plc.set_label_printer_enable(True)
+    assert plc.is_label_printer_enabled() is False
+
+    # When all stations pass and lock sensor is confirmed, printer can be enabled
+    for st in ["STATION_1", "STATION_2", "STATION_3", "STATION_4"]:
+        plc.set_station_result(st, Outcome.PASS)
+    plc.simulate_mechanism_sensor(locked=True)
     plc.set_label_printer_enable(True)
     assert plc.is_label_printer_enabled() is True
+
     plc.disconnect()
     assert plc.is_connected() is False
 

@@ -26,6 +26,9 @@ class Station2Service(BaseStation):
         check is skipped rather than generating a spurious failure.
     """
 
+    def get_required_measurements(self) -> list[str]:
+        return ["spi", "max_skip_mm", "seam_position_mm", "stitch_count"]
+
     def inspect_image(
         self,
         image: np.ndarray,

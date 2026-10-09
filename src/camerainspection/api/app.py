@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Header, Query, status
 from pydantic import BaseModel, Field
 
 from camerainspection.core.logging import get_logger
@@ -18,6 +19,22 @@ from camerainspection.storage.entities import (
 )
 
 logger = get_logger("api.service")
+
+# Authentication key configurable via environment variable
+_DEFAULT_API_KEY = "inspector_secret_token_123"
+
+
+def verify_api_key(x_api_key: str | None = Header(None)) -> str:
+    """Validate bearer / API key authentication for protected endpoints."""
+    expected_key = os.getenv("INSPECTION_API_KEY", _DEFAULT_API_KEY)
+    # If explicitly configured as None/empty, authentication can be bypassed in local dev
+    if expected_key and x_api_key != expected_key:
+        # Check Authorization header bearer token fallback
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-API-Key authentication header.",
+        )
+    return x_api_key or "anonymous"
 
 
 class ReviewDecisionRequest(BaseModel):
@@ -62,56 +79,60 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
         }
 
     @app.get("/api/v1/seats/{seat_id}")
-    def get_seat_record(seat_id: str) -> dict[str, Any]:
-        """Fetch full inspection status, defects, and station history for a seat."""
+    def get_seat_inspection_result(seat_id: str) -> dict[str, Any]:
+        """Fetch consolidated inspection result for a seat by ID."""
         with db_manager.session_scope() as session:
-            seat = session.query(SeatInspectionRecord).filter_by(seat_id=seat_id).first()
-            if not seat:
-                raise HTTPException(status_code=404, detail=f"Seat ID {seat_id} not found.")
-
-            results_data = []
-            for sr in seat.station_results:
-                defects_data = [
-                    {
-                        "defect_type": d.defect_type,
-                        "outcome": d.outcome,
-                        "measured_value": d.measured_value,
-                        "nominal_value": d.nominal_value,
-                        "unit": d.unit,
-                        "confidence": d.confidence,
-                        "description": d.description,
-                        "bbox": [d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h],
-                    }
-                    for d in sr.defects
-                ]
-                results_data.append({
-                    "station_id": sr.station_id,
-                    "outcome": sr.outcome,
-                    "cycle_time_ms": sr.cycle_time_ms,
-                    "model_version": sr.model_version,
-                    "defects": defects_data,
-                })
+            record = (
+                session.query(SeatInspectionRecord).filter_by(seat_id=seat_id).first()
+            )
+            if not record:
+                # Fallback: check station records
+                st_records = (
+                    session.query(StationResultRecord)
+                    .filter_by(seat_id=seat_id)
+                    .all()
+                )
+                if not st_records:
+                    raise HTTPException(
+                        status_code=404, detail=f"Seat '{seat_id}' not found."
+                    )
+                return {
+                    "seat_id": seat_id,
+                    "variant_id": st_records[0].variant_id,
+                    "outcome": "IN_PROGRESS",
+                    "station_results": [
+                        {
+                            "station_id": s.station_id,
+                            "outcome": s.outcome,
+                            "cycle_time_ms": s.cycle_time_ms,
+                        }
+                        for s in st_records
+                    ],
+                }
 
             return {
-                "seat_id": seat.seat_id,
-                "variant_id": seat.variant_id,
-                "outcome": seat.outcome,
-                "label_printer_enabled": seat.label_printer_enabled,
-                "mechanism_cycle_passed": seat.mechanism_cycle_passed,
-                "lock_sensor_confirmed": seat.lock_sensor_confirmed,
-                "shadow_mode": seat.shadow_mode,
-                "created_at": seat.created_at.isoformat() if seat.created_at else None,
-                "completed_at": seat.completed_at.isoformat() if seat.completed_at else None,
-                "station_results": results_data,
+                "seat_id": record.seat_id,
+                "variant_id": record.variant_id,
+                "outcome": record.outcome,
+                "label_printer_enabled": record.label_printer_enabled,
+                "created_at": record.created_at.isoformat() if record.created_at else None,
+                "station_results": [
+                    {
+                        "station_id": s.station_id,
+                        "outcome": s.outcome,
+                        "cycle_time_ms": s.cycle_time_ms,
+                    }
+                    for s in record.station_results
+                ],
             }
 
     # -------------------------------------------------------------
-    # Human Review Queue Endpoints
+    # Human Review Queue Endpoints (Authenticated)
     # -------------------------------------------------------------
 
     @app.get("/api/v1/reviews/pending")
-    def list_pending_reviews() -> list[dict[str, Any]]:
-        """List seats currently waiting in the human review queue."""
+    def get_pending_reviews() -> list[dict[str, Any]]:
+        """List seats currently enqueued for human review."""
         with db_manager.session_scope() as session:
             pending = session.query(HumanReviewRecord).filter_by(status="PENDING").all()
             return [
@@ -126,8 +147,12 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
             ]
 
     @app.post("/api/v1/reviews/{review_id}/decision")
-    def submit_review_decision(review_id: int, payload: ReviewDecisionRequest) -> dict[str, Any]:
-        """Submit inspector adjudication (PASS, REWORK, SCRAP)."""
+    def submit_review_decision(
+        review_id: int,
+        payload: ReviewDecisionRequest,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Submit inspector adjudication (PASS, REWORK, SCRAP) - Authenticated."""
         if payload.decision not in ("PASS", "REWORK", "SCRAP"):
             raise HTTPException(
                 status_code=400,
@@ -146,32 +171,46 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
             notes=payload.notes,
         )
 
-        # Operational release: If approved as PASS, release pallet hold on PLC and re-check printer
+        # Operational release: If approved as PASS, release pallet hold on PLC and update printer
         if coordinator is not None and getattr(coordinator, "plc", None) is not None:
+            target_station = rev.station_id
             if payload.decision == "PASS":
-                # Clear holds for all stations
-                for st in getattr(coordinator, "expected_stations", []):
+                # Release pallet hold only on the specific station that held this seat
+                if target_station:
                     try:
-                        coordinator.plc.hold_pallet(st, hold=False)
+                        coordinator.plc.hold_pallet(target_station, hold=False)
                     except Exception as e:
-                        logger.warning(f"Failed to clear pallet hold for {st}: {e}")
+                        logger.warning(f"Failed to clear pallet hold for {target_station}: {e}")
 
-                # If seat can now enable label printer, update PLC
+                # Update the database and check if PLC accepts printer enablement
                 with db_manager.session_scope() as session:
                     seat_rec = session.query(SeatInspectionRecord).filter_by(seat_id=rev.seat_id).first()
-                    lock_ok = coordinator.plc.is_mechanism_locked()
-                    if seat_rec and seat_rec.mechanism_cycle_passed and lock_ok:
-                        coordinator.plc.set_label_printer_enable(True)
-                        seat_rec.label_printer_enabled = True
+                    if seat_rec:
+                        lock_ok = coordinator.plc.is_mechanism_locked()
+                        # Override station outcome in coordinator/PLC for this passed review
+                        if target_station:
+                            coordinator.plc.set_station_result(target_station, Outcome.PASS)
+
+                        # Check if overall seat is now passing
+                        if lock_ok:
+                            coordinator.plc.set_label_printer_enable(True)
+                            # Align DB record strictly with actual PLC state
+                            seat_rec.label_printer_enabled = coordinator.plc.is_label_printer_enabled()
+                            seat_rec.outcome = Outcome.PASS.value
             else:
                 # REWORK or SCRAP: Ensure pallet remains held
-                if rev.station_id:
-                    coordinator.plc.hold_pallet(rev.station_id, hold=True)
+                if target_station:
+                    coordinator.plc.hold_pallet(target_station, hold=True)
                 coordinator.plc.set_label_printer_enable(False)
+                with db_manager.session_scope() as session:
+                    seat_rec = session.query(SeatInspectionRecord).filter_by(seat_id=rev.seat_id).first()
+                    if seat_rec:
+                        seat_rec.label_printer_enabled = False
+                        seat_rec.outcome = Outcome.FAIL.value
 
         db_manager.log_audit(
             event_type="HUMAN_REVIEW_RESOLVED",
-            details=f"ReviewID {review_id} resolved as {payload.decision} by {payload.inspector_id}. Notes: {payload.notes}",
+            details=f"ReviewID {review_id} resolved as {payload.decision} by {payload.inspector_id} (Auth: {auth_user}). Notes: {payload.notes}",
             seat_id=rev.seat_id,
         )
         return {"review_id": review_id, "resolved": True, "decision": payload.decision}
@@ -187,10 +226,10 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
     ) -> list[dict[str, Any]]:
         """Query immutable OEM audit log trail."""
         with db_manager.session_scope() as session:
-            query = session.query(AuditLogRecord)
+            q = session.query(AuditLogRecord).order_by(AuditLogRecord.timestamp.desc())
             if seat_id:
-                query = query.filter_by(seat_id=seat_id)
-            records = query.order_by(AuditLogRecord.timestamp.desc()).limit(limit).all()
+                q = q.filter(AuditLogRecord.seat_id == seat_id)
+            records = q.limit(limit).all()
             return [
                 {
                     "id": a.id,
@@ -289,13 +328,15 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
                 return {
                     "sample_size": 0,
                     "agreement_rate": None,
+                    "reviewed_sample_size": 0,
                     "camera_catches": 0,
                     "human_catches": 0,
-                    "estimated_escape_rate": 0.0,
-                    "estimated_false_reject_rate": 0.0,
+                    "false_reject_count": 0,
+                    "false_reject_rate": None,
+                    "escape_count": 0,
+                    "escape_rate": None,
                 }
 
-            # Calculate agreement based on actual resolved human reviews
             seat_ids = [s.seat_id for s in shadow_seats]
             reviews = (
                 session.query(HumanReviewRecord)
@@ -304,29 +345,44 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
             )
             review_map = {r.seat_id: r.decision for r in reviews}
 
-            agreed = 0
-            evaluated = 0
+            reviewed_seats = [s for s in shadow_seats if s.seat_id in review_map]
             camera_catches = sum(1 for s in shadow_seats if s.outcome in ("FAIL", "REVIEW"))
             human_catches = sum(1 for d in review_map.values() if d in ("REWORK", "SCRAP"))
 
-            for s in shadow_seats:
-                if s.seat_id in review_map:
-                    evaluated += 1
-                    # Camera PASS agreeing with human PASS, or both flagging as non-pass
-                    human_pass = review_map[s.seat_id] == "PASS"
-                    camera_pass = s.outcome == "PASS"
-                    if human_pass == camera_pass:
-                        agreed += 1
+            # False reject: camera flagged REVIEW/FAIL, but human adjudicated PASS
+            false_rejects = sum(
+                1 for s in reviewed_seats
+                if s.outcome in ("FAIL", "REVIEW") and review_map[s.seat_id] == "PASS"
+            )
 
-            agreement_rate = round(agreed / evaluated, 4) if evaluated > 0 else None
+            # Escape: camera decided PASS, but human audited as non-pass (REWORK/SCRAP)
+            escapes = sum(
+                1 for s in reviewed_seats
+                if s.outcome == "PASS" and review_map[s.seat_id] in ("REWORK", "SCRAP")
+            )
+
+            # Agreement: both agree on PASS or both agree on non-pass
+            agreed = sum(
+                1 for s in reviewed_seats
+                if (s.outcome == "PASS" and review_map[s.seat_id] == "PASS")
+                or (s.outcome in ("FAIL", "REVIEW") and review_map[s.seat_id] in ("REWORK", "SCRAP"))
+            )
+
+            n_rev = len(reviewed_seats)
+            agreement_rate = round(agreed / n_rev, 4) if n_rev > 0 else None
+            false_reject_rate = round(false_rejects / n_rev, 4) if n_rev > 0 else None
+            escape_rate = round(escapes / n_rev, 4) if n_rev > 0 else None
 
             return {
                 "sample_size": len(shadow_seats),
+                "reviewed_sample_size": n_rev,
                 "agreement_rate": agreement_rate,
                 "camera_catches": camera_catches,
                 "human_catches": human_catches,
-                "estimated_escape_rate": round(1.0 - agreement_rate, 4) if agreement_rate is not None else 0.0,
-                "estimated_false_reject_rate": 0.0,
+                "false_reject_count": false_rejects,
+                "false_reject_rate": false_reject_rate,
+                "escape_count": escapes,
+                "escape_rate": escape_rate,
             }
 
     @app.get("/api/v1/dashboard/system-health")

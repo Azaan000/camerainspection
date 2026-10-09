@@ -29,6 +29,9 @@ logger = get_logger("station.4")
 class Station4Service(BaseStation):
     """Station 4: Complete Seat Inspection & Mechanism Travel / Sensor Interlock."""
 
+    def get_required_measurements(self) -> list[str]:
+        return ["recliner_angle_deg", "track_end_position_mm", "lock_sensor_confirmed"]
+
     def inspect_image(
         self,
         image: np.ndarray,
