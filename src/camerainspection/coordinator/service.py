@@ -8,6 +8,7 @@ from typing import Any
 
 from camerainspection.core.logging import get_logger
 from camerainspection.core.models import (
+    DefectDetail,
     Outcome,
     OverallSeatInspectionResult,
     StationInspectionResult,
@@ -17,14 +18,20 @@ from camerainspection.storage.db import DatabaseManager
 
 logger = get_logger("coordinator")
 
+# Default cycle timeout in seconds when not provided via config
+_DEFAULT_CYCLE_TIMEOUT_S = 120.0
+
 
 class InspectionCoordinator:
     """Aggregates results across inspection stations and coordinates line interlocks.
 
     Safety interlocks:
-    - Label printer enabled ONLY when ALL expected stations pass AND mechanism lock is confirmed.
+    - Label printer DISABLED immediately when a new seat's first station result arrives.
+    - Label printer enabled ONLY when ALL expected stations pass AND mechanism cycle test
+      passes AND lock sensor is confirmed.
     - Fails safe if any station reports FAIL or REVIEW, or if a station times out / missing.
     - Respects shadow mode (logs decisions without driving physical PLC outputs).
+    - Seats that do not fully report within ``cycle_timeout_s`` are auto-finalised as FAIL.
     """
 
     def __init__(
@@ -33,6 +40,7 @@ class InspectionCoordinator:
         db_manager: DatabaseManager,
         expected_stations: list[str] | None = None,
         shadow_mode: bool = False,
+        cycle_timeout_s: float = _DEFAULT_CYCLE_TIMEOUT_S,
     ) -> None:
         self.plc = plc
         self.db = db_manager
@@ -43,12 +51,19 @@ class InspectionCoordinator:
             "STATION_4",
         ]
         self.shadow_mode = shadow_mode
+        self.cycle_timeout_s = cycle_timeout_s
         self._lock = threading.Lock()
 
         # In-memory buffer of partial station results keyed by seat_id
         # {seat_id: {station_id: StationInspectionResult}}
         self._seat_buffers: dict[str, dict[str, StationInspectionResult]] = {}
         self._seat_variants: dict[str, str] = {}
+        # Timestamp of first station result for each seat (for timeout tracking)
+        self._seat_first_seen: dict[str, datetime] = {}
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def register_station_result(self, res: StationInspectionResult) -> OverallSeatInspectionResult | None:
         """Register an incoming result from a station.
@@ -59,9 +74,20 @@ class InspectionCoordinator:
         """
         with self._lock:
             seat_id = res.seat_id
-            if seat_id not in self._seat_buffers:
+            is_new_seat = seat_id not in self._seat_buffers
+
+            if is_new_seat:
                 self._seat_buffers[seat_id] = {}
                 self._seat_variants[seat_id] = res.variant_id
+                self._seat_first_seen[seat_id] = datetime.now(timezone.utc)
+
+                # SAFETY: Disable printer immediately when a new seat is first seen so
+                # the previous seat's printer-enable signal never bleeds into this one.
+                if not self.shadow_mode and self.plc is not None:
+                    self.plc.set_label_printer_enable(False)
+                    logger.info(
+                        f"Label printer DISABLED — new seat {seat_id} started."
+                    )
 
             self._seat_buffers[seat_id][res.station_id] = res
 
@@ -69,7 +95,10 @@ class InspectionCoordinator:
             if not self.shadow_mode and self.plc is not None:
                 self.plc.set_station_result(res.station_id, res.outcome)
 
-            # Check if all expected stations reported
+            # Purge any seats that have exceeded the cycle timeout
+            self._purge_timed_out_seats_unlocked(exclude=seat_id)
+
+            # Check if all expected stations reported for this seat
             reported_stations = set(self._seat_buffers[seat_id].keys())
             expected_set = set(self.expected_stations)
 
@@ -82,6 +111,36 @@ class InspectionCoordinator:
         """Manually force completion of a seat inspection cycle (e.g. on timeout)."""
         with self._lock:
             return self._finalize_seat_unlocked(seat_id)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _purge_timed_out_seats_unlocked(self, exclude: str | None = None) -> None:
+        """Auto-finalise any seats whose cycle has exceeded ``cycle_timeout_s``."""
+        now = datetime.now(timezone.utc)
+        timed_out = [
+            sid
+            for sid, first_seen in self._seat_first_seen.items()
+            if sid != exclude and (now - first_seen).total_seconds() >= self.cycle_timeout_s
+        ]
+        for sid in timed_out:
+            logger.warning(
+                f"Seat {sid} exceeded cycle timeout ({self.cycle_timeout_s}s). "
+                "Auto-finalising as FAIL."
+            )
+            try:
+                self.db.log_audit(
+                    event_type="CYCLE_TIMEOUT",
+                    details=(
+                        f"Seat {sid} timed out after {self.cycle_timeout_s}s. "
+                        f"Reported stations: {list(self._seat_buffers.get(sid, {}).keys())}"
+                    ),
+                    seat_id=sid,
+                )
+            except Exception as e:
+                logger.error(f"Failed to log CYCLE_TIMEOUT audit event for {sid}: {e}")
+            self._finalize_seat_unlocked(sid)
 
     def _finalize_seat_unlocked(self, seat_id: str) -> OverallSeatInspectionResult:
         """Internal helper evaluating overall seat status and driving interlocks."""
@@ -111,14 +170,14 @@ class InspectionCoordinator:
         lock_confirmed = self.plc.is_mechanism_locked() if self.plc is not None else False
 
         # 3. Label printer interlock
-        # Strict Rule: OEM label printer may ONLY be enabled when EVERY station and the
-        # mechanism cycle test PASS and lock sensor is confirmed.
+        # Strict Rule: OEM label printer may ONLY be enabled when EVERY station PASSES,
+        # the mechanism cycle test PASSES, AND the lock sensor is confirmed.
         all_stations_pass = (
             overall_outcome == Outcome.PASS
             and not missing_stations
             and all(r.outcome == Outcome.PASS for r in results.values())
         )
-        can_enable_printer = all_stations_pass and lock_confirmed
+        can_enable_printer = all_stations_pass and mech_passed and lock_confirmed
 
         if not self.shadow_mode and self.plc is not None:
             self.plc.set_label_printer_enable(can_enable_printer)
@@ -149,6 +208,7 @@ class InspectionCoordinator:
                 details=(
                     f"Seat: {seat_id}, Outcome: {overall_outcome.value}, "
                     f"LabelPrinter: {can_enable_printer}, LockConfirmed: {lock_confirmed}, "
+                    f"MechPassed: {mech_passed}, "
                     f"Stations: {list(results.keys())}"
                 ),
                 seat_id=seat_id,
@@ -159,5 +219,6 @@ class InspectionCoordinator:
         # Clean buffer
         self._seat_buffers.pop(seat_id, None)
         self._seat_variants.pop(seat_id, None)
+        self._seat_first_seen.pop(seat_id, None)
 
         return overall

@@ -83,6 +83,12 @@ class Station1Service(BaseStation):
             zone_roi = image[y1:y2, x1:x2]
 
             if zone_roi.size == 0:
+                defects.append(DefectDetail(
+                    defect_type="station.invalid_roi",
+                    outcome=Outcome.FAIL,
+                    roi_name=zone_name,
+                    description=f"Zone '{zone_name}' ROI is out-of-bounds or zero-sized ({roi_cfg.w}x{roi_cfg.h} at {roi_cfg.x},{roi_cfg.y}).",
+                ))
                 continue
 
             # Draw zone boundary on annotated image

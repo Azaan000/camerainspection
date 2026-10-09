@@ -49,6 +49,7 @@ class BaseStation(ABC):
         inference_engine: BaseInferenceEngine | None = None,
         default_limits_path: Path | None = None,
         shadow_mode: bool = False,
+        config_version: str = "v0.1.0",
     ) -> None:
         self.config = station_config
         self.variants_root = Path(variants_root)
@@ -58,6 +59,7 @@ class BaseStation(ABC):
         self.inference_engine = inference_engine
         self.default_limits_path = default_limits_path
         self.shadow_mode = shadow_mode
+        self._config_version = config_version
 
     @property
     def station_id(self) -> str:
@@ -66,28 +68,59 @@ class BaseStation(ABC):
     def parse_barcode(self, raw_barcode: str) -> tuple[str, str]:
         """Extract seat ID and variant ID from barcode string.
 
-        Conventions supported:
-        - '<SEAT_ID>_<VARIANT_ID>' (e.g. 'SEAT123_FRONT_LH_BLACK')
-        - '<SEAT_ID>:<VARIANT_ID>'
-        - If just a known variant ID is scanned, uses barcode as variant ID and generates seat ID.
+        Resolution order:
+        1. Colon separator — ``<SEAT_ID>:<VARIANT_ID>`` — unambiguous.
+        2. Known-variant suffix matching — walks variant dirs and strips the longest
+           ``_<VARIANT_ID>`` suffix that matches a known directory.  Handles seat IDs
+           that themselves contain underscores (e.g. ``SEAT-101_FRONT_LH_BLACK``).
+        3. Bare variant barcode — if the whole barcode is a known variant ID, generate
+           a timestamp-based seat ID.
+        4. Fallback underscore split (first ``_``) — kept for unlisted variants.
+
+        Raises:
+            InvalidBarcodeError: if the barcode is blank.
         """
         barcode = raw_barcode.strip()
         if not barcode:
             raise InvalidBarcodeError("Barcode is blank or unreadable.")
 
-        if "_" in barcode:
-            parts = barcode.split("_", 1)
-            seat_id = parts[0]
-            variant_id = parts[1]
-        elif ":" in barcode:
-            parts = barcode.split(":", 1)
-            seat_id = parts[0]
-            variant_id = parts[1]
-        else:
-            seat_id = f"SEAT-{int(time.time())}"
-            variant_id = barcode
+        # 1. Colon separator
+        if ":" in barcode:
+            seat_id, _, variant_id = barcode.partition(":")
+            return seat_id.strip(), variant_id.strip()
 
-        return seat_id, variant_id
+        # Discover known variant IDs from the filesystem (sorted longest first to
+        # prefer the most-specific match).
+        known_variants: list[str] = []
+        if self.variants_root.is_dir():
+            known_variants = sorted(
+                (p.name for p in self.variants_root.iterdir() if p.is_dir()),
+                key=len,
+                reverse=True,
+            )
+
+        # 2. Suffix-match against known variants
+        for vid in known_variants:
+            suffix = f"_{vid}"
+            if barcode.endswith(suffix):
+                seat_id = barcode[: -len(suffix)]
+                return seat_id, vid
+
+        # 3. Bare variant barcode
+        if barcode in known_variants:
+            seat_id = f"SEAT-{int(time.time())}"
+            return seat_id, barcode
+
+        # 4. Fallback: split on first underscore
+        if "_" in barcode:
+            seat_id, _, variant_id = barcode.partition("_")
+            return seat_id, variant_id
+
+        # No separator at all — treat whole barcode as seat_id with unknown variant
+        raise InvalidBarcodeError(
+            f"Cannot resolve variant from barcode '{barcode}'. "
+            "Expected '<SEAT_ID>_<VARIANT_ID>' or '<SEAT_ID>:<VARIANT_ID>'."
+        )
 
     @abstractmethod
     def inspect_image(
@@ -150,7 +183,17 @@ class BaseStation(ABC):
                 variant_nominals=variant_cfg.nominals,
             )
 
-            # 6. Aggregate check outcomes
+            # 6. Aggregate check outcomes with affirmative verification
+            # If no defects were returned AND no measurements or ROIs were evaluated,
+            # fail safe instead of silently passing an uninspected or misconfigured part.
+            if not defects and not measurements:
+                no_check_defect = DefectDetail(
+                    defect_type="station.no_checks_performed",
+                    outcome=Outcome.FAIL,
+                    description=f"Station {self.station_id} performed zero checks or measurements on image.",
+                )
+                defects.append(no_check_defect)
+
             check_outcomes = [d.outcome for d in defects] if defects else [Outcome.PASS]
             overall_outcome = Outcome.aggregate(check_outcomes)
 
@@ -164,7 +207,7 @@ class BaseStation(ABC):
                 defects=defects,
                 measurements=measurements,
                 model_version=self.config.model.version,
-                config_version="v0.1.0",
+                config_version=self._config_version,
                 cycle_time_ms=cycle_time_ms,
                 timestamp=cycle_timestamp,
             )

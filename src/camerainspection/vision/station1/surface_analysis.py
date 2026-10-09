@@ -106,9 +106,6 @@ class SurfaceAnalyzer:
                         anomaly_score=min(1.0, row_range / 60.0),
                     ))
 
-        if shade_regions:
-            return shade_regions
-
         # 2. Local anomaly detection via Gaussian background subtraction
         bg = cv2.GaussianBlur(gray.astype(np.float32), (self.blur_ksize, self.blur_ksize), 0)
 
@@ -125,7 +122,8 @@ class SurfaceAnalyzer:
         candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_OPEN, k3)
         candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_CLOSE, k5)
 
-        return self._extract_regions(candidate_mask, signed_diff)
+        local_regions = self._extract_regions(candidate_mask, signed_diff)
+        return shade_regions + local_regions
 
     def _extract_regions(
         self, mask: np.ndarray, signed_diff: np.ndarray

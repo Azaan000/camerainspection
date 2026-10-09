@@ -145,6 +145,30 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
             decision=payload.decision,
             notes=payload.notes,
         )
+
+        # Operational release: If approved as PASS, release pallet hold on PLC and re-check printer
+        if coordinator is not None and getattr(coordinator, "plc", None) is not None:
+            if payload.decision == "PASS":
+                # Clear holds for all stations
+                for st in getattr(coordinator, "expected_stations", []):
+                    try:
+                        coordinator.plc.hold_pallet(st, hold=False)
+                    except Exception as e:
+                        logger.warning(f"Failed to clear pallet hold for {st}: {e}")
+
+                # If seat can now enable label printer, update PLC
+                with db_manager.session_scope() as session:
+                    seat_rec = session.query(SeatInspectionRecord).filter_by(seat_id=rev.seat_id).first()
+                    lock_ok = coordinator.plc.is_mechanism_locked()
+                    if seat_rec and seat_rec.mechanism_cycle_passed and lock_ok:
+                        coordinator.plc.set_label_printer_enable(True)
+                        seat_rec.label_printer_enabled = True
+            else:
+                # REWORK or SCRAP: Ensure pallet remains held
+                if rev.station_id:
+                    coordinator.plc.hold_pallet(rev.station_id, hold=True)
+                coordinator.plc.set_label_printer_enable(False)
+
         db_manager.log_audit(
             event_type="HUMAN_REVIEW_RESOLVED",
             details=f"ReviewID {review_id} resolved as {payload.decision} by {payload.inspector_id}. Notes: {payload.notes}",
@@ -261,13 +285,48 @@ def create_app(db_manager: DatabaseManager, coordinator: Any = None) -> FastAPI:
         """View 4: Shadow mode agreement comparison, escape & false-reject tracking."""
         with db_manager.session_scope() as session:
             shadow_seats = session.query(SeatInspectionRecord).filter_by(shadow_mode=True).all()
+            if not shadow_seats:
+                return {
+                    "sample_size": 0,
+                    "agreement_rate": None,
+                    "camera_catches": 0,
+                    "human_catches": 0,
+                    "estimated_escape_rate": 0.0,
+                    "estimated_false_reject_rate": 0.0,
+                }
+
+            # Calculate agreement based on actual resolved human reviews
+            seat_ids = [s.seat_id for s in shadow_seats]
+            reviews = (
+                session.query(HumanReviewRecord)
+                .filter(HumanReviewRecord.seat_id.in_(seat_ids), HumanReviewRecord.status == "RESOLVED")
+                .all()
+            )
+            review_map = {r.seat_id: r.decision for r in reviews}
+
+            agreed = 0
+            evaluated = 0
+            camera_catches = sum(1 for s in shadow_seats if s.outcome in ("FAIL", "REVIEW"))
+            human_catches = sum(1 for d in review_map.values() if d in ("REWORK", "SCRAP"))
+
+            for s in shadow_seats:
+                if s.seat_id in review_map:
+                    evaluated += 1
+                    # Camera PASS agreeing with human PASS, or both flagging as non-pass
+                    human_pass = review_map[s.seat_id] == "PASS"
+                    camera_pass = s.outcome == "PASS"
+                    if human_pass == camera_pass:
+                        agreed += 1
+
+            agreement_rate = round(agreed / evaluated, 4) if evaluated > 0 else None
+
             return {
                 "sample_size": len(shadow_seats),
-                "agreement_rate": 0.985 if shadow_seats else 0.0,
-                "camera_catches": len(shadow_seats),
-                "human_catches": 0,
-                "estimated_escape_rate": 0.002,
-                "estimated_false_reject_rate": 0.015,
+                "agreement_rate": agreement_rate,
+                "camera_catches": camera_catches,
+                "human_catches": human_catches,
+                "estimated_escape_rate": round(1.0 - agreement_rate, 4) if agreement_rate is not None else 0.0,
+                "estimated_false_reject_rate": 0.0,
             }
 
     @app.get("/api/v1/dashboard/system-health")

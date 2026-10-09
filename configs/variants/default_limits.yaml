@@ -39,6 +39,9 @@ limits:
       seating_face:
         pass_max: 0.0
         fail_at: 1.0
+      side_back:
+        pass_max: 2.0
+        fail_at: 5.0
 
   fit:
     wrinkle_puckering:

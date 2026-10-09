@@ -72,6 +72,13 @@ class Station4Service(BaseStation):
                 annotated, f"Angle: {measured_angle:.1f} deg",
                 (rx1, max(0, ry1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
             )
+        else:
+            defects.append(DefectDetail(
+                defect_type="station.config",
+                outcome=Outcome.FAIL,
+                roi_name="recliner_pivot",
+                description="Missing 'recliner_pivot' ROI configuration in Station 4.",
+            ))
 
         track_roi_cfg = self.config.regions_of_interest.get("track_travel")
         if track_roi_cfg is not None:
@@ -98,6 +105,13 @@ class Station4Service(BaseStation):
                 annotated, f"Track: {measured_pos:.1f} mm",
                 (tx1, max(0, ty1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
             )
+        else:
+            defects.append(DefectDetail(
+                defect_type="station.config",
+                outcome=Outcome.FAIL,
+                roi_name="track_travel",
+                description="Missing 'track_travel' ROI configuration in Station 4.",
+            ))
 
         # -------------------------------------------------------------
         # 2. Hardware Lock Sensor Confirmation (CRITICAL SAFETY RULE)
