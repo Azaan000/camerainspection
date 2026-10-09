@@ -103,7 +103,7 @@ class VariantConfig(BaseModel):
     hand: str = "LH"
     position: str = "FRONT"
     color: str = "BLACK"
-    nominals: dict[str, dict[str, float]] = Field(default_factory=dict)
+    nominals: dict[str, dict[str, Any]] = Field(default_factory=dict)
     components: dict[str, ComponentSpec] = Field(default_factory=dict)
     golden_images_dir: str = "golden_images"
     limit_overrides: dict[str, Any] = Field(default_factory=dict)

@@ -66,32 +66,42 @@ def make_stitch_seam(
 
 
 def generate_station2_replay_frames(output_dir: Path) -> None:
-    """Create replay image set for Station 2 integration tests."""
+    """Create replay image set for Station 2 integration tests matching station_2_stitch config."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    W, H = 2592, 1944
+    pitch_px = int(round(25.4 / 6.0 / 0.05))  # 85 px for 6.0 SPI at 0.05 mm/px
+    seam_y = 500  # Centered in main_seam ROI (y: 300..700)
+    stitch_w = 40
+    stitch_h = 10
+    n = 25
 
     # 1. Normal good seam
-    cv2.imwrite(str(output_dir / "01_pass_normal.png"), make_stitch_seam())
+    cv2.imwrite(
+        str(output_dir / "01_pass_normal.png"),
+        make_stitch_seam(width=W, height=H, n_stitches=n, pitch_px=pitch_px, stitch_w=stitch_w, stitch_h=stitch_h, seam_y=seam_y),
+    )
 
-    # 2. Skipped stitch at position 10 (gap = 1 missing stitch * 18px * 0.05mm = 0.9mm gap)
+    # 2. Skipped stitch at position 10 (gap = 85px * 0.05mm = 4.25mm -> in (0, 5) review band)
     cv2.imwrite(
         str(output_dir / "02_review_skip.png"),
-        make_stitch_seam(skip_index=10),
+        make_stitch_seam(width=W, height=H, n_stitches=n, pitch_px=pitch_px, stitch_w=stitch_w, stitch_h=stitch_h, seam_y=seam_y, skip_index=10),
     )
 
     # 3. Broken thread
     cv2.imwrite(
         str(output_dir / "03_fail_broken_thread.png"),
-        make_stitch_seam(add_broken_thread=True),
+        make_stitch_seam(width=W, height=H, n_stitches=n, pitch_px=pitch_px, stitch_w=stitch_w, stitch_h=stitch_h, seam_y=seam_y, add_broken_thread=True),
     )
 
     # 4. Loose end dangling
     cv2.imwrite(
         str(output_dir / "04_review_loose_end.png"),
-        make_stitch_seam(add_loose_end=True),
+        make_stitch_seam(width=W, height=H, n_stitches=n, pitch_px=pitch_px, stitch_w=stitch_w, stitch_h=stitch_h, seam_y=seam_y, add_loose_end=True),
     )
 
     # 5. Wrong thread color (red thread on leather - large Delta E)
     cv2.imwrite(
         str(output_dir / "05_fail_wrong_color.png"),
-        make_stitch_seam(thread_color_bgr=(30, 30, 200)),
+        make_stitch_seam(width=W, height=H, n_stitches=n, pitch_px=pitch_px, stitch_w=stitch_w, stitch_h=stitch_h, seam_y=seam_y, thread_color_bgr=(30, 30, 200)),
     )
+

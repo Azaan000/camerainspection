@@ -9,6 +9,7 @@ nominals:
   stitch:
     stitches_per_inch: 6.0
     seam_position_mm: 12.0
+    thread_color_bgr: [210, 210, 210]
   plastic:
     shield_gap_mm: 2.5
   mechanism:
