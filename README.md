@@ -142,3 +142,6 @@ The single-page web UI (`ui/index.html`) provides dark-mode monitoring and rewor
 - **Human Review Queue**: Inspector adjudication for held units.
 - **Rework Bench (Phase 9)**: Barcode/RFID lookup, multi-camera views, failing rule evaluation, operator rework dispositions, and one-click OEM traceability ZIP export.
 - **Shadow Mode Analytics**: Human vs. camera agreement matrix and false-reject alerts.
+
+-	echo $env:INSPECTION_API_KEY should print the key.
+-	python -m camerainspection.main

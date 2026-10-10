@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from camerainspection.coordinator.service import InspectionCoordinator
@@ -37,6 +38,22 @@ logger = get_logger("api.app")
 
 SEAT_ID_REGEX = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 FORBIDDEN_DEFAULT_KEY = "inspector_secret_token_123"
+
+# Default local development origins allowed to call the API from a browser.
+# 8000 = API serving its own UI, 5500 = VS Code Live Server.
+DEFAULT_CORS_ORIGINS = (
+    "http://127.0.0.1:8000,http://localhost:8000,"
+    "http://127.0.0.1:5500,http://localhost:5500"
+)
+
+
+def get_ui_index_path() -> Path:
+    """Locate ui/index.html (override with UI_INDEX_PATH)."""
+    override = os.getenv("UI_INDEX_PATH")
+    if override:
+        return Path(override).resolve()
+    # app.py -> api -> camerainspection -> src -> <repo root>
+    return Path(__file__).resolve().parents[3] / "ui" / "index.html"
 
 
 def get_expected_api_key() -> str:
@@ -194,10 +211,7 @@ def create_app(
 
     allowed_origins = [
         orig.strip()
-        for orig in os.getenv(
-            "CORS_ALLOWED_ORIGINS",
-            "http://127.0.0.1:8000,http://localhost:8000",
-        ).split(",")
+        for orig in os.getenv("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ORIGINS).split(",")
         if orig.strip()
     ]
     app.add_middleware(
@@ -207,6 +221,17 @@ def create_app(
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["X-API-Key", "Authorization", "Content-Type"],
     )
+
+    @app.get("/", include_in_schema=False)
+    def ui_index() -> FileResponse:
+        """Serve the SeatGuard dashboard from the same origin as the API (no CORS needed)."""
+        index_path = get_ui_index_path()
+        if not index_path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"UI not found at {index_path}. Set UI_INDEX_PATH to override.",
+            )
+        return FileResponse(index_path, media_type="text/html")
 
     @app.get("/health")
     def health_check() -> dict[str, str]:
