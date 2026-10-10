@@ -13,6 +13,7 @@ Views supported:
 from __future__ import annotations
 
 from typing import Any
+
 import cv2
 import numpy as np
 
@@ -46,7 +47,7 @@ class Station1Service(BaseStation):
 
     def get_required_measurements(self) -> list[str]:
         # At least one defect count measurement must be affirmatively recorded
-        reqs = [f"{zone}.defect_count" for zone in self.config.regions_of_interest.keys()]
+        reqs = [f"{zone}.defect_count" for zone in self.config.regions_of_interest]
         return reqs if reqs else ["seating_face.defect_count"]
 
     def inspect_camera_view(

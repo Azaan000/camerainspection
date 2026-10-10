@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from camerainspection.core.logging import get_logger
 from camerainspection.hardware.operator_panel.base import BaseOperatorPanel
 from camerainspection.hardware.plc.base import BasePLC

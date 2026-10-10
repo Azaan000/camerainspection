@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import time
+
 import cv2
 import numpy as np
 
 from camerainspection.core.config import load_system_config
-from camerainspection.core.models import Outcome
 from camerainspection.line.builder import build_line
 from camerainspection.line.controller import LineController
 

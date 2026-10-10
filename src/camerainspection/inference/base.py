@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
+
 import numpy as np
 from pydantic import BaseModel, Field
 

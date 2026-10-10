@@ -51,7 +51,7 @@ class SafeImageAugmentor:
         if shift_x != 0 or shift_y != 0:
             shift_x = int(np.clip(shift_x, -self.max_shift_pixels, self.max_shift_pixels))
             shift_y = int(np.clip(shift_y, -self.max_shift_pixels, self.max_shift_pixels))
-            m = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+            m = np.array([[1, 0, shift_x], [0, 1, shift_y]], dtype=np.float32)
             out = cv2.warpAffine(out, m, (image.shape[1], image.shape[0]), borderMode=cv2.BORDER_REFLECT_101)
 
         # Mild brightness scaling

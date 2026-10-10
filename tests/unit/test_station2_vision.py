@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import numpy as np
-import pytest
 
 from camerainspection.vision.station2.fixtures_gen import make_stitch_seam
 from camerainspection.vision.station2.stitch_geometry import StitchGeometryEngine
 from camerainspection.vision.station2.thread_color import ThreadColorEngine
-
 
 # ------ StitchGeometryEngine -----------------------------------------------
 

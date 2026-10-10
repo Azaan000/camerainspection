@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from pathlib import Path
 import time
+from abc import ABC, abstractmethod
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
 import numpy as np
 
 from camerainspection.core.config import (
@@ -16,12 +17,9 @@ from camerainspection.core.config import (
 )
 from camerainspection.core.exceptions import (
     CameraOfflineError,
-    CameraTimeoutError,
-    CorruptImageError,
     HardwareError,
     InvalidBarcodeError,
     PLCTriggerTimeoutError,
-    UnknownVariantError,
 )
 from camerainspection.core.limits import LimitsEvaluator
 from camerainspection.core.logging import get_logger
@@ -62,8 +60,8 @@ class BaseStation(ABC):
     ) -> None:
         self.config = station_config
         self.variants_root = Path(variants_root)
-        self.plc = plc  # type: ignore[assignment]
-        self.db_manager = db_manager  # type: ignore[assignment]
+        self.plc = plc
+        self.db_manager = db_manager
         self.inference_engine = inference_engine
         self.default_limits_path = default_limits_path
         self.shadow_mode = shadow_mode
@@ -80,7 +78,7 @@ class BaseStation(ABC):
         self.cameras: dict[str, BaseCamera] = {}
         if cameras is not None:
             self.cameras = dict(cameras)
-            self.camera = next(iter(self.cameras.values())) if self.cameras else camera  # type: ignore[assignment]
+            self.camera = next(iter(self.cameras.values())) if self.cameras else camera
         elif camera is not None:
             # Explicit single camera override takes precedence over config
             self.cameras = {"main": camera}
@@ -188,14 +186,12 @@ class BaseStation(ABC):
             return False
         if not isinstance(value, (int, float)):
             return False
-        if math.isnan(value) or math.isinf(value):
-            return False
-        return True
+        return not (math.isnan(value) or math.isinf(value))
 
     def run_cycle(self) -> StationInspectionResult:
         """Execute one complete inspection cycle with multi-camera acquisition and fail-safe guarantees."""
         start_time = time.perf_counter()
-        cycle_timestamp = datetime.now(timezone.utc)
+        cycle_timestamp = datetime.now(UTC)
         seat_id = "UNKNOWN"
         variant_id = "UNKNOWN"
 
@@ -417,7 +413,10 @@ class BaseStation(ABC):
                             outcome=Outcome.FAIL,
                             camera_name=cam_name,
                             view=cam_view,
-                            description=f"Dimensional measurements present on camera '{cam_name}' but no calibration manager configured.",
+                            description=(
+                                f"Dimensional measurements present on camera '{cam_name}' "
+                                "but no calibration manager configured."
+                            ),
                         )
                         cam_defects.append(cal_defect)
 
@@ -469,7 +468,8 @@ class BaseStation(ABC):
                         defect_type="station.incomplete_checks",
                         outcome=Outcome.FAIL,
                         description=(
-                            f"Station {self.station_id} omitted or produced invalid measurements for: {invalid_or_missing}."
+                            f"Station {self.station_id} omitted or produced"
+                            f" invalid measurements for: {invalid_or_missing}."
                         ),
                     )
                 )

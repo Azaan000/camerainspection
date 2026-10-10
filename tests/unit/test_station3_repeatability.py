@@ -1,6 +1,7 @@
 """Repeatability test verifying deterministic consistency across repeated cycles."""
 
 from pathlib import Path
+
 import numpy as np
 
 from camerainspection.core.config import load_station_config

@@ -146,6 +146,7 @@ def test_station1_repeatability(
     in_memory_db: DatabaseManager,
 ) -> None:
     import numpy as np
+
     from camerainspection.hardware.camera.base import BaseCamera
     from camerainspection.vision.station1.fixtures_gen import make_clean_leather
 

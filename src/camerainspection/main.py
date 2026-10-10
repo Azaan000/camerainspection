@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import argparse
-import os
-from pathlib import Path
 import threading
 import time
+from pathlib import Path
+
 import uvicorn
 
 from camerainspection.api.app import create_app
 from camerainspection.core.config import load_system_config
 from camerainspection.core.logging import get_logger
-from camerainspection.line.builder import build_line, build_plc
+from camerainspection.line.builder import build_line
 from camerainspection.line.controller import LineController
 
 logger = get_logger("app.main")

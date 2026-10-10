@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class Outcome(str, Enum):
+class Outcome(StrEnum):
     """Inspection outcome state.
 
     Safety rule: When aggregating outcomes:
@@ -104,7 +105,7 @@ class StationInspectionResult(BaseModel):
     model_version: str = "v0.0.0"
     config_version: str = "v0.0.0"
     cycle_time_ms: float = 0.0
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -119,4 +120,4 @@ class OverallSeatInspectionResult(BaseModel):
     lock_sensor_confirmed: bool = False
     label_printer_enabled: bool = False
     shadow_mode: bool = False
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))

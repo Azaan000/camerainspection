@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from camerainspection.hardware.conveyor.factory import build_conveyor
 from camerainspection.hardware.conveyor.simulator import ConveyorSimulator
 from camerainspection.hardware.operator_panel.factory import build_operator_panel

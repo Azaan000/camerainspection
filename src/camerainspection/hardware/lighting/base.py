@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 import time
-from typing import Any
+from abc import ABC, abstractmethod
 
 from camerainspection.core.logging import get_logger
 

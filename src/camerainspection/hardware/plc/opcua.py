@@ -37,7 +37,7 @@ class OPCUAPLC(BasePLC):
 
     def connect(self) -> None:
         try:
-            import asyncua  # type: ignore
+            import asyncua  # noqa: F401
             self._connected = True
             logger.info(f"Configured OPC UA endpoint at {self.endpoint}")
         except ImportError:

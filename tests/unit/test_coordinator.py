@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
-
 from camerainspection.coordinator.service import InspectionCoordinator
-from camerainspection.core.models import DefectDetail, Outcome, StationInspectionResult
+from camerainspection.core.models import Outcome, StationInspectionResult
 from camerainspection.hardware.plc.simulator import PLCSimulator
 from camerainspection.storage.db import DatabaseManager
-from camerainspection.storage.entities import HumanReviewRecord, SeatInspectionRecord
+from camerainspection.storage.entities import HumanReviewRecord
 
 
 def _make_dummy_result(station_id: str, outcome: Outcome, seat_id: str = "SEAT-100") -> StationInspectionResult:

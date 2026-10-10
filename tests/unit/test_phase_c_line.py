@@ -1,7 +1,6 @@
 """Integration tests for Phase C Line builder, controller, E-Stop, and operating modes."""
 
 from pathlib import Path
-import pytest
 
 from camerainspection.core.config import SystemConfig
 from camerainspection.core.models import Outcome

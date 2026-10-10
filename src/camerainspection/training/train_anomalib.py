@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
-import json
 
 from camerainspection.core.logging import get_logger
 
@@ -35,7 +35,7 @@ def train_anomalib_patchcore(
     }
 
     try:
-        from anomalib.models import Patchcore  # type: ignore
+        from anomalib.models import Patchcore  # noqa: F401
 
         logger.info("Initiating Anomalib PatchCore training...")
         # Production execution with installed Anomalib

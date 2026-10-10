@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from typing import Any
 
@@ -45,7 +46,7 @@ class SiemensSnap7PLC(BasePLC):
 
     def connect(self) -> None:
         try:
-            import snap7  # type: ignore
+            import snap7
             self._client = snap7.client.Client()
             self._client.connect(self.host, self.rack, self.slot)
             self._connected = bool(self._client.get_connected())
@@ -60,10 +61,8 @@ class SiemensSnap7PLC(BasePLC):
 
     def disconnect(self) -> None:
         if self._client:
-            try:
+            with contextlib.suppress(Exception):
                 self._client.disconnect()
-            except Exception:
-                pass
         self._connected = False
         logger.info("Siemens S7 PLC disconnected.")
 

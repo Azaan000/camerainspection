@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from camerainspection.vision.station1.fixtures_gen import (
     make_clean_leather,

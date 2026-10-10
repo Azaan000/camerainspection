@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-import cv2
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel
 
 from camerainspection.core.logging import get_logger
 

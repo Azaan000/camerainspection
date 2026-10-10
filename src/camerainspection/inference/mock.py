@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+
 import numpy as np
 
 from camerainspection.inference.base import BaseInferenceEngine, ModelDetection

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-import pytest
+
 from fastapi.testclient import TestClient
 
 from camerainspection.api.app import create_app
@@ -18,7 +18,6 @@ from camerainspection.hardware.plc.snap7 import SiemensSnap7PLC
 from camerainspection.storage.db import DatabaseManager
 from camerainspection.training.train_anomalib import train_anomalib_patchcore
 from camerainspection.training.train_yolo import train_yolo_model
-
 
 # -------------------------------------------------------------
 # 1. Camera Adapters

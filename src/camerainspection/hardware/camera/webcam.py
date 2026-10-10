@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+
 import cv2
 import numpy as np
 
@@ -101,9 +102,8 @@ class WebcamCamera(BaseCamera):
 
     def capture(self) -> np.ndarray:
         """Acquire a single frame with bounded reconnect-on-failure."""
-        if not self.is_connected():
-            if not self._attempt_reconnect():
-                raise CameraOfflineError(f"Webcam device '{self.camera_id}' is offline and reconnect failed")
+        if not self.is_connected() and not self._attempt_reconnect():
+            raise CameraOfflineError(f"Webcam device '{self.camera_id}' is offline and reconnect failed")
 
         assert self._cap is not None
         ret, frame = self._cap.read()

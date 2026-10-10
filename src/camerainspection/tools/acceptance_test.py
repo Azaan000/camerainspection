@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
-import numpy as np
+from typing import cast
 
 from camerainspection.coordinator.service import InspectionCoordinator
-from camerainspection.core.config import load_system_config
 from camerainspection.core.models import Outcome, StationInspectionResult
-from camerainspection.hardware.camera.synthetic import SyntheticCamera
 from camerainspection.hardware.conveyor.simulator import ConveyorSimulator
-from camerainspection.hardware.operator_panel.simulator import OperatorPanelSimulator
 from camerainspection.hardware.plc.simulator import PLCSimulator
 from camerainspection.hardware.rfid.simulator import RFIDSimulator
 from camerainspection.storage.db import DatabaseManager
@@ -78,7 +74,7 @@ def run_acceptance_test(num_clean_seats: int = 100) -> bool:
     print(f"  [OK] Printer Interlock Engaged for Clean Seats: {clean_printer_enabled} / {num_clean_seats}")
 
     # 2. Seeded Defect Test Cases
-    seeded_cases = [
+    seeded_cases: list[dict[str, object]] = [
         {
             "id": "DEFECT_01_BROKEN_THREAD",
             "station": "STATION_2",
@@ -128,7 +124,7 @@ def run_acceptance_test(num_clean_seats: int = 100) -> bool:
 
     print("\nExecuting Seeded Safety Defect Tests:")
     for tc in seeded_cases:
-        sid = tc["id"]
+        sid = str(tc["id"])
         rfid.write_tag(sid)
         plc.set_label_printer_enable(False, seat_id=sid)
 
@@ -146,7 +142,7 @@ def run_acceptance_test(num_clean_seats: int = 100) -> bool:
                     variant_id="FRONT_LH_BLACK",
                     outcome=Outcome.FAIL,
                     cycle_time_ms=110.0,
-                    measurements=tc["measurements"],
+                    measurements={str(k): float(v) for k, v in cast(dict[str, float], tc["measurements"]).items()},
                 )
             else:
                 res = StationInspectionResult(
@@ -176,8 +172,10 @@ def run_acceptance_test(num_clean_seats: int = 100) -> bool:
     print("                    ACCEPTANCE TEST SUMMARY")
     print("=" * 70)
     print(f"Total Seats Processed:          {total_tested}")
-    print(f"Known-Good Seats Passed:        {passed_clean} / {num_clean_seats} ({passed_clean / num_clean_seats * 100:.1f}%)")
-    print(f"Seeded Defects Intercepted:     {detected_defects} / {len(seeded_cases)} ({detected_defects / len(seeded_cases) * 100:.1f}%)")
+    print(f"Known-Good Seats Passed:        {passed_clean} / {num_clean_seats} "
+          f"({passed_clean / num_clean_seats * 100:.1f}%)")
+    print(f"Seeded Defects Intercepted:     {detected_defects} / {len(seeded_cases)} "
+          f"({detected_defects / len(seeded_cases) * 100:.1f}%)")
     print(f"Escaped Defects:                {escaped_defects}")
     print(f"Mainline Conveyor Released:     {len(conveyor.mainline_seats)}")
     print(f"Reject Spur Diverted:           {len(conveyor.diverted_seats)}")

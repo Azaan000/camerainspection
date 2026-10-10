@@ -1,16 +1,12 @@
 """Unit tests for Phase 3 fixture control and Phase 4 lighting controller."""
 
 from pathlib import Path
-import pytest
 
 from camerainspection.core.config import CameraConfig, StationConfig
 from camerainspection.core.models import Outcome
 from camerainspection.hardware.camera.synthetic import SyntheticCamera
-from camerainspection.hardware.fixture.base import BaseFixture
 from camerainspection.hardware.fixture.plc_fixture import PLCFixture
 from camerainspection.hardware.fixture.simulator import SimulatedFixture
-from camerainspection.hardware.lighting.base import BaseLightController
-from camerainspection.hardware.lighting.modbus_lighting import ModbusLightController
 from camerainspection.hardware.lighting.simulator import SimulatedLightController
 from camerainspection.hardware.plc.simulator import PLCSimulator
 from camerainspection.station.base_station import BaseStation

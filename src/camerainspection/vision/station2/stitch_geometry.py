@@ -27,7 +27,7 @@ class StitchGeometryEngine:
         seam_roi: np.ndarray,
         min_area: int = 5,
         max_area: int = 800,
-    ) -> tuple[np.ndarray, list[dict]]:
+    ) -> tuple[np.ndarray, list[dict[str, object]]]:
         """Segment individual thread stitch penetrations against dark leather background.
 
         Strategy: local background subtraction (large Gaussian blur) to isolate
@@ -75,7 +75,7 @@ class StitchGeometryEngine:
 
         # Sort stitches left-to-right (along seam direction)
         stitches = sorted(stitches, key=lambda s: s["cx"])
-        return clean_bin, stitches
+        return clean_bin, stitches  # type: ignore[return-value]
 
     @classmethod
     def analyze_seam(

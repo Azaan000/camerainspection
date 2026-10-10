@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from camerainspection.hardware.operator_panel.base import BaseOperatorPanel
 from camerainspection.hardware.operator_panel.plc_panel import PLCOperatorPanel
 from camerainspection.hardware.operator_panel.simulator import OperatorPanelSimulator

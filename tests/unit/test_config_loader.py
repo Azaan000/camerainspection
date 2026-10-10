@@ -1,6 +1,7 @@
 """Unit tests for configuration loaders and validation."""
 
 from pathlib import Path
+
 import pytest
 
 from camerainspection.core.config import (
@@ -9,7 +10,7 @@ from camerainspection.core.config import (
     load_variant_config,
     load_yaml,
 )
-from camerainspection.core.exceptions import ConfigurationError, UnknownVariantError
+from camerainspection.core.exceptions import UnknownVariantError
 
 
 def test_load_default_oem_limits(default_limits_path: Path) -> None:

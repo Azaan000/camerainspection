@@ -7,11 +7,8 @@ from fastapi.testclient import TestClient
 
 from camerainspection.api.app import create_app
 from camerainspection.coordinator.service import InspectionCoordinator
-from camerainspection.core.models import Outcome, StationInspectionResult
 from camerainspection.hardware.plc.simulator import PLCSimulator
 from camerainspection.storage.db import DatabaseManager
-from camerainspection.storage.entities import DefectRecord, StationResultRecord, SeatInspectionRecord
-
 
 _VALID_KEY = "test_secret_inspection_key_32_characters_long_min!"
 _AUTH_HEADERS = {"X-API-Key": _VALID_KEY}

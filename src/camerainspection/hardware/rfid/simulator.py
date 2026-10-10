@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import collections
-import time
+
 from camerainspection.hardware.rfid.base import BaseRFIDReader
 
 

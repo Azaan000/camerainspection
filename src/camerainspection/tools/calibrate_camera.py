@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import math
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+
 import cv2
 import numpy as np
 
 from camerainspection.core.logging import get_logger
 from camerainspection.vision.calibration.manager import (
+    RESOLUTION_TARGETS,
     CalibrationManager,
     CalibrationRecord,
-    RESOLUTION_TARGETS,
 )
 
 logger = get_logger("tools.calibrate_camera")
@@ -148,7 +148,7 @@ def calibrate_from_image(
     record = CalibrationRecord(
         camera_name=camera_name,
         pixel_size_mm=round(pixel_size_mm, 5),
-        calibrated_at=datetime.now(timezone.utc),
+        calibrated_at=datetime.now(UTC),
         operator_id=operator_id,
         image_path=img_path,
         pattern_type=pattern_type,

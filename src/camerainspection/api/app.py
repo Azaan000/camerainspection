@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 import io
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import time
-from typing import Any
 import zipfile
-from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request, Response, status
+from collections import defaultdict
+from datetime import UTC
+from pathlib import Path
+from typing import Any
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,7 +25,6 @@ from camerainspection.storage.db import DatabaseManager
 from camerainspection.storage.entities import (
     AuditLogRecord,
     AuditSampleRecord,
-    CameraResultRecord,
     DefectRecord,
     HumanReviewRecord,
     SeatInspectionRecord,
@@ -289,7 +290,7 @@ def create_app(
                     )
                 return {
                     "seat_id": valid_sid,
-                    "variant_id": st_records[0].variant_id if st_records else "UNKNOWN",
+                    "variant_id": st_records[0].seat_id if st_records else "UNKNOWN",
                     "outcome": "IN_PROGRESS",
                     "shadow_mode": False,
                     "label_printer_enabled": False,
@@ -303,7 +304,9 @@ def create_app(
                             "model_version": s.model_version,
                             "config_version": s.config_version,
                             "camera_results": json.loads(s.camera_results_json) if s.camera_results_json else {},
-                            "camera_image_paths": json.loads(s.camera_image_paths_json) if s.camera_image_paths_json else {},
+                            "camera_image_paths": (
+                                json.loads(s.camera_image_paths_json) if s.camera_image_paths_json else {}
+                            ),
                             "defects": [
                                 {
                                     "defect_type": d.defect_type,
@@ -343,7 +346,9 @@ def create_app(
                         "model_version": s.model_version,
                         "config_version": s.config_version,
                         "camera_results": json.loads(s.camera_results_json) if s.camera_results_json else {},
-                        "camera_image_paths": json.loads(s.camera_image_paths_json) if s.camera_image_paths_json else {},
+                        "camera_image_paths": (
+                            json.loads(s.camera_image_paths_json) if s.camera_image_paths_json else {}
+                        ),
                         "defects": [
                             {
                                 "defect_type": d.defect_type,
@@ -368,7 +373,7 @@ def create_app(
     @app.get("/api/v1/seats/{seat_id}/export", dependencies=[Depends(rate_limit_exports)])
     def export_seat_trace(
         seat_id: str,
-        format: str = Query("zip"),
+        format: str = Query("zip"),  # noqa: A002
         auth_user: str = Depends(verify_api_key),
     ) -> Response:
         """Phase 9 Export endpoint: Returns zip file containing JSON audit trace + defect images."""
@@ -381,11 +386,11 @@ def create_app(
 
             status_info["audit_logs"] = [
                 {
-                    "event_type": l.event_type,
-                    "details": l.details,
-                    "timestamp": l.timestamp.isoformat() if l.timestamp else None,
+                    "event_type": log.event_type,
+                    "details": log.details,
+                    "timestamp": log.timestamp.isoformat() if log.timestamp else None,
                 }
-                for l in logs
+                for log in logs
             ]
             status_info["reviews"] = [
                 {
@@ -413,7 +418,7 @@ def create_app(
                 media_type="application/json",
             )
 
-        storage_root = Path(os.getenv("IMAGE_STORAGE_ROOT", "storage/images")).resolve()
+        Path(os.getenv("IMAGE_STORAGE_ROOT", "storage/images")).resolve()
 
         # Create ZIP in memory with path traversal protection
         zip_buf = io.BytesIO()
@@ -473,7 +478,9 @@ def create_app(
                     "station_id": r.station_id,
                     "created_at": r.created_at.isoformat() if r.created_at else None,
                     "annotated_image_path": st_res.annotated_image_path if st_res else None,
-                    "camera_image_paths": json.loads(st_res.camera_image_paths_json) if st_res and st_res.camera_image_paths_json else {},
+                    "camera_image_paths": (
+                        json.loads(st_res.camera_image_paths_json) if st_res and st_res.camera_image_paths_json else {}
+                    ),
                 })
             return out
 
@@ -527,8 +534,9 @@ def create_app(
                         if rev.station_id == "STATION_4":
                             seat.mechanism_cycle_passed = True
                         if coordinator and coordinator.plc:
-                            coordinator.plc.set_station_result(rev.station_id, Outcome.PASS, seat_id=rev.seat_id)
-                            coordinator.plc.hold_pallet(rev.station_id, hold=False)
+                            station_id_str: str = rev.station_id or ""
+                            coordinator.plc.set_station_result(station_id_str, Outcome.PASS, seat_id=rev.seat_id)
+                            coordinator.plc.hold_pallet(station_id_str, hold=False)
                             lock_sensor_ok = coordinator.plc.is_mechanism_locked()
                             if lock_sensor_ok:
                                 coordinator.plc.set_label_printer_enable(True, seat_id=rev.seat_id)
@@ -542,12 +550,15 @@ def create_app(
                     seat.outcome = "FAIL"
                     seat.label_printer_enabled = False
                     if coordinator and coordinator.plc:
-                        coordinator.plc.hold_pallet(rev.station_id, hold=True)
+                        coordinator.plc.hold_pallet(rev.station_id or "", hold=True)
                         coordinator.plc.set_label_printer_enable(False, seat_id=rev.seat_id)
 
         db_manager.log_audit(
             event_type="HUMAN_REVIEW_RESOLVED",
-            details=f"ReviewID {review_id} resolved as {payload.decision} by {inspector} (Auth: {auth_user}). Notes: {payload.notes}",
+            details=(
+                f"ReviewID {review_id} resolved as {payload.decision} by {inspector} "
+                f"(Auth: {auth_user}). Notes: {payload.notes}"
+            ),
             seat_id=rev.seat_id,
         )
         return {"review_id": review_id, "resolved": True, "decision": payload.decision}
@@ -701,7 +712,7 @@ def create_app(
             )
 
         with db_manager.session_scope() as session:
-            from datetime import datetime, timezone
+            from datetime import datetime
             rec = session.query(AuditSampleRecord).filter_by(id=sample_id).first()
             if not rec:
                 raise HTTPException(
@@ -712,7 +723,7 @@ def create_app(
             rec.status = "COMPLETED"
             rec.decision = dec_clean
             rec.discrepancy_details = payload.discrepancy_details
-            rec.completed_at = datetime.now(timezone.utc)
+            rec.completed_at = datetime.now(UTC)
 
         db_manager.log_audit(
             event_type="AUDIT_SAMPLE_DECIDED",

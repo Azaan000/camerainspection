@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import Any
 
 from camerainspection.core.logging import get_logger
@@ -81,7 +80,7 @@ class LineController:
 
             # Simulate arrival at station
             if hasattr(self.runtime.plc, "simulate_arrival"):
-                getattr(self.runtime.plc, "simulate_arrival")(st_name, barcode)
+                self.runtime.plc.simulate_arrival(st_name, barcode)
 
             # Run station inspection cycle
             res = st_service.run_cycle()

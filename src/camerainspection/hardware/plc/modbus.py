@@ -42,7 +42,7 @@ class ModbusPLC(BasePLC):
 
     def connect(self) -> None:
         try:
-            from pymodbus.client import ModbusTcpClient  # type: ignore
+            from pymodbus.client import ModbusTcpClient
             self._client = ModbusTcpClient(self.host, port=self.port)
             self._connected = bool(self._client.connect())
             if self._connected:

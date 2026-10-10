@@ -140,34 +140,34 @@ def generate_station1_replay_frames(output_dir: Path) -> None:
     zone limits (pass_max=0 for scratch, fail_on_any for cut/pinhole) fire correctly.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    W, H = 2400, 1700
+    w, h = 2400, 1700
     # seating_face zone: x200..2400, y200..1700 - inject defects well inside it
-    SF_X, SF_Y = 400, 500   # injection origin inside seating_face
+    sf_x, sf_y = 400, 500   # injection origin inside seating_face
 
     # Frame 1: clean
-    cv2.imwrite(str(output_dir / "01_pass_clean.png"), make_clean_leather(W, H))
+    cv2.imwrite(str(output_dir / "01_pass_clean.png"), make_clean_leather(w, h))
 
     # Frame 2: scratch at 80px inside seating_face (80 * 0.08mm = 6.4mm → FAIL > fail_at=2mm)
     cv2.imwrite(
         str(output_dir / "02_fail_scratch.png"),
-        make_leather_with_scratch(W, H, x0=SF_X, y0=SF_Y, length_px=80, brightness_add=60),
+        make_leather_with_scratch(w, h, x0=sf_x, y0=sf_y, length_px=80, brightness_add=60),
     )
 
     # Frame 3: cut inside seating_face
     cv2.imwrite(
         str(output_dir / "03_fail_cut.png"),
-        make_leather_with_cut(W, H, x0=SF_X, y0=SF_Y, length_px=60, thickness=3),
+        make_leather_with_cut(w, h, x0=sf_x, y0=sf_y, length_px=60, thickness=3),
     )
 
     # Frame 4: pinhole inside seating_face
     cv2.imwrite(
         str(output_dir / "04_fail_pinhole.png"),
-        make_leather_with_pinhole(W, H, cx=SF_X + 100, cy=SF_Y, radius=3),
+        make_leather_with_pinhole(w, h, cx=sf_x + 100, cy=sf_y, radius=3),
     )
 
     # Frame 5: stain inside seating_face
     cv2.imwrite(
         str(output_dir / "05_review_stain.png"),
-        make_leather_with_stain(W, H, cx=SF_X + 200, cy=SF_Y, rx=30, ry=20),
+        make_leather_with_stain(w, h, cx=sf_x + 200, cy=sf_y, rx=30, ry=20),
     )
 

@@ -1,0 +1,36 @@
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+__pycache__
+*.py[cod]
+*.egg-info
+.eggs
+dist
+build
+
+# Dev / test files
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage
+coverage.xml
+
+# Data and storage (mounted as volumes in production)
+data/
+storage/
+
+# Scratch / debug dirs
+scratch/
+nonexistent/
+
+# Docs and notebooks
+docs/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/

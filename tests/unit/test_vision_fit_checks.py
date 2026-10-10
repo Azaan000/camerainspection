@@ -1,6 +1,5 @@
 """Unit tests for Phase 7 rule-based fit checks (shield gap, wrinkles, foam show-through)."""
 
-from pathlib import Path
 import pytest
 
 from camerainspection.core.limits import LimitsEvaluator

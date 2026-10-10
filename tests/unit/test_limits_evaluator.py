@@ -1,6 +1,7 @@
 """Unit tests for OEM LimitsEvaluator."""
 
 from pathlib import Path
+
 from camerainspection.core.config import load_yaml
 from camerainspection.core.limits import LimitsEvaluator
 from camerainspection.core.models import Outcome

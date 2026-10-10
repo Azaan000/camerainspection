@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from unittest.mock import MagicMock
+
 import pytest
 
 from camerainspection.core.config import CameraConfig, StationConfig
@@ -36,7 +37,7 @@ def test_unknown_camera_adapter_raises_configuration_error() -> None:
 
 
 def test_hardware_missing_returns_fail_when_required(tmp_path: Path) -> None:
-    """Problem 1 / A1: Missing hardware when require_all_hardware is True must return FAIL with hardware.not_configured."""
+    """Problem 1 / A1: Missing hardware when require_all_hardware=True must return FAIL with hardware.not_configured."""
     variants_root = tmp_path / "variants"
     var_dir = variants_root / "FRONT_LH_BLACK"
     var_dir.mkdir(parents=True)

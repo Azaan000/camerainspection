@@ -19,7 +19,7 @@ class BaseConveyor(ABC):
         pass
 
     @abstractmethod
-    def is_running() -> bool:
+    def is_running(self) -> bool:
         """Return True if mainline conveyor motor is actively driving."""
         pass
 

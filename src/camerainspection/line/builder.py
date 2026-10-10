@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from camerainspection.coordinator.service import InspectionCoordinator
 from camerainspection.core.config import (
-    StationConfig,
     SystemConfig,
     load_station_config,
 )
@@ -17,9 +16,7 @@ from camerainspection.core.logging import get_logger
 from camerainspection.hardware.camera.factory import build_camera
 from camerainspection.hardware.conveyor.base import BaseConveyor
 from camerainspection.hardware.conveyor.factory import build_conveyor
-from camerainspection.hardware.fixture.base import BaseFixture
 from camerainspection.hardware.fixture.simulator import SimulatedFixture
-from camerainspection.hardware.lighting.base import BaseLightController
 from camerainspection.hardware.lighting.simulator import SimulatedLightController
 from camerainspection.hardware.operator_panel.base import BaseOperatorPanel
 from camerainspection.hardware.operator_panel.factory import build_operator_panel

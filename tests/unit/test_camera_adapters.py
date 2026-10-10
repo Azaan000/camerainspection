@@ -1,6 +1,8 @@
 """Unit tests for camera adapters and camera factory."""
 
+import contextlib
 from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
@@ -11,7 +13,6 @@ from camerainspection.core.exceptions import (
     CameraTimeoutError,
     CorruptImageError,
 )
-from camerainspection.hardware.camera.base import BaseCamera
 from camerainspection.hardware.camera.factory import build_camera
 from camerainspection.hardware.camera.replay import FolderReplayCamera
 from camerainspection.hardware.camera.synthetic import SyntheticCamera
@@ -129,8 +130,6 @@ def test_webcam_warning_logged(caplog: pytest.LogCaptureFixture) -> None:
     import logging
     with caplog.at_level(logging.WARNING):
         cam = WebcamCamera(camera_id="http://invalid.stream:8080/video")
-        try:
+        with contextlib.suppress(Exception):
             cam.connect()
-        except Exception:
-            pass
     assert any("Non-industrial camera" in r.message for r in caplog.records)

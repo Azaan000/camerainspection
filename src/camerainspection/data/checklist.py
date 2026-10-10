@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 from pydantic import BaseModel, Field
 
 from camerainspection.core.logging import get_logger

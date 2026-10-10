@@ -1,6 +1,7 @@
 """End-to-end integration tests for Station 3 using FolderReplayCamera and PLCSimulator."""
 
 from pathlib import Path
+
 import cv2
 import pytest
 
@@ -12,7 +13,7 @@ from camerainspection.inference.base import ModelDetection
 from camerainspection.inference.mock import MockInferenceEngine
 from camerainspection.station.station_3 import Station3Service
 from camerainspection.storage.db import DatabaseManager
-from camerainspection.storage.entities import DefectRecord, SeatInspectionRecord
+from camerainspection.storage.entities import DefectRecord
 from camerainspection.vision.station3.fixtures_gen import generate_station3_test_scene
 
 

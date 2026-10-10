@@ -34,10 +34,7 @@ def build_camera(
     Raises:
         ConfigurationError: If adapter is unrecognized.
     """
-    if isinstance(camera_config, dict):
-        cfg = CameraConfig.model_validate(camera_config)
-    else:
-        cfg = camera_config
+    cfg = CameraConfig.model_validate(camera_config) if isinstance(camera_config, dict) else camera_config
 
     adapter = (adapter_override or cfg.adapter).lower().strip()
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-from typing import Any
 
 from camerainspection.core.logging import get_logger
 from camerainspection.hardware.lighting.base import BaseLightController

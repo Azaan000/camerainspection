@@ -6,6 +6,7 @@ import copy
 import os
 from pathlib import Path
 from typing import Any
+
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -210,7 +211,7 @@ class SystemConfig(BaseModel):
     def shadow_mode(self) -> bool:
         mode = self.system.get("operating_mode")
         if mode:
-            return mode == "shadow"
+            return str(mode) == "shadow"
         return bool(self.system.get("shadow_mode", False))
 
     @property

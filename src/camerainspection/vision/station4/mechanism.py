@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+
 import cv2
 import numpy as np
 
@@ -70,15 +71,14 @@ class MechanismVisionEngine:
             return 0.0
 
         # Filter candidate marks by area
-        valid = [c for c in contours if 20 < cv2.contourArea(c) < 5000]
-        if not valid:
-            valid = contours
+        filtered = [c for c in contours if 20 < cv2.contourArea(c) < 5000]
+        valid: list[np.ndarray] = filtered if filtered else list(contours)
 
         # Pick pointer mark (most distinct indicator)
         best = max(valid, key=cv2.contourArea)
-        M = cv2.moments(best)
-        if M["m00"] > 0:
-            mark_x = float(M["m10"] / M["m00"])
+        moment = cv2.moments(best)
+        if moment["m00"] > 0:
+            mark_x = float(moment["m10"] / moment["m00"])
         else:
             x, _, w, _ = cv2.boundingRect(best)
             mark_x = float(x + w / 2)

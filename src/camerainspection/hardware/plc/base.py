@@ -62,9 +62,10 @@ class BasePLC(ABC):
             self._seat_station_results[seat_id][station_id] = outcome
 
         # If any station reports FAIL or REVIEW, ensure printer cannot remain enabled
-        if outcome in (Outcome.FAIL, Outcome.REVIEW):
-            if self._active_printing_seat_id == seat_id or self._active_printing_seat_id is None:
-                self.set_label_printer_enable(False)
+        if outcome in (Outcome.FAIL, Outcome.REVIEW) and (
+            self._active_printing_seat_id == seat_id or self._active_printing_seat_id is None
+        ):
+            self.set_label_printer_enable(False)
 
         self._write_station_result_hardware(station_id, outcome)
 
@@ -151,6 +152,12 @@ class BasePLC(ABC):
             self._shared_label_printer_enabled = False
             self._write_label_printer_hardware(False)
             logger.info("Shared Safety Interlock: Label printer output DISABLED.")
+
+    @abstractmethod
+    def simulate_mechanism_sensor(self, locked: bool) -> None:
+        """Set physical mechanism lock confirmation sensor status (override in simulator/test subclasses)."""
+        # Default no-op for production drivers that read the real sensor
+        pass
 
     def clear_seat(self, seat_id: str) -> None:
         """Prune seat tracking memory to prevent unbounded growth."""

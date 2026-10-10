@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
-import json
 
 from camerainspection.core.logging import get_logger
 
@@ -40,11 +40,14 @@ def train_yolo_model(
     }
 
     try:
-        from ultralytics import YOLO  # type: ignore
+        from ultralytics import YOLO  # noqa: F401
 
         logger.info(f"Initiating Ultralytics YOLO training for {epochs} epochs...")
         model = YOLO(model_type)
-        model.train(data=str(data_yaml), epochs=epochs, imgsz=imgsz, project=str(output_path.parent), name=output_path.name)
+        model.train(
+            data=str(data_yaml), epochs=epochs, imgsz=imgsz,
+            project=str(output_path.parent), name=output_path.name,
+        )
 
         if export_onnx:
             onnx_path = model.export(format="onnx")

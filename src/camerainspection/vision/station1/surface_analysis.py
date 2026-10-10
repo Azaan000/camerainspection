@@ -16,13 +16,13 @@ Priority order in classifier:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 import cv2
 import numpy as np
 
 
-class LeatherDefectType(str, Enum):
+class LeatherDefectType(StrEnum):
     SCRATCH = "scratch"
     CUT = "cut"
     PINHOLE = "pinhole"

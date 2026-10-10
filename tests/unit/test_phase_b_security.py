@@ -2,6 +2,7 @@
 
 import os
 from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -13,17 +14,23 @@ from camerainspection.storage.db import DatabaseManager
 
 def test_app_refuses_to_start_with_weak_or_missing_api_key(in_memory_db: DatabaseManager) -> None:
     """Problem 4 / B2: Server must refuse to start if key is missing, empty, default placeholder, or < 32 chars."""
-    with patch.dict(os.environ, {"INSPECTION_API_KEY": ""}):
-        with pytest.raises(RuntimeError, match="INSPECTION_API_KEY must be set"):
-            create_app(db_manager=in_memory_db)
+    with (
+        patch.dict(os.environ, {"INSPECTION_API_KEY": ""}),
+        pytest.raises(RuntimeError, match="INSPECTION_API_KEY must be set"),
+    ):
+        create_app(db_manager=in_memory_db)
 
-    with patch.dict(os.environ, {"INSPECTION_API_KEY": "inspector_secret_token_123"}):
-        with pytest.raises(RuntimeError, match="must not use default placeholder"):
-            create_app(db_manager=in_memory_db)
+    with (
+        patch.dict(os.environ, {"INSPECTION_API_KEY": "inspector_secret_token_123"}),
+        pytest.raises(RuntimeError, match="must not use default placeholder"),
+    ):
+        create_app(db_manager=in_memory_db)
 
-    with patch.dict(os.environ, {"INSPECTION_API_KEY": "short_key_1234"}):
-        with pytest.raises(RuntimeError, match="at least 32 characters long"):
-            create_app(db_manager=in_memory_db)
+    with (
+        patch.dict(os.environ, {"INSPECTION_API_KEY": "short_key_1234"}),
+        pytest.raises(RuntimeError, match="at least 32 characters long"),
+    ):
+        create_app(db_manager=in_memory_db)
 
 
 def test_all_routes_require_authentication_except_health(
@@ -48,7 +55,11 @@ def test_all_routes_require_authentication_except_health(
                 continue
 
             # Route resolution: replace path parameters with mock test values
-            test_path = path.replace("{seat_id}", "SEAT-TEST-001").replace("{review_id}", "1").replace("{sample_id}", "1")
+            test_path = (
+                path.replace("{seat_id}", "SEAT-TEST-001")
+                .replace("{review_id}", "1")
+                .replace("{sample_id}", "1")
+            )
 
             # GET /health is explicitly public
             if path == "/health" and method == "GET":
@@ -57,10 +68,7 @@ def test_all_routes_require_authentication_except_health(
                 continue
 
             # Call without authentication headers
-            if method == "POST":
-                res = client.post(test_path, json={})
-            else:
-                res = client.get(test_path)
+            res = client.post(test_path, json={}) if method == "POST" else client.get(test_path)
 
             assert res.status_code == 401, (
                 f"Route {method} {test_path} allowed unauthenticated access (status={res.status_code}, body={res.text})"

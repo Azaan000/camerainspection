@@ -10,7 +10,6 @@ from camerainspection.core.models import (
 from camerainspection.storage.db import DatabaseManager
 from camerainspection.storage.entities import (
     AuditLogRecord,
-    DefectRecord,
     SeatInspectionRecord,
     StationResultRecord,
 )

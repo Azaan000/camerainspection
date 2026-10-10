@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from typing import Any
+
 import numpy as np
 
 from camerainspection.core.exceptions import (
     CameraOfflineError,
     CameraTimeoutError,
-    CorruptImageError,
 )
 from camerainspection.core.logging import get_logger
 from camerainspection.hardware.camera.base import BaseCamera
@@ -38,7 +38,7 @@ class HikrobotCamera(BaseCamera):
 
         try:
             # MVS SDK native wrapper check
-            import MvCameraControl_class  # type: ignore
+            import MvCameraControl_class
             self._mvs = MvCameraControl_class
             self._mvs_available = True
         except ImportError:

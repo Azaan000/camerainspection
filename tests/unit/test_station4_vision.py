@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from camerainspection.vision.station4.fixtures_gen import generate_station4_test_scene
 from camerainspection.vision.station4.mechanism import MechanismVisionEngine
 

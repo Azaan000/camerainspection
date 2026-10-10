@@ -88,7 +88,10 @@ class GoldenTemplateMatcher:
                     is_correct_hand=False,
                     match_score=opp_score,
                     bounding_box=bbox,
-                    message=f"WRONG HAND ASSEMBLED! Expected {expected_hand}, matched {opp_hand} (score={opp_score:.2f} vs {primary_score:.2f})",
+                    message=(
+                        f"WRONG HAND ASSEMBLED! Expected {expected_hand}, matched {opp_hand} "
+                        f"(score={opp_score:.2f} vs {primary_score:.2f})"
+                    ),
                 )
 
         if primary_score < threshold:
@@ -101,7 +104,10 @@ class GoldenTemplateMatcher:
                 is_correct_hand=False,
                 match_score=primary_score,
                 bounding_box=bbox,
-                message=f"MISSING COMPONENT: {component_name} score {primary_score:.2f} below threshold {threshold:.2f}",
+                message=(
+                    f"MISSING COMPONENT: {component_name} score {primary_score:.2f}"
+                    f" below threshold {threshold:.2f}"
+                ),
             )
 
         # Successfully matched correct component

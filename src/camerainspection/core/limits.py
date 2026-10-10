@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from camerainspection.core.logging import get_logger
 from camerainspection.core.models import DefectDetail, Outcome
 

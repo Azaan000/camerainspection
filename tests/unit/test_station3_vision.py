@@ -1,6 +1,7 @@
 """Unit tests for Station 3 OpenCV vision measurement algorithms."""
 
 from pathlib import Path
+
 import cv2
 import numpy as np
 

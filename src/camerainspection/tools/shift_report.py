@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
+
 from sqlalchemy.orm import Session
 
 from camerainspection.core.config import load_system_config
@@ -20,7 +20,7 @@ from camerainspection.storage.entities import (
 def generate_shift_report_dict(
     session: Session,
     false_reject_threshold_pct: float = 3.0,
-) -> dict:
+) -> dict[str, object]:
     """Compute shift quality statistics comparing camera vs human inspector decisions."""
     seats = session.query(SeatInspectionRecord).all()
     total_inspected = len(seats)
@@ -66,7 +66,8 @@ def generate_shift_report_dict(
     defects = session.query(DefectRecord).all()
     defect_counts: dict[str, int] = {}
     for d in defects:
-        defect_counts[d.defect_type] = defect_counts.get(d.defect_type, 0) + 1
+        key = str(d.defect_type)
+        defect_counts[key] = defect_counts.get(key, 0) + 1
 
     return {
         "total_inspected": total_inspected,
@@ -87,7 +88,7 @@ def generate_shift_report_dict(
     }
 
 
-def print_shift_report(data: dict) -> None:
+def print_shift_report(data: dict[str, object]) -> None:
     print("\n" + "=" * 65)
     print("      AUTOMATED INSPECTION - END-OF-SHIFT QUALITY REPORT")
     print("=" * 65)
@@ -98,20 +99,25 @@ def print_shift_report(data: dict) -> None:
     print("-" * 65)
     print(f"Human Inspector Decisions:  {data['human_decisions_count']}")
     print(f"Direct Comparisons:         {data['compared_sample_size']}")
-    print(f"Agreement Rate:             {data['agreement_rate'] * 100:.2f}%")
-    print(f"False-Reject Rate:          {data['false_reject_rate'] * 100:.2f}% (Count: {data['false_reject_count']})")
-    print(f"Escape Rate:                {data['escape_rate'] * 100:.2f}% (Count: {data['escape_count']})")
+    agreement_rate = float(data["agreement_rate"])  # type: ignore[arg-type]
+    false_reject_rate = float(data["false_reject_rate"])  # type: ignore[arg-type]
+    escape_rate = float(data["escape_rate"])  # type: ignore[arg-type]
+    threshold_pct = float(data["threshold_pct"])  # type: ignore[arg-type]
+    print(f"Agreement Rate:             {agreement_rate * 100:.2f}%")
+    print(f"False-Reject Rate:          {false_reject_rate * 100:.2f}% (Count: {data['false_reject_count']})")
+    print(f"Escape Rate:                {escape_rate * 100:.2f}% (Count: {data['escape_count']})")
     print("-" * 65)
 
     if data["flagged_false_reject_warning"]:
         print(" [!] ALERT: False-Reject Rate exceeds limit threshold of "
-              f"{data['threshold_pct']:.1f}%! Retune station tolerances or inspect camera lighting.")
+              f"{threshold_pct:.1f}%! Retune station tolerances or inspect camera lighting.")
     else:
-        print(f" [OK] False-Reject Rate is within OEM acceptable band (<= {data['threshold_pct']:.1f}%).")
+        print(f" [OK] False-Reject Rate is within OEM acceptable band (<= {threshold_pct:.1f}%).")
 
-    if data.get("defect_counts"):
+    defect_counts = data.get("defect_counts")
+    if defect_counts and isinstance(defect_counts, dict):
         print("\nTop Defect Types:")
-        for dtype, cnt in sorted(data["defect_counts"].items(), key=lambda x: x[1], reverse=True)[:5]:
+        for dtype, cnt in sorted(defect_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
             print(f"  - {dtype:30s}: {cnt}")
     print("=" * 65 + "\n")
 

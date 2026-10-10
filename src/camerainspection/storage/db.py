@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Generator
 from contextlib import contextmanager
-import json
+from datetime import UTC
 from pathlib import Path
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -110,7 +112,7 @@ class DatabaseManager:
             session.flush()
 
             # Record per-camera view records
-            for cam_name, cam_res in res.camera_results.items():
+            for _cam_name, cam_res in res.camera_results.items():
                 cam_rec = CameraResultRecord(
                     station_result_id=st_rec.id,
                     camera_name=cam_res.camera_name,
@@ -183,7 +185,6 @@ class DatabaseManager:
 
     def queue_for_review(self, seat_id: str, station_id: str | None = None) -> int:
         """Enqueue an inspection that requires human adjudication."""
-        from datetime import datetime, timezone
         from camerainspection.storage.entities import HumanReviewRecord
 
         with self.session_scope() as session:
@@ -205,7 +206,8 @@ class DatabaseManager:
         notes: str = "",
     ) -> None:
         """Resolve a human review record (decision: PASS, REWORK, SCRAP)."""
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from camerainspection.storage.entities import HumanReviewRecord
 
         with self.session_scope() as session:
@@ -215,4 +217,4 @@ class DatabaseManager:
                 rev.status = "RESOLVED"
                 rev.decision = decision
                 rev.notes = notes
-                rev.reviewed_at = datetime.now(timezone.utc)
+                rev.reviewed_at = datetime.now(UTC)

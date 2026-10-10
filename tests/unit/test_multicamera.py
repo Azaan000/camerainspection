@@ -1,10 +1,8 @@
 """Unit tests for Phase 2 multi-camera configuration, execution, and fail-safe aggregation."""
 
 from pathlib import Path
-import numpy as np
-import pytest
 
-from camerainspection.core.config import CameraConfig, ROIConfig, StationConfig
+from camerainspection.core.config import CameraConfig, StationConfig
 from camerainspection.core.models import Outcome
 from camerainspection.hardware.camera.synthetic import SyntheticCamera
 from camerainspection.hardware.plc.simulator import PLCSimulator

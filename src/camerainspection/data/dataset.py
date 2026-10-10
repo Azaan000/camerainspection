@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import random
-from typing import Any
+from pathlib import Path
+
 from pydantic import BaseModel, Field
 
 from camerainspection.core.logging import get_logger

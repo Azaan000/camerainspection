@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-import cv2
+
 import pytest
 
 from camerainspection.core.config import load_station_config
@@ -172,8 +172,9 @@ def test_station2_repeatability(
     configs_dir: Path, variants_dir: Path,
     in_memory_db: DatabaseManager,
 ) -> None:
-    from camerainspection.hardware.camera.base import BaseCamera
     import numpy as np
+
+    from camerainspection.hardware.camera.base import BaseCamera
     from camerainspection.vision.station2.fixtures_gen import make_stitch_seam
 
     frame = make_stitch_seam(n_stitches=30, pitch_px=18)

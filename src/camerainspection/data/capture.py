@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
 import cv2
-import numpy as np
 from pydantic import BaseModel, Field
 
 from camerainspection.core.logging import get_logger
@@ -24,7 +23,7 @@ class CaptureMetadata(BaseModel):
     camera_id: str
     variant_id: str
     lot_id: str
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     light_settings: dict[str, Any] = Field(default_factory=dict)
     exposure_us: int | None = None
     gain_db: float | None = None
@@ -67,7 +66,7 @@ class ImageCaptureTool:
         # Write image
         success = cv2.imwrite(str(image_path), frame)
         if not success:
-            raise IOError(f"Failed to write captured image to {image_path}")
+            raise OSError(f"Failed to write captured image to {image_path}")
 
         # Write metadata
         with open(meta_path, "w", encoding="utf-8") as f:

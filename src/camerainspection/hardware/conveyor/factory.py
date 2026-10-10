@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from camerainspection.hardware.conveyor.base import BaseConveyor
 from camerainspection.hardware.conveyor.plc_conveyor import PLCConveyor
 from camerainspection.hardware.conveyor.simulator import ConveyorSimulator

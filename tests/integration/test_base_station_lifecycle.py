@@ -2,8 +2,8 @@
 
 from pathlib import Path
 from typing import Any
+
 import numpy as np
-import pytest
 
 from camerainspection.core.config import load_station_config
 from camerainspection.core.limits import LimitsEvaluator

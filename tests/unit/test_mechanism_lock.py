@@ -1,7 +1,6 @@
 """Unit tests for Phase 6 mechanism lock confirmation and multi-signal safety validation."""
 
 from pathlib import Path
-import pytest
 
 from camerainspection.core.config import CameraConfig, ROIConfig, StationConfig
 from camerainspection.core.models import Outcome

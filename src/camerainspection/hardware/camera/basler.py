@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import numpy as np
 
 from camerainspection.core.exceptions import (
@@ -38,7 +39,7 @@ class BaslerCamera(BaseCamera):
         self._pylon_available = False
 
         try:
-            import pypylon.pylon as pylon  # type: ignore
+            import pypylon.pylon as pylon
             self._pylon = pylon
             self._pylon_available = True
         except ImportError:
@@ -91,7 +92,7 @@ class BaslerCamera(BaseCamera):
                 grab = self._camera.GrabOne(self.timeout_ms)
                 if not grab.GrabSucceeded():
                     raise CameraTimeoutError("Basler camera acquisition timed out.")
-                img = grab.Array
+                img: np.ndarray = grab.Array
                 grab.Release()
                 if img is None or img.size == 0:
                     raise CorruptImageError("Empty frame received from Basler camera.")

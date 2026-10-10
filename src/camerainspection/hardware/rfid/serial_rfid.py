@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import time
+import contextlib
 from typing import Any
+
 from camerainspection.core.logging import get_logger
 from camerainspection.hardware.rfid.base import BaseRFIDReader
 
@@ -43,10 +44,8 @@ class SerialRFIDReader(BaseRFIDReader):
 
     def disconnect(self) -> None:
         if self._serial and hasattr(self._serial, "close"):
-            try:
+            with contextlib.suppress(Exception):
                 self._serial.close()
-            except Exception:
-                pass
         self._connected = False
 
     def is_connected(self) -> bool:
@@ -57,7 +56,7 @@ class SerialRFIDReader(BaseRFIDReader):
             return None
         try:
             # Standard ASCII line-based RFID scan
-            line = self._serial.readline().decode("utf-8", errors="ignore").strip()
+            line: str = self._serial.readline().decode("utf-8", errors="ignore").strip()
             if line:
                 return line
             return None
@@ -69,7 +68,7 @@ class SerialRFIDReader(BaseRFIDReader):
         if not self.is_connected():
             return False
         try:
-            self._serial.write(f"{tag_id}\r\n".encode("utf-8"))
+            self._serial.write(f"{tag_id}\r\n".encode())
             self._serial.flush()
             return True
         except Exception as e:

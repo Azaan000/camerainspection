@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import cv2
 import numpy as np
 
@@ -12,7 +13,7 @@ from camerainspection.core.logging import get_logger
 from camerainspection.core.models import BoundingBox, DefectDetail, Outcome
 from camerainspection.station.base_station import BaseStation
 from camerainspection.vision.station2.stitch_geometry import StitchGeometryEngine
-from camerainspection.vision.station2.thread_color import ThreadColorEngine, _NO_REFERENCE_SENTINEL
+from camerainspection.vision.station2.thread_color import _NO_REFERENCE_SENTINEL, ThreadColorEngine
 
 logger = get_logger("station.2")
 

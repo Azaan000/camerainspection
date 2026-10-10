@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import cv2
 import numpy as np
 
 from camerainspection.vision.station3.color import ColorMatchEngine
@@ -50,7 +49,8 @@ class ThreadColorEngine:
         if not patches:
             return None
 
-        return np.concatenate(patches, axis=1)
+        result: np.ndarray = np.concatenate(patches, axis=1)
+        return result
 
     @classmethod
     def compute_thread_delta_e(

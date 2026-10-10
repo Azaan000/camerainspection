@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import threading
 import time
-from typing import Any
+from datetime import UTC, datetime
 
 from camerainspection.core.logging import get_logger
 from camerainspection.core.models import (
-    DefectDetail,
     Outcome,
     OverallSeatInspectionResult,
     StationInspectionResult,
@@ -98,7 +96,7 @@ class InspectionCoordinator:
     def _enforce_printer_timeout_unlocked(self) -> None:
         """Auto-disable printer pulse if duration exceeds print_pulse_timeout_s."""
         if self._currently_printing_seat_id is not None:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             t = self._seat_print_time.get(self._currently_printing_seat_id)
             if t and (now - t).total_seconds() >= self.print_pulse_timeout_s:
                 sid = self._currently_printing_seat_id
@@ -132,13 +130,14 @@ class InspectionCoordinator:
             if is_new_seat:
                 self._seat_buffers[seat_id] = {}
                 self._seat_variants[seat_id] = res.variant_id
-                self._seat_first_seen[seat_id] = datetime.now(timezone.utc)
+                self._seat_first_seen[seat_id] = datetime.now(UTC)
                 self._seat_printer_eligible[seat_id] = False
 
                 # Crucial safety rule: Disable printer as soon as a new seat arrives / starts inspection
                 if self._currently_printing_seat_id is not None:
                     logger.info(
-                        f"New seat {seat_id} entered line. Shutting off printer previously enabled for {self._currently_printing_seat_id}."
+                        f"New seat {seat_id} entered line. Shutting off printer previously enabled "
+                        f"for {self._currently_printing_seat_id}."
                     )
                     self._seat_printer_eligible.pop(self._currently_printing_seat_id, None)
                     self._seat_print_time.pop(self._currently_printing_seat_id, None)
@@ -191,7 +190,7 @@ class InspectionCoordinator:
 
     def _purge_timed_out_seats_unlocked(self, exclude: str | None = None) -> None:
         """Auto-finalise any seats whose cycle has exceeded ``cycle_timeout_s``."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timed_out = [
             sid
             for sid, first_seen in list(self._seat_first_seen.items())
@@ -255,7 +254,7 @@ class InspectionCoordinator:
         if can_enable_printer:
             self._seat_printer_eligible[seat_id] = True
             self._currently_printing_seat_id = seat_id
-            self._seat_print_time[seat_id] = datetime.now(timezone.utc)
+            self._seat_print_time[seat_id] = datetime.now(UTC)
             if not self.shadow_mode and self.plc is not None:
                 self.plc.set_label_printer_enable(True, seat_id=seat_id)
         else:
@@ -277,7 +276,7 @@ class InspectionCoordinator:
             lock_sensor_confirmed=lock_confirmed,
             label_printer_enabled=can_enable_printer,
             shadow_mode=self.shadow_mode,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         # 4. Persist to database

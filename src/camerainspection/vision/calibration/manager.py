@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
 from pydantic import BaseModel, Field
 
 from camerainspection.core.logging import get_logger
@@ -30,7 +31,7 @@ class CalibrationRecord(BaseModel):
 
     camera_name: str
     pixel_size_mm: float
-    calibrated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    calibrated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     operator_id: str = "OPERATOR_DEFAULT"
     image_path: str = ""
     pattern_type: str = "checkerboard"
@@ -40,10 +41,10 @@ class CalibrationRecord(BaseModel):
 
     def is_expired(self, max_age_days: float = 30.0) -> bool:
         """Check whether calibration age exceeds expiration threshold."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cal_time = self.calibrated_at
         if cal_time.tzinfo is None:
-            cal_time = cal_time.replace(tzinfo=timezone.utc)
+            cal_time = cal_time.replace(tzinfo=UTC)
         age_seconds = (now - cal_time).total_seconds()
         return age_seconds > (max_age_days * 86400.0)
 

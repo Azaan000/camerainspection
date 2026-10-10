@@ -21,13 +21,14 @@ Requirements:
 from __future__ import annotations
 
 from typing import Any
+
 import cv2
 import numpy as np
 
 from camerainspection.core.config import CameraConfig
 from camerainspection.core.limits import LimitsEvaluator
 from camerainspection.core.logging import get_logger
-from camerainspection.core.models import BoundingBox, DefectDetail, Outcome
+from camerainspection.core.models import DefectDetail, Outcome
 from camerainspection.station.base_station import BaseStation
 from camerainspection.vision.station4.mechanism import MechanismVisionEngine
 
@@ -248,7 +249,10 @@ class Station4Service(BaseStation):
                         defect_type="mechanism.slip_back_detected",
                         outcome=Outcome.FAIL,
                         measured_value=slip_back,
-                        description=f"Actuator slipped back {slip_back:.2f}mm after lock engagement (limit {max_slip:.2f}mm).",
+                        description=(
+                            f"Actuator slipped back {slip_back:.2f}mm after lock engagement "
+                            f"(limit {max_slip:.2f}mm)."
+                        ),
                     )
                 )
 

@@ -1,8 +1,7 @@
 """Unit tests for Phase 5 camera calibration tool and enforcement logic."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-import pytest
 
 from camerainspection.core.config import CameraConfig, StationConfig
 from camerainspection.core.models import Outcome
@@ -11,7 +10,6 @@ from camerainspection.hardware.plc.simulator import PLCSimulator
 from camerainspection.station.base_station import BaseStation
 from camerainspection.storage.db import DatabaseManager
 from camerainspection.tools.calibrate_camera import (
-    calibrate_from_image,
     compute_pixel_size_from_checkerboard,
     compute_pixel_size_from_two_marks,
 )
@@ -48,7 +46,7 @@ def test_calibration_manager_expiration_and_persistence(tmp_path: Path) -> None:
     fresh = CalibrationRecord(
         camera_name="test_cam",
         pixel_size_mm=0.08,
-        calibrated_at=datetime.now(timezone.utc),
+        calibrated_at=datetime.now(UTC),
     )
     mgr.save_calibration(fresh)
 
@@ -60,7 +58,7 @@ def test_calibration_manager_expiration_and_persistence(tmp_path: Path) -> None:
     expired = CalibrationRecord(
         camera_name="old_cam",
         pixel_size_mm=0.08,
-        calibrated_at=datetime.now(timezone.utc) - timedelta(days=15),
+        calibrated_at=datetime.now(UTC) - timedelta(days=15),
     )
     mgr.save_calibration(expired)
 

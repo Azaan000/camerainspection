@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from camerainspection.hardware.rfid.base import BaseRFIDReader
 from camerainspection.hardware.rfid.serial_rfid import SerialRFIDReader
 from camerainspection.hardware.rfid.simulator import RFIDSimulator
