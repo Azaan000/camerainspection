@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 import io
 import json
 import os
+from pathlib import Path
+import re
 import secrets
-import zipfile
+import time
 from typing import Any
-from fastapi import Depends, FastAPI, HTTPException, Header, Query, Response, status
+import zipfile
+from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from camerainspection.coordinator.service import InspectionCoordinator
 from camerainspection.core.logging import get_logger
@@ -30,7 +34,19 @@ from camerainspection.tools.shift_report import generate_shift_report_dict
 
 logger = get_logger("api.app")
 
-EXPECTED_API_KEY = os.getenv("INSPECTION_API_KEY", "inspector_secret_token_123")
+SEAT_ID_REGEX = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+FORBIDDEN_DEFAULT_KEY = "inspector_secret_token_123"
+
+
+def get_expected_api_key() -> str:
+    """Validate and return the configured INSPECTION_API_KEY."""
+    key = os.getenv("INSPECTION_API_KEY", "")
+    if not key or key == FORBIDDEN_DEFAULT_KEY or len(key) < 32:
+        raise RuntimeError(
+            "INSPECTION_API_KEY must be set, must not use default placeholder, "
+            f"and must be at least 32 characters long. Current key length: {len(key)}"
+        )
+    return key
 
 
 def verify_api_key(
@@ -38,6 +54,8 @@ def verify_api_key(
     authorization: str | None = Header(None, alias="Authorization"),
 ) -> str:
     """Validate API key via constant-time comparison against header or Bearer token."""
+    expected_key = get_expected_api_key()
+
     provided_key: str | None = None
     if x_api_key:
         provided_key = x_api_key.strip()
@@ -52,7 +70,7 @@ def verify_api_key(
             detail="Authentication failed: Missing X-API-Key or Authorization Bearer header.",
         )
 
-    expected = EXPECTED_API_KEY.encode("utf-8")
+    expected = expected_key.encode("utf-8")
     provided = provided_key.encode("utf-8")
     if not (secrets.compare_digest(provided, expected) and len(expected) > 0):
         raise HTTPException(
@@ -63,6 +81,66 @@ def verify_api_key(
     return "authenticated_inspector"
 
 
+class RateLimiter:
+    """In-process token bucket rate limiter per client IP + route category."""
+
+    def __init__(self, requests_per_minute: float = 60.0, burst: float = 60.0) -> None:
+        self.rate = requests_per_minute / 60.0
+        self.capacity = burst
+        self.buckets: dict[str, tuple[float, float]] = defaultdict(lambda: (self.capacity, time.monotonic()))
+
+    def consume(self, client_id: str) -> tuple[bool, float]:
+        now = time.monotonic()
+        tokens, last_time = self.buckets[client_id]
+        elapsed = now - last_time
+        tokens = min(self.capacity, tokens + elapsed * self.rate)
+
+        if tokens >= 1.0:
+            self.buckets[client_id] = (tokens - 1.0, now)
+            return True, 0.0
+        else:
+            self.buckets[client_id] = (tokens, now)
+            wait_time = (1.0 - tokens) / self.rate
+            return False, wait_time
+
+
+# Default rate limits: 60 writes/min, 10 exports/min
+write_limiter = RateLimiter(requests_per_minute=60.0, burst=60.0)
+export_limiter = RateLimiter(requests_per_minute=10.0, burst=10.0)
+
+
+def rate_limit_writes(request: Request) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, wait_s = write_limiter.consume(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Retry after {int(wait_s) + 1}s.",
+            headers={"Retry-After": str(int(wait_s) + 1)},
+        )
+
+
+def rate_limit_exports(request: Request) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, wait_s = export_limiter.consume(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Export rate limit exceeded. Retry after {int(wait_s) + 1}s.",
+            headers={"Retry-After": str(int(wait_s) + 1)},
+        )
+
+
+def validate_seat_id(seat_id: str) -> str:
+    """Enforce alphanumeric, underscore, dot, colon, hyphen seat ID, max 64 chars."""
+    if not SEAT_ID_REGEX.match(seat_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid seat ID '{seat_id}'. Allowed characters: A-Za-z0-9_.:- up to 64 chars.",
+        )
+    return seat_id
+
+
 class ReviewDecisionPayload(BaseModel):
     decision: str = Field(..., description="Decision outcome: PASS, REWORK, or SCRAP")
     notes: str = Field("", description="Review notes / explanation")
@@ -70,6 +148,8 @@ class ReviewDecisionPayload(BaseModel):
 
 
 class StationResultIngestRequest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     result: StationInspectionResult | None = None
     seat_id: str | None = None
     station_id: str | None = None
@@ -102,6 +182,9 @@ def create_app(
     coordinator: InspectionCoordinator | None = None,
 ) -> FastAPI:
     """Create and configure FastAPI application."""
+    # Ensure strong API key at startup
+    get_expected_api_key()
+
     app = FastAPI(
         title="Automated Camera Inspection System API",
         version="0.1.0",
@@ -132,7 +215,7 @@ def create_app(
     # Ingestion & Seat Query Endpoints
     # -------------------------------------------------------------
 
-    @app.post("/api/v1/stations/result", status_code=status.HTTP_201_CREATED)
+    @app.post("/api/v1/stations/result", status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit_writes)])
     def submit_station_result(
         payload: StationResultIngestRequest,
         auth_user: str = Depends(verify_api_key),
@@ -144,7 +227,7 @@ def create_app(
             if not payload.seat_id or not payload.station_id or not payload.variant_id or not payload.outcome:
                 raise HTTPException(status_code=422, detail="Missing required station result fields.")
             st_result = StationInspectionResult(
-                seat_id=payload.seat_id,
+                seat_id=validate_seat_id(payload.seat_id),
                 station_id=payload.station_id,
                 variant_id=payload.variant_id,
                 outcome=payload.outcome,
@@ -156,6 +239,8 @@ def create_app(
                 camera_results=payload.camera_results,
                 camera_image_paths=payload.camera_image_paths,
             )
+
+        validate_seat_id(st_result.seat_id)
 
         st_id = db_manager.record_station_result(st_result)
         db_manager.log_audit(
@@ -179,27 +264,31 @@ def create_app(
         }
 
     @app.get("/api/v1/seats/{seat_id}")
-    def get_seat_status(seat_id: str) -> dict[str, Any]:
+    def get_seat_status(
+        seat_id: str,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
         """Retrieve complete inspection history and outcome for a given seat ID."""
+        valid_sid = validate_seat_id(seat_id)
         with db_manager.session_scope() as session:
             record = (
                 session.query(SeatInspectionRecord)
-                .filter(SeatInspectionRecord.seat_id == seat_id)
+                .filter(SeatInspectionRecord.seat_id == valid_sid)
                 .first()
             )
             if not record:
                 st_records = (
                     session.query(StationResultRecord)
-                    .filter(StationResultRecord.seat_id == seat_id)
+                    .filter(StationResultRecord.seat_id == valid_sid)
                     .all()
                 )
                 if not st_records:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Seat ID '{seat_id}' not found.",
+                        detail=f"Seat ID '{valid_sid}' not found.",
                     )
                 return {
-                    "seat_id": seat_id,
+                    "seat_id": valid_sid,
                     "variant_id": st_records[0].variant_id if st_records else "UNKNOWN",
                     "outcome": "IN_PROGRESS",
                     "shadow_mode": False,
@@ -276,14 +365,19 @@ def create_app(
                 ],
             }
 
-    @app.get("/api/v1/seats/{seat_id}/export")
-    def export_seat_trace(seat_id: str, format: str = Query("zip")) -> Response:
+    @app.get("/api/v1/seats/{seat_id}/export", dependencies=[Depends(rate_limit_exports)])
+    def export_seat_trace(
+        seat_id: str,
+        format: str = Query("zip"),
+        auth_user: str = Depends(verify_api_key),
+    ) -> Response:
         """Phase 9 Export endpoint: Returns zip file containing JSON audit trace + defect images."""
-        status_info = get_seat_status(seat_id)
+        valid_sid = validate_seat_id(seat_id)
+        status_info = get_seat_status(valid_sid, auth_user=auth_user)
         with db_manager.session_scope() as session:
-            logs = session.query(AuditLogRecord).filter_by(seat_id=seat_id).all()
-            reviews = session.query(HumanReviewRecord).filter_by(seat_id=seat_id).all()
-            shadow = session.query(ShadowDecisionRecord).filter_by(seat_id=seat_id).all()
+            logs = session.query(AuditLogRecord).filter_by(seat_id=valid_sid).all()
+            reviews = session.query(HumanReviewRecord).filter_by(seat_id=valid_sid).all()
+            shadow = session.query(ShadowDecisionRecord).filter_by(seat_id=valid_sid).all()
 
             status_info["audit_logs"] = [
                 {
@@ -319,24 +413,35 @@ def create_app(
                 media_type="application/json",
             )
 
-        # Create ZIP in memory
+        storage_root = Path(os.getenv("IMAGE_STORAGE_ROOT", "storage/images")).resolve()
+
+        # Create ZIP in memory with path traversal protection
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("audit_trace.json", json.dumps(status_info, indent=2))
 
-            # Include any defect or camera images
+            # Include images strictly within storage directory
             for sr in status_info.get("station_results", []):
                 for cam_name, img_path in sr.get("camera_image_paths", {}).items():
-                    if img_path and os.path.exists(img_path):
-                        arcname = f"images/{sr.get('station_id')}_{cam_name}_{os.path.basename(img_path)}"
-                        zf.write(img_path, arcname=arcname)
+                    if img_path:
+                        real_p = Path(img_path).resolve()
+                        try:
+                            # Verify no path traversal outside storage_root or repo
+                            real_p.relative_to(Path.cwd().resolve())
+                        except ValueError:
+                            logger.warning(f"Prevented path traversal export: {img_path}")
+                            continue
+
+                        if real_p.exists() and real_p.is_file():
+                            arcname = f"images/{sr.get('station_id')}_{cam_name}_{real_p.name}"
+                            zf.write(str(real_p), arcname=arcname)
 
         zip_buf.seek(0)
         return Response(
             content=zip_buf.getvalue(),
             media_type="application/zip",
             headers={
-                "Content-Disposition": f'attachment; filename="trace_{seat_id}.zip"',
+                "Content-Disposition": f'attachment; filename="trace_{valid_sid}.zip"',
             },
         )
 
@@ -372,7 +477,7 @@ def create_app(
                 })
             return out
 
-    @app.post("/api/v1/reviews/{review_id}/decision")
+    @app.post("/api/v1/reviews/{review_id}/decision", dependencies=[Depends(rate_limit_writes)])
     def resolve_review(
         review_id: int,
         payload: ReviewDecisionPayload,
@@ -461,7 +566,7 @@ def create_app(
         with db_manager.session_scope() as session:
             query = session.query(AuditLogRecord)
             if seat_id:
-                query = query.filter_by(seat_id=seat_id)
+                query = query.filter_by(seat_id=validate_seat_id(seat_id))
             records = query.order_by(AuditLogRecord.timestamp.desc()).limit(limit).all()
             return [
                 {
@@ -479,7 +584,7 @@ def create_app(
     # Shadow Mode & Shift Report Endpoints (Phase 8)
     # -------------------------------------------------------------
 
-    @app.post("/api/v1/shadow-mode/decision")
+    @app.post("/api/v1/shadow-mode/decision", dependencies=[Depends(rate_limit_writes)])
     def record_shadow_decision(
         payload: ShadowDecisionPayload,
         auth_user: str = Depends(verify_api_key),
@@ -492,6 +597,8 @@ def create_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid decision '{payload.decision}'. Allowed: {sorted(allowed)}",
             )
+
+        validate_seat_id(payload.seat_id)
 
         with db_manager.session_scope() as session:
             rec = ShadowDecisionRecord(
@@ -512,6 +619,7 @@ def create_app(
     @app.get("/api/v1/dashboard/shift-report")
     def get_shift_report(
         threshold_pct: float = Query(3.0, ge=0.1, le=50.0),
+        auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Generate comprehensive end-of-shift quality report comparing camera vs inspector."""
         with db_manager.session_scope() as session:
@@ -521,17 +629,15 @@ def create_app(
     # Audit Sampling Endpoints (Phase 8)
     # -------------------------------------------------------------
 
-    @app.post("/api/v1/audit/sample")
+    @app.post("/api/v1/audit/sample", dependencies=[Depends(rate_limit_writes)])
     def trigger_audit_sample(
         count: int = Query(5, ge=1, le=50),
         auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Randomly select N PASS seats for quality auditor to verify against master."""
         with db_manager.session_scope() as session:
-            # Find already sampled seat IDs
             sampled_ids = {r.seat_id for r in session.query(AuditSampleRecord).all()}
 
-            # Candidates: PASS seats not yet sampled
             candidates = (
                 session.query(SeatInspectionRecord)
                 .filter(SeatInspectionRecord.outcome == "PASS")
@@ -559,7 +665,9 @@ def create_app(
         return {"sampled_count": len(new_records), "seats": new_records}
 
     @app.get("/api/v1/audit/samples")
-    def list_audit_samples() -> list[dict[str, Any]]:
+    def list_audit_samples(
+        auth_user: str = Depends(verify_api_key),
+    ) -> list[dict[str, Any]]:
         """List active and completed auditor sample checks."""
         with db_manager.session_scope() as session:
             records = session.query(AuditSampleRecord).order_by(AuditSampleRecord.sampled_at.desc()).all()
@@ -577,7 +685,7 @@ def create_app(
                 for r in records
             ]
 
-    @app.post("/api/v1/audit/sample/{sample_id}/decision")
+    @app.post("/api/v1/audit/sample/{sample_id}/decision", dependencies=[Depends(rate_limit_writes)])
     def submit_audit_decision(
         sample_id: int,
         payload: AuditDecisionPayload,
@@ -614,11 +722,13 @@ def create_app(
         return {"sample_id": sample_id, "status": "COMPLETED", "decision": dec_clean}
 
     # -------------------------------------------------------------
-    # Live Monitoring Dashboard Endpoints
+    # Live Monitoring Dashboard Endpoints (Authenticated)
     # -------------------------------------------------------------
 
     @app.get("/api/v1/dashboard/live")
-    def get_live_line_view() -> dict[str, Any]:
+    def get_live_line_view(
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
         """View 1: Live line view - last 20 seats as pass/fail strip and line status."""
         with db_manager.session_scope() as session:
             seats = session.query(SeatInspectionRecord).order_by(SeatInspectionRecord.created_at.desc()).limit(20).all()
@@ -640,7 +750,9 @@ def create_app(
             }
 
     @app.get("/api/v1/dashboard/quality-trends")
-    def get_quality_trends() -> dict[str, Any]:
+    def get_quality_trends(
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
         """View 2: Quality trends, Pareto defect breakdown, and pass/review/fail rates."""
         with db_manager.session_scope() as session:
             seats = session.query(SeatInspectionRecord).all()
@@ -669,7 +781,10 @@ def create_app(
             }
 
     @app.get("/api/v1/dashboard/defect-gallery")
-    def get_defect_gallery(limit: int = Query(20, ge=1, le=100)) -> list[dict[str, Any]]:
+    def get_defect_gallery(
+        limit: int = Query(20, ge=1, le=100),
+        auth_user: str = Depends(verify_api_key),
+    ) -> list[dict[str, Any]]:
         """View 3: Defect gallery - recent failures with bounding box and measured values."""
         with db_manager.session_scope() as session:
             defects = session.query(DefectRecord).order_by(DefectRecord.created_at.desc()).limit(limit).all()
@@ -690,18 +805,24 @@ def create_app(
             ]
 
     @app.get("/api/v1/dashboard/shadow-mode")
-    def get_shadow_mode_stats() -> dict[str, Any]:
+    def get_shadow_mode_stats(
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
         """View 4: Shadow mode agreement comparison, escape & false-reject tracking."""
         with db_manager.session_scope() as session:
             return generate_shift_report_dict(session)
 
     @app.get("/api/v1/dashboard/system-health")
-    def get_system_health() -> dict[str, Any]:
-        """View 6: Hardware connectivity and station liveness status."""
+    def get_system_health(
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """View 6: Hardware connectivity, station liveness status, and operating mode."""
         plc_online = coordinator.plc.is_connected() if coordinator and coordinator.plc else False
+        mode = "shadow" if (coordinator and coordinator.shadow_mode) else "camera_leads_with_audit"
         return {
             "plc_connected": plc_online,
             "database_status": "healthy",
+            "operating_mode": mode,
             "stations": {
                 "STATION_1": {"status": "ONLINE", "model_version": "v0.1.0"},
                 "STATION_2": {"status": "ONLINE", "model_version": "v0.1.0"},

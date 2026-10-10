@@ -207,3 +207,15 @@ class AuditLogRecord(Base):
     timestamp = Column(
         DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
     )
+
+
+class SchemaVersionRecord(Base):
+    """Tracks applied schema migration versions."""
+
+    __tablename__ = "schema_version"
+
+    version = Column(Integer, primary_key=True)
+    applied_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    description = Column(String(256), nullable=False)

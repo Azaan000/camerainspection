@@ -7,9 +7,11 @@ import os
 from pathlib import Path
 from typing import Any
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from camerainspection.core.exceptions import ConfigurationError, UnknownVariantError
+
+VALID_CAMERA_ADAPTERS = {"replay", "synthetic", "webcam", "phone", "rtsp", "ip", "basler", "hikrobot"}
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -71,6 +73,16 @@ class CameraConfig(BaseModel):
     regions_of_interest: dict[str, ROIConfig] = Field(default_factory=dict)
     lighting: dict[str, Any] = Field(default_factory=dict)
     poses: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("adapter")
+    @classmethod
+    def validate_adapter(cls, v: str) -> str:
+        clean = v.lower().strip()
+        if clean not in VALID_CAMERA_ADAPTERS:
+            raise ConfigurationError(
+                f"Unknown camera adapter '{v}'. Valid adapters are: {sorted(VALID_CAMERA_ADAPTERS)}."
+            )
+        return clean
 
 
 class StationModelConfig(BaseModel):
@@ -141,6 +153,10 @@ class VariantConfig(BaseModel):
     limit_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
+class SystemHardwareConfig(BaseModel):
+    require_all: bool = True
+
+
 class SystemDatabaseConfig(BaseModel):
     url: str = Field(
         default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///./data/inspection.db")
@@ -176,9 +192,11 @@ class SystemConfig(BaseModel):
         default_factory=lambda: {
             "environment": "development",
             "shadow_mode": False,
+            "operating_mode": "shadow",
             "config_version": "v0.1.0",
         }
     )
+    hardware: SystemHardwareConfig = Field(default_factory=SystemHardwareConfig)
     database: SystemDatabaseConfig = Field(default_factory=SystemDatabaseConfig)
     plc: SystemPLCConfig = Field(default_factory=SystemPLCConfig)
     storage: SystemStorageConfig = Field(default_factory=SystemStorageConfig)
@@ -190,7 +208,18 @@ class SystemConfig(BaseModel):
 
     @property
     def shadow_mode(self) -> bool:
+        mode = self.system.get("operating_mode")
+        if mode:
+            return mode == "shadow"
         return bool(self.system.get("shadow_mode", False))
+
+    @property
+    def operating_mode(self) -> str:
+        if "operating_mode" in self.system:
+            return str(self.system["operating_mode"])
+        if bool(self.system.get("shadow_mode", False)):
+            return "shadow"
+        return "camera_leads_with_audit"
 
     @property
     def config_version(self) -> str:

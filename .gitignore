@@ -55,3 +55,7 @@ storage/annotated_images/*
 !storage/annotated_images/.gitkeep
 storage/defect_crops/*
 !storage/defect_crops/.gitkeep
+
+# Calibrations: keep only .gitkeep
+configs/calibrations/*.json
+!configs/calibrations/.gitkeep

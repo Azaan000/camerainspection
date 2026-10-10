@@ -18,7 +18,7 @@ from camerainspection.storage.entities import (
 )
 from camerainspection.tools.shift_report import generate_shift_report_dict
 
-_AUTH_HEADERS = {"X-API-Key": "inspector_secret_token_123"}
+_AUTH_HEADERS = {"X-API-Key": "test_secret_inspection_key_32_characters_long_min!"}
 
 
 @pytest.fixture
@@ -100,8 +100,8 @@ def test_shift_report_calculation_and_alert(in_memory_db: DatabaseManager, clien
         assert rep["escape_count"] == 1
         assert rep["flagged_false_reject_warning"] is True
 
-    # Test API endpoint
-    res = client.get("/api/v1/dashboard/shift-report?threshold_pct=3.0")
+    # Test API endpoint (auth required)
+    res = client.get("/api/v1/dashboard/shift-report?threshold_pct=3.0", headers=_AUTH_HEADERS)
     assert res.status_code == 200
     data = res.json()
     assert data["flagged_false_reject_warning"] is True
@@ -129,8 +129,8 @@ def test_audit_sampling_workflow(client: TestClient, in_memory_db: DatabaseManag
     sampled = sample_res.json()["seats"]
     assert len(sampled) == 3
 
-    # List samples
-    list_res = client.get("/api/v1/audit/samples")
+    # List samples (auth required)
+    list_res = client.get("/api/v1/audit/samples", headers=_AUTH_HEADERS)
     assert list_res.status_code == 200
     samples = list_res.json()
     assert len(samples) == 3
@@ -162,7 +162,7 @@ def test_seat_trace_export_zip(client: TestClient, in_memory_db: DatabaseManager
         ))
     in_memory_db.log_audit("TEST_EVENT", "Trace export test audit entry", seat_id=seat_id)
 
-    res = client.get(f"/api/v1/seats/{seat_id}/export")
+    res = client.get(f"/api/v1/seats/{seat_id}/export", headers=_AUTH_HEADERS)
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/zip"
 

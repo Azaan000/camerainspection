@@ -1,0 +1,6 @@
+variant_id: FRONT_LH_BLACK
+hand: LH
+nominals:
+  mechanism:
+    recliner_angle_deg: 90.0
+    track_end_position_mm: 240.0

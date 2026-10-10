@@ -635,9 +635,9 @@
 <script>
 // ─────────────────────────  Config  ─────────────────────────
 const cfg = {
-  apiUrl: localStorage.getItem('sg_api_url') || 'http://127.0.0.1:8000',
-  apiKey: localStorage.getItem('sg_api_key') || 'inspector_secret_token_123',
-  refreshInterval: parseInt(localStorage.getItem('sg_refresh_s') || '5', 10) * 1000,
+  apiUrl: sessionStorage.getItem('sg_api_url') || 'http://127.0.0.1:8000',
+  apiKey: sessionStorage.getItem('sg_api_key') || '',
+  refreshInterval: parseInt(sessionStorage.getItem('sg_refresh_s') || '5', 10) * 1000,
 };
 
 // HTML sanitization helper to eliminate Stored XSS
@@ -1062,15 +1062,35 @@ async function fetchLatestPendingRework() {
   }
 }
 
-function exportCurrentSeatTrace() {
+async function exportCurrentSeatTrace() {
   const sid = currentReworkSeatId || document.getElementById('rework-seat-input')?.value?.trim();
   if (!sid) {
     showToast('No seat loaded to export', 'error');
     return;
   }
-  const downloadUrl = `${cfg.apiUrl}/api/v1/seats/${encodeURIComponent(sid)}/export`;
-  window.open(downloadUrl, '_blank');
-  showToast(`Downloading trace ZIP for ${sid}`, 'success');
+  try {
+    const downloadUrl = `${cfg.apiUrl}/api/v1/seats/${encodeURIComponent(sid)}/export`;
+    const res = await fetch(downloadUrl, {
+      headers: {
+        ...(cfg.apiKey ? { 'X-API-Key': cfg.apiKey } : {}),
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Export failed: HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `trace_${sid}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(blobUrl);
+    showToast(`Downloaded trace ZIP for ${sid}`, 'success');
+  } catch (e) {
+    showToast(`Export error: ${e.message}`, 'error');
+  }
 }
 
 function renderReworkBench(data, auditLogs) {
@@ -1402,9 +1422,9 @@ function saveSettings() {
   cfg.apiUrl = document.getElementById('cfg-api-url').value.trim();
   cfg.apiKey = document.getElementById('cfg-api-key').value.trim();
   cfg.refreshInterval = parseInt(document.getElementById('cfg-refresh-interval').value || '5', 10) * 1000;
-  localStorage.setItem('sg_api_url', cfg.apiUrl);
-  localStorage.setItem('sg_api_key', cfg.apiKey);
-  localStorage.setItem('sg_refresh_s', String(cfg.refreshInterval / 1000));
+  sessionStorage.setItem('sg_api_url', cfg.apiUrl);
+  sessionStorage.setItem('sg_api_key', cfg.apiKey);
+  sessionStorage.setItem('sg_refresh_s', String(cfg.refreshInterval / 1000));
   document.getElementById('settings-result').innerHTML = '<span class="text-emerald-400">✓ Settings saved</span>';
   updateSettingsDisplay();
   restartAutoRefresh();

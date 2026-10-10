@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from camerainspection.core.config import CameraConfig
+from camerainspection.core.exceptions import ConfigurationError
 from camerainspection.core.logging import get_logger
 from camerainspection.hardware.camera.base import BaseCamera
 from camerainspection.hardware.camera.replay import FolderReplayCamera
@@ -13,6 +14,8 @@ from camerainspection.hardware.camera.synthetic import SyntheticCamera
 from camerainspection.hardware.camera.webcam import WebcamCamera
 
 logger = get_logger("hardware.camera.factory")
+
+VALID_CAMERA_ADAPTERS = {"replay", "synthetic", "webcam", "phone", "rtsp", "ip", "basler", "hikrobot"}
 
 
 def build_camera(
@@ -27,6 +30,9 @@ def build_camera(
         - "webcam": USB / IP camera / RTSP stream via OpenCV
         - "basler": Basler GigE / USB3 Vision camera (pypylon SDK, lazy import)
         - "hikrobot": Hikrobot GigE / USB3 Vision camera (MVS SDK, lazy import)
+
+    Raises:
+        ConfigurationError: If adapter is unrecognized.
     """
     if isinstance(camera_config, dict):
         cfg = CameraConfig.model_validate(camera_config)
@@ -78,5 +84,7 @@ def build_camera(
         )
 
     else:
-        logger.warning(f"Unrecognized camera adapter '{adapter}'. Falling back to SyntheticCamera.")
-        return SyntheticCamera(pattern="solid_black")
+        raise ConfigurationError(
+            f"Unknown camera adapter '{adapter}'. "
+            f"Valid adapters are: {sorted(VALID_CAMERA_ADAPTERS)}."
+        )

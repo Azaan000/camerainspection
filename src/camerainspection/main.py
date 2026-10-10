@@ -5,48 +5,37 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import threading
+import time
 import uvicorn
 
 from camerainspection.api.app import create_app
-from camerainspection.coordinator.service import InspectionCoordinator
 from camerainspection.core.config import load_system_config
 from camerainspection.core.logging import get_logger
-from camerainspection.hardware.camera.factory import build_camera
-from camerainspection.hardware.plc.base import BasePLC
-from camerainspection.hardware.plc.modbus import ModbusPLC
-from camerainspection.hardware.plc.opcua import OPCUAPLC
-from camerainspection.hardware.plc.simulator import PLCSimulator
-from camerainspection.hardware.plc.snap7 import SiemensSnap7PLC
-from camerainspection.storage.db import DatabaseManager
+from camerainspection.line.builder import build_line, build_plc
+from camerainspection.line.controller import LineController
 
 logger = get_logger("app.main")
 
+# Background line runner thread handle
+_station_runner_thread: threading.Thread | None = None
+_stop_runner_event = threading.Event()
 
-def build_plc_adapter(
-    adapter_name: str,
-    host: str = "127.0.0.1",
-    port: int = 502,
-    rack: int = 0,
-    slot: int = 1,
-    expected_stations: list[str] | None = None,
-    simulate_lock: bool = True,
-) -> BasePLC:
-    """Instantiate line PLC interface based on system configuration."""
-    adapter_lower = adapter_name.lower().strip()
-    if adapter_lower == "modbus":
-        plc: BasePLC = ModbusPLC(host=host, port=port, expected_stations=expected_stations)
-    elif adapter_lower == "snap7":
-        plc = SiemensSnap7PLC(host=host, rack=rack, slot=slot, expected_stations=expected_stations)
-    elif adapter_lower == "opcua":
-        plc = OPCUAPLC(endpoint=f"opc.tcp://{host}:{port}", expected_stations=expected_stations)
-    else:
-        sim = PLCSimulator(expected_stations=expected_stations)
-        if simulate_lock:
-            sim.simulate_mechanism_sensor(locked=True)
-        plc = sim
 
-    plc.connect()
-    return plc
+def _station_worker_loop(controller: LineController, stop_event: threading.Event) -> None:
+    """Simulated background line processor checking triggers and processing arrived pallets."""
+    logger.info("Background station runner worker started.")
+    pallet_counter = 1
+    while not stop_event.is_set():
+        try:
+            # Check for simulated arrival on line every 3 seconds if in development
+            if controller.runtime.config.environment == "development" and not controller.is_emergency_stopped():
+                seat_id = f"AUTO_SEAT_{pallet_counter:04d}"
+                controller.run_seat_cycle(seat_id=seat_id, variant_id="FRONT_LH_BLACK")
+                pallet_counter += 1
+        except Exception as e:
+            logger.error(f"Error in background station worker loop: {e}")
+        time.sleep(3.0)
 
 
 def main() -> None:
@@ -62,57 +51,55 @@ def main() -> None:
         default=None,
         help="Override camera adapter (replay, synthetic, webcam, basler, hikrobot)",
     )
+    parser.add_argument("--camera-url", default=None, help="Stream / IP URL for webcam/phone camera adapter")
+    parser.add_argument("--camera-id", default=None, help="Device ID index for webcam adapter")
+    parser.add_argument(
+        "--run-worker",
+        action="store_true",
+        default=False,
+        help="Run background station pallet worker thread",
+    )
     args = parser.parse_args()
 
     # Load system settings
     sys_cfg = load_system_config(args.config)
     logger.info(
         f"Loaded system configuration: env={sys_cfg.environment}, "
-        f"shadow_mode={sys_cfg.shadow_mode}, config_version={sys_cfg.config_version}"
+        f"operating_mode={sys_cfg.operating_mode}, shadow_mode={sys_cfg.shadow_mode}, "
+        f"config_version={sys_cfg.config_version}"
     )
-    if args.camera_adapter:
-        logger.info(f"CLI camera adapter override active: {args.camera_adapter}")
 
-    # Initialize Database: read DATABASE_URL env var (e.g. from Docker) or fallback to config
-    db_url = os.getenv("DATABASE_URL") or sys_cfg.database.url
-    db = DatabaseManager(db_url=db_url, echo=sys_cfg.database.echo_sql)
-    db.init_tables()
-    logger.info(f"Database initialized at: {db_url}")
+    overrides = {
+        "plc_adapter": args.plc_adapter,
+        "simulate_lock": True if args.lock_sensor is None else args.lock_sensor,
+        "camera_adapter": args.camera_adapter,
+        "camera_url": args.camera_url,
+        "camera_id": args.camera_id,
+    }
 
-    # Initialize PLC interface (configurable adapter)
-    adapter_to_use = args.plc_adapter or sys_cfg.plc.adapter
-    simulate_lock = True if args.lock_sensor is None else args.lock_sensor
-    plc = build_plc_adapter(
-        adapter_name=adapter_to_use,
-        host=sys_cfg.plc.host,
-        port=sys_cfg.plc.port,
-        rack=sys_cfg.plc.rack,
-        slot=sys_cfg.plc.slot,
-        expected_stations=sys_cfg.coordinator.expected_stations,
-        simulate_lock=simulate_lock,
-    )
-    logger.info(f"PLC interface active: adapter={adapter_to_use}, connected={plc.is_connected()}")
-
-    # Initialize Inspection Coordinator
-    coordinator = InspectionCoordinator(
-        plc=plc,
-        db_manager=db,
-        expected_stations=sys_cfg.coordinator.expected_stations,
-        shadow_mode=sys_cfg.shadow_mode,
-        cycle_timeout_s=sys_cfg.coordinator.cycle_timeout_s,
-    )
-    logger.info(
-        f"Coordinator active for stations: {sys_cfg.coordinator.expected_stations}, "
-        f"timeout={sys_cfg.coordinator.cycle_timeout_s}s, config_version={sys_cfg.config_version}"
-    )
+    # Build entire line hardware & runtime container using line builder
+    line_runtime = build_line(sys_cfg, overrides=overrides)
+    controller = LineController(runtime=line_runtime)
 
     # Build FastAPI app with dashboard and APIs
-    app = create_app(db_manager=db, coordinator=coordinator)
+    app = create_app(db_manager=line_runtime.db_manager, coordinator=line_runtime.coordinator)
+
+    if args.run_worker:
+        global _station_runner_thread
+        _stop_runner_event.clear()
+        _station_runner_thread = threading.Thread(
+            target=_station_worker_loop,
+            args=(controller, _stop_runner_event),
+            daemon=True,
+            name="line-station-worker",
+        )
+        _station_runner_thread.start()
 
     @app.on_event("shutdown")
     def shutdown_event() -> None:
-        logger.info("Server shutting down. Terminating coordinator watchdog...")
-        coordinator.shutdown()
+        logger.info("Server shutting down. Terminating worker and coordinator watchdog...")
+        _stop_runner_event.set()
+        line_runtime.coordinator.shutdown()
 
     print("\n" + "=" * 60)
     print("   AUTOMATED CAMERA INSPECTION SYSTEM - LINE SERVER")
@@ -128,7 +115,8 @@ def main() -> None:
     try:
         uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
     finally:
-        coordinator.shutdown()
+        _stop_runner_event.set()
+        line_runtime.coordinator.shutdown()
 
 
 if __name__ == "__main__":

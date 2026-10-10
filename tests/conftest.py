@@ -1,5 +1,6 @@
 """Pytest fixtures for unit and integration testing."""
 
+import os
 from pathlib import Path
 import pytest
 
@@ -8,7 +9,17 @@ from camerainspection.hardware.camera.synthetic import SyntheticCamera
 from camerainspection.hardware.plc.simulator import PLCSimulator
 from camerainspection.storage.db import DatabaseManager
 
+# Strong 32+ char test key for test suite
+TEST_API_KEY = "test_secret_inspection_key_32_characters_long_min!"
+os.environ["INSPECTION_API_KEY"] = TEST_API_KEY
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True, scope="session")
+def setup_test_api_key() -> None:
+    """Ensure strong API key is set for test session."""
+    os.environ["INSPECTION_API_KEY"] = TEST_API_KEY
 
 
 @pytest.fixture

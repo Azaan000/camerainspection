@@ -138,6 +138,9 @@ def test_anomalib_training_pipeline(tmp_path: Path) -> None:
 # 4. Live Dashboard Views API
 # -------------------------------------------------------------
 
+_AUTH_HEADERS = {"X-API-Key": "test_secret_inspection_key_32_characters_long_min!"}
+
+
 def test_dashboard_api_views(in_memory_db: DatabaseManager, plc_sim: PLCSimulator) -> None:
     coord = InspectionCoordinator(plc=plc_sim, db_manager=in_memory_db)
     app = create_app(db_manager=in_memory_db, coordinator=coord)
@@ -153,24 +156,24 @@ def test_dashboard_api_views(in_memory_db: DatabaseManager, plc_sim: PLCSimulato
     coord.register_station_result(st_res)
 
     # View 1: Live line strip
-    v1 = client.get("/api/v1/dashboard/live")
+    v1 = client.get("/api/v1/dashboard/live", headers=_AUTH_HEADERS)
     assert v1.status_code == 200
     assert "recent_strip" in v1.json()
 
     # View 2: Quality trends
-    v2 = client.get("/api/v1/dashboard/quality-trends")
+    v2 = client.get("/api/v1/dashboard/quality-trends", headers=_AUTH_HEADERS)
     assert v2.status_code == 200
     assert "pass_rate" in v2.json()
 
     # View 3: Defect gallery
-    v3 = client.get("/api/v1/dashboard/defect-gallery")
+    v3 = client.get("/api/v1/dashboard/defect-gallery", headers=_AUTH_HEADERS)
     assert v3.status_code == 200
 
     # View 4: Shadow mode
-    v4 = client.get("/api/v1/dashboard/shadow-mode")
+    v4 = client.get("/api/v1/dashboard/shadow-mode", headers=_AUTH_HEADERS)
     assert v4.status_code == 200
 
     # View 6: System health
-    v6 = client.get("/api/v1/dashboard/system-health")
+    v6 = client.get("/api/v1/dashboard/system-health", headers=_AUTH_HEADERS)
     assert v6.status_code == 200
     assert v6.json()["database_status"] == "healthy"

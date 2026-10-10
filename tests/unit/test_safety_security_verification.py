@@ -10,11 +10,29 @@ from fastapi.testclient import TestClient
 from camerainspection.api.app import create_app
 from camerainspection.coordinator.service import InspectionCoordinator
 from camerainspection.core.models import DefectDetail, Outcome, StationInspectionResult
+from camerainspection.hardware.plc.modbus import ModbusPLC
+from camerainspection.hardware.plc.opcua import OPCUAPLC
 from camerainspection.hardware.plc.simulator import PLCSimulator
-from camerainspection.main import build_plc_adapter
+from camerainspection.hardware.plc.snap7 import SiemensSnap7PLC
 from camerainspection.station.base_station import BaseStation
 from camerainspection.storage.db import DatabaseManager
 from camerainspection.storage.entities import HumanReviewRecord, SeatInspectionRecord, StationResultRecord
+
+
+def build_plc_adapter(adapter: str):
+    """Compatibility shim: build a PLC adapter by short name (simulator/modbus/snap7/opcua)."""
+    adapter = adapter.lower().strip()
+    if adapter == "modbus":
+        plc = ModbusPLC(host="127.0.0.1", port=502, expected_stations=["STATION_1", "STATION_2", "STATION_3", "STATION_4"])
+    elif adapter == "snap7":
+        plc = SiemensSnap7PLC(host="127.0.0.1", rack=0, slot=1, expected_stations=["STATION_1", "STATION_2", "STATION_3", "STATION_4"])
+    elif adapter == "opcua":
+        plc = OPCUAPLC(endpoint="opc.tcp://127.0.0.1:4840", expected_stations=["STATION_1", "STATION_2", "STATION_3", "STATION_4"])
+    else:
+        plc = PLCSimulator(expected_stations=["STATION_1", "STATION_2", "STATION_3", "STATION_4"])
+        plc.simulate_mechanism_sensor(locked=True)
+    plc.connect()
+    return plc
 
 
 def _make_st_res(
@@ -129,7 +147,7 @@ def test_station_4_review_approval_enables_printer(
     res = client.post(
         f"/api/v1/reviews/{review_id}/decision",
         json={"inspector_id": "INSP_01", "decision": "PASS", "notes": "Recliner angle within boundary."},
-        headers={"X-API-Key": "inspector_secret_token_123"},
+        headers={"X-API-Key": "test_secret_inspection_key_32_characters_long_min!"},
     )
     assert res.status_code == 200
     assert res.json()["resolved"] is True

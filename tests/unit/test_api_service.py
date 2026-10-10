@@ -13,7 +13,7 @@ from camerainspection.storage.db import DatabaseManager
 from camerainspection.storage.entities import DefectRecord, StationResultRecord, SeatInspectionRecord
 
 
-_VALID_KEY = "inspector_secret_token_123"
+_VALID_KEY = "test_secret_inspection_key_32_characters_long_min!"
 _AUTH_HEADERS = {"X-API-Key": _VALID_KEY}
 _BEARER_HEADERS = {"Authorization": f"Bearer {_VALID_KEY}"}
 
@@ -71,8 +71,8 @@ def test_api_submit_result_and_query_seat_details(api_client: TestClient) -> Non
     assert post_res.status_code == 201
     assert post_res.json()["recorded"] is True
 
-    # Query seat - verify detail fields
-    get_res = api_client.get("/api/v1/seats/SEAT-API-01")
+    # Query seat - verify detail fields (auth required)
+    get_res = api_client.get("/api/v1/seats/SEAT-API-01", headers=_AUTH_HEADERS)
     assert get_res.status_code == 200
     data = get_res.json()
     assert data["seat_id"] == "SEAT-API-01"

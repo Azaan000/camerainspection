@@ -58,6 +58,7 @@ class BaseStation(ABC):
         fixture: Any = None,
         lighting_controller: Any = None,
         calibration_manager: Any = None,
+        require_all_hardware: bool | None = None,
     ) -> None:
         self.config = station_config
         self.variants_root = Path(variants_root)
@@ -70,6 +71,10 @@ class BaseStation(ABC):
         self.fixture = fixture
         self.lighting_controller = lighting_controller
         self.calibration_manager = calibration_manager
+
+        # Hardware presence enforcement (A1 / #1)
+        # When require_all_hardware is True, station fails safe if any fixture/lighting/calibration is missing
+        self.require_all_hardware = bool(require_all_hardware)
 
         # Initialize multi-camera dictionary
         self.cameras: dict[str, BaseCamera] = {}
@@ -195,6 +200,21 @@ class BaseStation(ABC):
         variant_id = "UNKNOWN"
 
         try:
+            # 0. Hardware presence pre-check (Problem 1 / A1)
+            if self.require_all_hardware:
+                missing_hw: list[str] = []
+                if self.fixture is None:
+                    missing_hw.append("fixture")
+                if self.lighting_controller is None:
+                    missing_hw.append("lighting_controller")
+                if self.calibration_manager is None:
+                    missing_hw.append("calibration_manager")
+
+                if missing_hw:
+                    err_desc = f"Required hardware objects not configured at {self.station_id}: {missing_hw}"
+                    logger.error(err_desc)
+                    raise HardwareError(f"hardware.not_configured: {missing_hw}")
+
             # 1. Wait for trigger
             if self.plc is not None:
                 triggered = self.plc.wait_for_trigger(
@@ -240,7 +260,7 @@ class BaseStation(ABC):
                     CameraConfig(
                         name="main",
                         view="main",
-                        adapter="custom",
+                        adapter="synthetic",
                         pixel_size_mm=self.config.camera.pixel_size_mm,
                     )
                 ]
@@ -319,8 +339,28 @@ class BaseStation(ABC):
                     cam_obj = build_camera(cam_cfg)
                     self.cameras[cam_name] = cam_obj
 
+                # Camera connection failure handling (Problem 8 / A5)
                 if not cam_obj.is_connected():
-                    cam_obj.connect()
+                    try:
+                        cam_obj.connect()
+                    except Exception as conn_err:
+                        logger.error(f"Camera {cam_name} failed to connect at {self.station_id}: {conn_err}")
+                        conn_defect = DefectDetail(
+                            defect_type="camera.connect_failure",
+                            outcome=Outcome.FAIL,
+                            camera_name=cam_name,
+                            view=cam_view,
+                            description=f"Connect failed on camera '{cam_name}': {conn_err}",
+                        )
+                        camera_results[cam_name] = CameraInspectionResult(
+                            camera_name=cam_name,
+                            view=cam_view,
+                            outcome=Outcome.FAIL,
+                            defects=[conn_defect],
+                            pixel_size_mm=cam_cfg.pixel_size_mm,
+                        )
+                        all_defects.append(conn_defect)
+                        continue
 
                 try:
                     image = cam_obj.capture()
@@ -354,20 +394,30 @@ class BaseStation(ABC):
                     camera_config=cam_cfg,
                 )
 
-                # Enforce physical calibration on dimensional checks (Phase 5)
+                # Enforce physical calibration on dimensional checks (Phase 5 / A4)
                 has_mm_check = any(k.endswith(("_mm", "_mm2", "_deg")) for k in cam_measurements)
-                if has_mm_check and self.calibration_manager is not None:
-                    cat = getattr(self.config, "category", "generic")
-                    cal_ok, cal_outcome, cal_msg = self.calibration_manager.validate_calibration(
-                        cam_name, category=cat
-                    )
-                    if not cal_ok:
+                if has_mm_check:
+                    if self.calibration_manager is not None:
+                        cat = getattr(self.config, "category", "generic")
+                        cal_ok, cal_outcome, cal_msg = self.calibration_manager.validate_calibration(
+                            cam_name, category=cat
+                        )
+                        if not cal_ok:
+                            cal_defect = DefectDetail(
+                                defect_type="camera.uncalibrated",
+                                outcome=cal_outcome,
+                                camera_name=cam_name,
+                                view=cam_view,
+                                description=cal_msg,
+                            )
+                            cam_defects.append(cal_defect)
+                    elif self.require_all_hardware:
                         cal_defect = DefectDetail(
                             defect_type="camera.uncalibrated",
-                            outcome=cal_outcome,
+                            outcome=Outcome.FAIL,
                             camera_name=cam_name,
                             view=cam_view,
-                            description=cal_msg,
+                            description=f"Dimensional measurements present on camera '{cam_name}' but no calibration manager configured.",
                         )
                         cam_defects.append(cal_defect)
 
@@ -464,8 +514,9 @@ class BaseStation(ABC):
                 extra={"seat_id": seat_id, "station_id": self.station_id},
             )
 
+            defect_type_str = "hardware.not_configured" if "hardware.not_configured" in str(e) else "SYSTEM_ERROR"
             fail_defect = DefectDetail(
-                defect_type="SYSTEM_ERROR",
+                defect_type=defect_type_str,
                 outcome=Outcome.FAIL,
                 description=f"Fail-Safe triggered due to exception: {type(e).__name__} - {e}",
             )
@@ -479,17 +530,9 @@ class BaseStation(ABC):
                 timestamp=cycle_timestamp,
             )
 
-        # 10. Fixture release: if pass, unclamp fixture
-        if self.fixture is not None and result.outcome == Outcome.PASS:
-            self.fixture.release()
-
-        # 11. Apply PLC interlock (unless in shadow mode)
-        if not self.shadow_mode and self.plc is not None:
-            self.plc.set_station_result(self.station_id, result.outcome, seat_id=result.seat_id)
-        else:
-            logger.info(f"Shadow mode active: PLC interlock skipped for outcome {result.outcome}")
-
-        # 12. Persist to DB and Audit Log
+        # 10. Persist to DB and Audit Log BEFORE notifying PLC (Problem 2 / A2)
+        # If DB write fails, result becomes FAIL, pallet is held, and PLC NEVER receives PASS!
+        db_write_successful = True
         if self.db_manager is not None:
             try:
                 self.db_manager.record_station_result(result)
@@ -507,7 +550,30 @@ class BaseStation(ABC):
                 )
             except Exception as db_err:
                 logger.error(f"Failed to record station result to DB: {db_err}")
-                if not self.shadow_mode and self.plc is not None:
-                    self.plc.hold_pallet(self.station_id, hold=True)
+                db_write_successful = False
+                # Downgrade result to FAIL
+                result.outcome = Outcome.FAIL
+                result.defects.append(
+                    DefectDetail(
+                        defect_type="storage.db_write_failure",
+                        outcome=Outcome.FAIL,
+                        description=f"DB write failed: {db_err}",
+                    )
+                )
+
+        # 11. Fixture release: if pass AND DB persisted ok, unclamp fixture
+        if self.fixture is not None and result.outcome == Outcome.PASS and db_write_successful:
+            self.fixture.release()
+
+        # 12. Apply PLC interlock (only after successful DB write, unless in shadow mode)
+        if not self.shadow_mode and self.plc is not None:
+            if not db_write_successful:
+                # Force pallet hold and notify FAIL to PLC
+                self.plc.set_station_result(self.station_id, Outcome.FAIL, seat_id=result.seat_id)
+                self.plc.hold_pallet(self.station_id, hold=True)
+            else:
+                self.plc.set_station_result(self.station_id, result.outcome, seat_id=result.seat_id)
+        else:
+            logger.info(f"Shadow mode active: PLC interlock skipped for outcome {result.outcome}")
 
         return result
