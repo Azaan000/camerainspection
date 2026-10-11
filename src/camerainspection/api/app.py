@@ -316,7 +316,7 @@ def create_app(
                     )
                 return {
                     "seat_id": valid_sid,
-                    "variant_id": st_records[0].variant_id if st_records else "UNKNOWN",
+                    "variant_id": getattr(st_records[0], "variant_id", "UNKNOWN"),
                     "outcome": "IN_PROGRESS",
                     "shadow_mode": False,
                     "label_printer_enabled": False,

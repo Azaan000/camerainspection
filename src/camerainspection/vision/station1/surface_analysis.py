@@ -72,11 +72,11 @@ class SurfaceAnalyzer:
             small = cv2.resize(gray, (down_w, down_h))
             col_means = small.mean(axis=0)
             row_means = small.mean(axis=1)
-            col_range = float(col_means.max() - col_means.min())
-            row_range = float(row_means.max() - row_means.min())
+            col_range = float(np.max(col_means) - np.min(col_means))
+            row_range = float(np.max(row_means) - np.min(row_means))
 
             if col_range > 15.0:
-                mid = float(col_means.min() + 0.5 * col_range)
+                mid = float(np.min(col_means) + 0.5 * col_range)
                 band_cols = np.where(col_means > mid)[0]
                 if len(band_cols) >= max(3, int(down_w * 0.15)):
                     x_min = int(band_cols[0] * w / down_w)
@@ -91,7 +91,7 @@ class SurfaceAnalyzer:
                         anomaly_score=min(1.0, col_range / 60.0),
                     ))
             elif row_range > 15.0:
-                mid = float(row_means.min() + 0.5 * row_range)
+                mid = float(np.min(row_means) + 0.5 * row_range)
                 band_rows = np.where(row_means > mid)[0]
                 if len(band_rows) >= max(3, int(down_h * 0.15)):
                     y_min = int(band_rows[0] * h / down_h)

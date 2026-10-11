@@ -61,10 +61,10 @@ def test_all_routes_require_authentication_except_health(
                 .replace("{sample_id}", "1")
             )
 
-            # GET /health is explicitly public
-            if path == "/health" and method == "GET":
-                res = client.get("/health")
-                assert res.status_code == 200, f"/health returned {res.status_code}"
+            # GET /health and GET / (frontend UI dashboard) are explicitly public
+            if path in ("/health", "/") and method == "GET":
+                res = client.get(path)
+                assert res.status_code == 200, f"{path} returned {res.status_code}"
                 continue
 
             # Call without authentication headers
