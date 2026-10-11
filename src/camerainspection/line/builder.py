@@ -171,12 +171,34 @@ def build_line(
         fixture = SimulatedFixture()
         lighting = SimulatedLightController()
 
+        # Load inference engine if station model backend is "onnx"
+        inference_engine = None
+        if st_cfg.model.backend == "onnx":
+            try:
+                from camerainspection.inference.onnx_patchcore import OnnxPatchCoreEngine  # noqa: PLC0415
+
+                inference_engine = OnnxPatchCoreEngine(
+                    pass_below=st_cfg.model.pass_below,
+                    fail_above=st_cfg.model.fail_above,
+                )
+                inference_engine.load(st_cfg.model.weights_path)
+                logger.info(
+                    "Loaded ONNX PatchCore engine for %s: %s (pass_below=%.2f fail_above=%.2f)",
+                    st_id, st_cfg.model.weights_path, st_cfg.model.pass_below, st_cfg.model.fail_above,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to load ONNX engine for %s — station will fail-safe: %s", st_id, exc
+                )
+                # Let inference_engine stay None — station will detect and fail-safe
+
         svc = svc_cls(
             station_config=st_cfg,
             variants_root=v_root,
             cameras=st_cameras,
             plc=plc,
             db_manager=db,
+            inference_engine=inference_engine,
             fixture=fixture,
             lighting_controller=lighting,
             calibration_manager=cal_mgr,

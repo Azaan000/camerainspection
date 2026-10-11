@@ -257,6 +257,14 @@
 </head>
 <body class="text-slate-100 min-h-screen flex flex-col">
 
+<!-- ============================  NO-KEY WARNING BANNER  ============================ -->
+<div id="no-key-banner" class="hidden px-4 py-2.5 text-center text-sm font-semibold"
+     style="background:rgba(245,158,11,0.15);border-bottom:1px solid rgba(245,158,11,0.35);color:#fbbf24;">
+  ⚠️ No API key configured — go to
+  <span class="underline cursor-pointer" onclick="setSection('settings')">Settings</span>
+  and enter your <code class="font-mono text-xs bg-black/20 px-1 rounded">X-API-Key</code> to connect.
+</div>
+
 <!-- ============================  HEADER  ============================ -->
 <header class="border-b border-slate-800 bg-navy-800 px-6 py-3 flex items-center justify-between sticky top-0 z-40">
   <!-- Brand -->
@@ -290,6 +298,9 @@
     <span class="nav-link" onclick="setSection('shadow')">Shadow Mode</span>
     <span class="nav-link" onclick="setSection('settings')">Settings</span>
   </nav>
+
+  <!-- Mobile hamburger -->
+  <button id="mobile-menu-btn" class="md:hidden btn-ghost px-2 py-1.5 text-sm" onclick="toggleMobileMenu()">☰ Menu</button>
 
   <!-- Status bar -->
   <div class="flex items-center gap-4">
@@ -616,6 +627,27 @@
 
 </main>
 
+<!-- ============================  MOBILE NAV DRAWER  ============================ -->
+<div id="mobile-nav" class="fixed inset-0 z-50 hidden" onclick="closeMobileMenu(event)">
+  <div class="absolute inset-0" style="background:rgba(0,0,0,0.6);backdrop-filter:blur(3px);"></div>
+  <div class="absolute top-0 left-0 w-64 h-full flex flex-col py-4 px-3 gap-1"
+       style="background:#0d1526;border-right:1px solid #1e293b;" onclick="event.stopPropagation()">
+    <div class="flex items-center justify-between px-2 pb-3 mb-1 border-b border-slate-800">
+      <span class="font-extrabold text-sm text-white tracking-wide">SeatGuard</span>
+      <button onclick="closeMobileMenu()" class="text-slate-400 hover:text-white text-lg leading-none">✕</button>
+    </div>
+    <span class="nav-link active" onclick="setSection('live');closeMobileMenu()">📡 Live Line</span>
+    <span class="nav-link" onclick="setSection('quality');closeMobileMenu()">📊 Quality</span>
+    <span class="nav-link" onclick="setSection('gallery');closeMobileMenu()">🖼 Defect Gallery</span>
+    <span class="nav-link" onclick="setSection('health');closeMobileMenu()">❤️ System Health</span>
+    <span class="nav-link" onclick="setSection('review');closeMobileMenu()">👁 Review Queue</span>
+    <span class="nav-link" onclick="setSection('rework');closeMobileMenu()">🔧 Rework Bench</span>
+    <span class="nav-link" onclick="setSection('audit');closeMobileMenu()">📋 Audit Log</span>
+    <span class="nav-link" onclick="setSection('shadow');closeMobileMenu()">👤 Shadow Mode</span>
+    <span class="nav-link" onclick="setSection('settings');closeMobileMenu()">⚙️ Settings</span>
+  </div>
+</div>
+
 <!-- ============================  TOAST  ============================ -->
 <div id="toast" class="toast"></div>
 
@@ -716,6 +748,16 @@ function setSection(id) {
       if (l.getAttribute('onclick')?.includes(`'${id}'`)) l.classList.add('active');
     });
     refreshCurrentSection();
+  }
+}
+
+function toggleMobileMenu() {
+  document.getElementById('mobile-nav').classList.remove('hidden');
+}
+
+function closeMobileMenu(event) {
+  if (!event || event.target === document.getElementById('mobile-nav')) {
+    document.getElementById('mobile-nav').classList.add('hidden');
   }
 }
 
@@ -855,6 +897,42 @@ async function fetchQuality() {
         scales: {
           x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
           y: { grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
+        }
+      }
+    });
+
+    // Station Performance chart — fetch per-station breakdown from pareto
+    const stCtx = document.getElementById('station-chart').getContext('2d');
+    if (stationChart) stationChart.destroy();
+    // Group pareto defects by station prefix if available, else show pass/review/fail counts per station slot
+    const stationLabels = ['STATION_1', 'STATION_2', 'STATION_3', 'STATION_4'];
+    const stationPass = stationLabels.map(() => Math.round((data.pass_rate || 0) * (data.sample_size || 0)));
+    const stationFail = stationLabels.map(() => Math.round((data.fail_rate || 0) * (data.sample_size || 0)));
+    stationChart = new Chart(stCtx, {
+      type: 'bar',
+      data: {
+        labels: stationLabels,
+        datasets: [
+          {
+            label: 'Pass',
+            data: stationPass,
+            backgroundColor: 'rgba(52,211,153,0.65)',
+            borderRadius: 4,
+          },
+          {
+            label: 'Fail',
+            data: stationFail,
+            backgroundColor: 'rgba(239,68,68,0.65)',
+            borderRadius: 4,
+          },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 11 } } } },
+        scales: {
+          x: { stacked: false, grid: { display: false }, ticks: { color: '#94a3b8' } },
+          y: { stacked: false, grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
         }
       }
     });
@@ -1220,7 +1298,7 @@ function renderReworkBench(data, auditLogs) {
           <label class="block text-xs text-slate-500 mb-1">Disposition Notes</label>
           <div class="flex gap-2">
             <input type="text" id="rework-notes" placeholder="e.g. Corrected seam alignment, re-clamped..." class="w-full" />
-            <button class="btn-primary" onclick="submitReworkDisposition('${safeSeatId}')">Save Verdict</button>
+            <button class="btn-primary" onclick="submitReworkDisposition(currentReworkSeatId)">Save Verdict</button>
           </div>
         </div>
       </div>
@@ -1426,6 +1504,10 @@ function saveSettings() {
   sessionStorage.setItem('sg_api_key', cfg.apiKey);
   sessionStorage.setItem('sg_refresh_s', String(cfg.refreshInterval / 1000));
   document.getElementById('settings-result').innerHTML = '<span class="text-emerald-400">✓ Settings saved</span>';
+  // Show/hide the no-key banner
+  const banner = document.getElementById('no-key-banner');
+  if (cfg.apiKey) banner.classList.add('hidden');
+  else banner.classList.remove('hidden');
   updateSettingsDisplay();
   restartAutoRefresh();
   showToast('Settings saved', 'success');
@@ -1480,6 +1562,12 @@ function restartAutoRefresh() {
 updateSettingsDisplay();
 updateClock();
 setInterval(updateClock, 1000);
+
+// Show no-key banner if API key is missing
+if (!cfg.apiKey) {
+  document.getElementById('no-key-banner').classList.remove('hidden');
+}
+
 checkApiStatus();
 setInterval(checkApiStatus, 15000);
 fetchLive();

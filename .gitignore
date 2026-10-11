@@ -41,7 +41,13 @@ htmlcov/
 
 # Local Scratch & Git Artifacts
 scratch/
+nonexistent/
 .env
+
+# Model weights (large binary files — store in DVC / model registry)
+models/
+*.onnx
+*.onnx.data
 
 # Inspection Database & Images
 *.db
@@ -59,3 +65,7 @@ storage/defect_crops/*
 # Calibrations: keep only .gitkeep
 configs/calibrations/*.json
 !configs/calibrations/.gitkeep
+
+models/
+
+data/leather/

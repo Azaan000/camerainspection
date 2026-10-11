@@ -94,6 +94,16 @@ class StationModelConfig(BaseModel):
     weights_path: str = ""
     version: str = "v0.1.0"
     threshold: float = 0.5
+    pass_below: float = 0.40
+    fail_above: float = 0.60
+
+    @model_validator(mode="after")
+    def _check_thresholds(self) -> StationModelConfig:
+        if self.pass_below >= self.fail_above:
+            raise ValueError(
+                f"pass_below ({self.pass_below}) must be strictly less than fail_above ({self.fail_above})."
+            )
+        return self
 
 
 class TriggerConfig(BaseModel):

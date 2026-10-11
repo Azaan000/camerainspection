@@ -5,12 +5,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import random
 import re
 import secrets
 import time
 import zipfile
 from collections import defaultdict
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -315,7 +316,7 @@ def create_app(
                     )
                 return {
                     "seat_id": valid_sid,
-                    "variant_id": st_records[0].seat_id if st_records else "UNKNOWN",
+                    "variant_id": st_records[0].variant_id if st_records else "UNKNOWN",
                     "outcome": "IN_PROGRESS",
                     "shadow_mode": False,
                     "label_printer_enabled": False,
@@ -681,7 +682,6 @@ def create_app(
             )
             eligible = [s for s in candidates if s.seat_id not in sampled_ids]
 
-            import random
             selected = random.sample(eligible, min(count, len(eligible)))
 
             new_records = []
@@ -737,7 +737,6 @@ def create_app(
             )
 
         with db_manager.session_scope() as session:
-            from datetime import datetime
             rec = session.query(AuditSampleRecord).filter_by(id=sample_id).first()
             if not rec:
                 raise HTTPException(

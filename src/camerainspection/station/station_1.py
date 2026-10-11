@@ -5,6 +5,10 @@ Inspection checks (per default_limits.yaml):
   leather.cut_or_pinhole     — fail_on_any (any region in any zone)
   leather.stain_area_mm2     — seating_face zone only
 
+When station model.backend == "onnx" the PatchCore ONNX engine is used
+instead of the classical SurfaceAnalyzer.  The two backends produce the same
+DefectDetail / measurement output so the rest of the pipeline is unchanged.
+
 Views supported:
   - front_cushion_backrest: inspects front cushion and backrest surface
   - rear_back_map_pocket: inspects rear backrest surface, seams, and map pocket
@@ -21,6 +25,7 @@ from camerainspection.core.config import CameraConfig, ROIConfig
 from camerainspection.core.limits import LimitsEvaluator
 from camerainspection.core.logging import get_logger
 from camerainspection.core.models import BoundingBox, DefectDetail, Outcome
+from camerainspection.inference.base import ModelDetection
 from camerainspection.station.base_station import BaseStation
 from camerainspection.vision.station1.surface_analysis import (
     LeatherDefectType,
@@ -44,6 +49,49 @@ class Station1Service(BaseStation):
             min_area_px=4,
             max_area_px=200_000,
         )
+        # Use the engine injected by the builder when available; lazy-load only as fallback.
+        # _onnx_loaded tracks whether we have already attempted a lazy load (avoid retrying).
+        self._onnx_loaded: bool = self.inference_engine is not None
+        self._onnx_engine = self.inference_engine  # may be None
+
+    # ------------------------------------------------------------------
+    # ONNX engine bootstrap
+    # ------------------------------------------------------------------
+
+    def _get_onnx_engine(self) -> Any:
+        """Return a loaded OnnxPatchCoreEngine.
+
+        Uses the engine injected via ``inference_engine`` when one was provided.
+        Falls back to a lazy self-load (once) when the builder did not supply one.
+        """
+        if self._onnx_loaded:
+            return self._onnx_engine
+
+        self._onnx_loaded = True  # set before load so a failure doesn't retry forever
+        try:
+            from camerainspection.inference.onnx_patchcore import OnnxPatchCoreEngine  # noqa: PLC0415
+
+            pass_below: float = self.config.model.pass_below
+            fail_above: float = self.config.model.fail_above
+
+            engine = OnnxPatchCoreEngine(pass_below=pass_below, fail_above=fail_above)
+            engine.load(self.config.model.weights_path)
+            self._onnx_engine = engine
+            logger.info(
+                "OnnxPatchCoreEngine lazy-loaded for Station 1 (pass_below=%.2f fail_above=%.2f weights=%s)",
+                pass_below, fail_above, self.config.model.weights_path,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to load ONNX engine for Station 1: %s — falling back to mock/classical", exc
+            )
+            self._onnx_engine = None
+
+        return self._onnx_engine
+
+    # ------------------------------------------------------------------
+    # BaseStation interface
+    # ------------------------------------------------------------------
 
     def get_required_measurements(self) -> list[str]:
         # At least one defect count measurement must be affirmatively recorded
@@ -61,7 +109,16 @@ class Station1Service(BaseStation):
         camera_config: CameraConfig,
     ) -> tuple[list[DefectDetail], dict[str, float], np.ndarray | None]:
         """Inspect specific camera view (e.g. front_cushion_backrest or rear_back_map_pocket)."""
-        # Determine applicable ROIs for this view
+        # Route to ONNX backend when configured
+        if self.config.model.backend == "onnx":
+            return self._analyze_surface_onnx(
+                image=image,
+                camera_name=camera_name,
+                view=view,
+                pixel_size_mm=camera_config.pixel_size_mm,
+            )
+
+        # Determine applicable ROIs for this view (classical path)
         if camera_config.regions_of_interest:
             active_rois = dict(camera_config.regions_of_interest)
         elif view == "front_cushion_backrest":
@@ -98,12 +155,120 @@ class Station1Service(BaseStation):
         variant_nominals: dict[str, Any],
     ) -> tuple[list[DefectDetail], dict[str, float], np.ndarray | None]:
         """Legacy single-image inspection covering all station ROIs."""
+        if self.config.model.backend == "onnx":
+            return self._analyze_surface_onnx(
+                image=image,
+                camera_name="main",
+                view="main",
+                pixel_size_mm=self.config.camera.pixel_size_mm,
+            )
         return self._analyze_surface(
             image=image,
             rois=self.config.regions_of_interest,
             evaluator=evaluator,
             pixel_size_mm=self.config.camera.pixel_size_mm,
         )
+
+    # ------------------------------------------------------------------
+    # ONNX analysis path
+    # ------------------------------------------------------------------
+
+    def _analyze_surface_onnx(
+        self,
+        image: np.ndarray,
+        camera_name: str,
+        view: str,
+        pixel_size_mm: float,
+    ) -> tuple[list[DefectDetail], dict[str, float], np.ndarray | None]:
+        """Run PatchCore ONNX inference and convert detections to DefectDetails."""
+        defects: list[DefectDetail] = []
+        measurements: dict[str, float] = {}
+        annotated = image.copy()
+
+        engine = self._get_onnx_engine()
+        if engine is None:
+            # Engine failed to load — fail safe
+            defects.append(DefectDetail(
+                defect_type="station.engine_unavailable",
+                outcome=Outcome.FAIL,
+                camera_name=camera_name,
+                view=view,
+                description="ONNX PatchCore engine is unavailable. Failing safe.",
+            ))
+            measurements["seating_face.defect_count"] = 0.0
+            return defects, measurements, annotated
+
+        try:
+            raw_detections: list[ModelDetection] = engine.predict(image)
+        except Exception as exc:
+            logger.error("ONNX inference error on camera %s view %s: %s", camera_name, view, exc)
+            defects.append(DefectDetail(
+                defect_type="station.inference_error",
+                outcome=Outcome.FAIL,
+                camera_name=camera_name,
+                view=view,
+                description=f"Inference exception: {exc}",
+            ))
+            measurements["seating_face.defect_count"] = 0.0
+            return defects, measurements, annotated
+
+        # Record overall anomaly score as a measurement
+        score = raw_detections[0].anomaly_score if raw_detections else 0.0
+        measurements["seating_face.defect_count"] = float(len(raw_detections))
+        measurements["leather.anomaly_score"] = float(score or 0.0)
+
+        if not raw_detections:
+            # Clean PASS — annotate with a green border
+            h, w = image.shape[:2]
+            cv2.rectangle(annotated, (2, 2), (w - 2, h - 2), (0, 200, 0), 2)
+            cv2.putText(annotated, "PASS", (10, 28),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 0), 2)
+            return defects, measurements, annotated
+
+        # Convert each ModelDetection to a DefectDetail.
+        # outcome_hint is set by the engine using: FAIL if pred_label or score >= fail_above,
+        # else REVIEW.  Fall back to FAIL when the key is absent (old engine, fail safe).
+        hint = raw_detections[0].metadata.get("outcome_hint", "FAIL")
+        outcome = Outcome.FAIL if hint == "FAIL" else Outcome.REVIEW
+
+        for det in raw_detections:
+            bbox = det.bounding_box
+
+            # Draw annotation
+            box_colour = (0, 0, 255) if outcome == Outcome.FAIL else (0, 165, 255)
+            if bbox is not None:
+                cv2.rectangle(
+                    annotated,
+                    (bbox.x, bbox.y), (bbox.x_max, bbox.y_max),
+                    box_colour, 2,
+                )
+                cv2.putText(
+                    annotated,
+                    f"{det.class_name} {det.confidence:.2f}",
+                    (bbox.x, max(0, bbox.y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, box_colour, 1,
+                )
+
+            defects.append(DefectDetail(
+                defect_type=det.class_name,
+                outcome=outcome,
+                confidence=det.confidence,
+                bounding_box=bbox,
+                camera_name=camera_name,
+                view=view,
+                roi_name="seating_face",
+                description=(
+                    f"PatchCore anomaly score={det.confidence:.4f} "
+                    f"pred_label={det.metadata.get('pred_label')} "
+                    f"heatmap_max={det.metadata.get('heatmap_max', 0):.4f}"
+                ),
+            ))
+
+        return defects, measurements, annotated
+
+    # ------------------------------------------------------------------
+    # Classical analysis path (unchanged)
+    # ------------------------------------------------------------------
 
     def _analyze_surface(
         self,
