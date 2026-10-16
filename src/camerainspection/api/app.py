@@ -223,6 +223,11 @@ def create_app(
         allow_headers=["X-API-Key", "Authorization", "Content-Type"],
     )
 
+    from fastapi.staticfiles import StaticFiles
+    storage_dir = Path(__file__).resolve().parents[2] / "storage"
+    if storage_dir.exists():
+        app.mount("/storage", StaticFiles(directory=str(storage_dir)), name="storage")
+
     @app.get("/", include_in_schema=False)
     def ui_index() -> FileResponse:
         """Serve the SeatGuard dashboard from the same origin as the API (no CORS needed)."""
