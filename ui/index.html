@@ -392,16 +392,81 @@
         </div>
       </div>
       <div id="camera-stream-container" class="hidden p-4 border-b border-slate-800 bg-black/40">
-        <div class="flex justify-between items-center mb-2">
-          <div class="text-xs text-slate-400 font-mono">Live Camera / Phone Stream (<span id="cam-url-display">http://127.0.0.1:8080/video</span>)</div>
-          <button class="btn-ghost text-xs py-0.5 px-2" onclick="reloadCameraStream()">Reload Stream</button>
-        </div>
-        <div class="flex justify-center items-center h-72 rounded-lg border border-slate-700 bg-black overflow-hidden relative">
-          <img id="live-camera-img" src="" alt="Live Camera Feed" class="max-h-full max-w-full object-contain"
-               onerror="this.style.display='none'; document.getElementById('cam-fallback').style.display='block';" />
-          <div id="cam-fallback" class="absolute text-center p-4">
-            <div class="text-amber-400 font-semibold text-sm mb-1">Camera Stream Inactive or Unreachable</div>
-            <div class="text-xs text-slate-400">Configure your camera stream URL in <span class="underline cursor-pointer text-sky-400" onclick="setSection('settings')">Settings</span> or run tools/test_live_camera.py</div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <!-- LEFT: Live Camera Stream -->
+          <div class="flex flex-col">
+            <div class="flex justify-between items-center mb-2">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+                <span class="text-xs font-bold text-white uppercase tracking-wider">Live Camera Stream</span>
+                <span class="text-[11px] text-slate-400 font-mono hidden sm:inline">(<span id="cam-url-display">http://127.0.0.1:8080/video</span>)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button class="btn-ghost text-xs py-0.5 px-2" onclick="reloadCameraStream()">Reload</button>
+              </div>
+            </div>
+            <div class="h-80 rounded-xl border border-slate-700 bg-black overflow-hidden relative flex items-center justify-center">
+              <img id="live-camera-img" src="" alt="Live Camera Feed" class="max-h-full max-w-full object-contain"
+                   onerror="this.style.display='none'; document.getElementById('cam-fallback').style.display='block';" />
+              <div id="cam-fallback" class="absolute text-center p-4">
+                <div class="text-amber-400 font-semibold text-sm mb-1">Camera Stream Inactive or Unreachable</div>
+                <div class="text-xs text-slate-400">Configure stream URL in <span class="underline cursor-pointer text-sky-400" onclick="setSection('settings')">Settings</span> or run <code class="font-mono text-slate-300">tools/test_live_camera.py</code></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT: Companion Inspection View -->
+          <div id="companion-view-container" class="flex flex-col">
+            <!-- Tabs Header -->
+            <div class="flex justify-between items-center mb-2">
+              <div class="flex items-center gap-1 bg-slate-900/90 p-1 rounded-lg border border-slate-800">
+                <button id="tab-btn-latest" onclick="switchCompanionTab('latest')" class="px-3 py-1 rounded text-xs font-semibold text-white bg-slate-800 transition">Latest Snapshot</button>
+                <button id="tab-btn-golden" onclick="switchCompanionTab('golden')" class="px-3 py-1 rounded text-xs font-semibold text-slate-400 hover:text-white transition">Golden Ref</button>
+                <button id="tab-btn-filmstrip" onclick="switchCompanionTab('filmstrip')" class="px-3 py-1 rounded text-xs font-semibold text-slate-400 hover:text-white transition">Station Views</button>
+              </div>
+              <div id="companion-sync-badge" class="text-[11px] font-mono text-emerald-400 flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Synced
+              </div>
+            </div>
+
+            <!-- Tab Content Box -->
+            <div class="h-80 rounded-xl border border-slate-700/80 bg-slate-900/80 p-3 overflow-y-auto relative">
+              <!-- Tab 1: Latest Inspection Panel -->
+              <div id="panel-companion-latest" class="space-y-2">
+                <div class="flex items-center justify-between text-xs pb-2 border-b border-slate-800">
+                  <div>Seat: <span id="comp-seat-id" class="font-mono font-bold text-sky-400 cursor-pointer hover:underline">—</span> (<span id="comp-variant-id" class="text-slate-400">—</span>)</div>
+                  <div id="comp-outcome-badge">—</div>
+                </div>
+                <div class="h-48 rounded-lg bg-black/60 border border-slate-800 overflow-hidden flex items-center justify-center relative cursor-pointer group" onclick="openCompanionPrimaryModal()">
+                  <img id="comp-primary-img" src="" alt="Latest Snapshot" class="max-h-full max-w-full object-contain group-hover:scale-105 transition" />
+                  <div class="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/80 text-[10px] text-slate-300 font-mono opacity-80 group-hover:opacity-100">Click to expand</div>
+                </div>
+                <div id="comp-defects-summary" class="text-xs text-slate-400 pt-1">
+                  <!-- Injected defects or pass notice -->
+                </div>
+              </div>
+
+              <!-- Tab 2: Golden Reference Panel -->
+              <div id="panel-companion-golden" class="hidden space-y-3">
+                <div class="flex items-center justify-between text-xs pb-1 border-b border-slate-800">
+                  <span class="text-slate-400">Variant Standard: <strong id="golden-variant-name" class="text-white">FRONT_LH_BLACK</strong></span>
+                  <span class="text-[10px] text-amber-400 font-mono">OEM Golden Master</span>
+                </div>
+                <div id="golden-images-grid" class="grid grid-cols-2 gap-2">
+                  <!-- Dynamic Golden Images -->
+                </div>
+                <div id="golden-nominals-list" class="grid grid-cols-3 gap-2 pt-1 text-[11px] font-mono">
+                  <!-- Nominal Key Values -->
+                </div>
+              </div>
+
+              <!-- Tab 3: Station Views Filmstrip Panel -->
+              <div id="panel-companion-filmstrip" class="hidden">
+                <div class="grid grid-cols-2 gap-2" id="filmstrip-grid">
+                  <!-- 4 Station Cards -->
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -729,9 +794,303 @@
   </div>
 </div>
 
+<!-- ============================  MODAL: DEFECT LIGHTBOX  ============================ -->
+<div id="defect-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden"
+  style="background: rgba(0,0,0,0.85); backdrop-filter: blur(6px);">
+  <div class="card w-full max-w-4xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col">
+    <!-- Header -->
+    <div class="card-header">
+      <div class="flex items-center gap-2">
+        <span class="section-title text-amber-400">Defect Lightbox &amp; Optical Metrology</span>
+        <span id="defect-modal-title" class="font-mono text-xs text-white font-semibold"></span>
+      </div>
+      <button onclick="closeDefectModal()" class="text-slate-400 hover:text-white text-lg font-bold leading-none">✕</button>
+    </div>
+
+    <!-- Body -->
+    <div class="p-5 space-y-4">
+      <!-- Toolbar & BBox Toggle -->
+      <div class="flex flex-wrap items-center justify-between gap-3 text-xs bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-2 cursor-pointer select-none text-slate-300">
+            <input type="checkbox" id="defect-modal-bbox-toggle" checked onchange="toggleDefectModalBbox()" class="rounded border-slate-700 text-amber-400" />
+            <span>Show Defect Bounding Box</span>
+          </label>
+          <span class="text-slate-600">|</span>
+          <span id="defect-modal-dims" class="font-mono text-slate-400 text-[11px]">Res: 2592 × 1944 px</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="btn-ghost text-xs py-1 px-2.5" onclick="zoomDefectImage(0.8)">- Zoom Out</button>
+          <button class="btn-ghost text-xs py-1 px-2.5" onclick="zoomDefectImage(1.0)">1:1</button>
+          <button class="btn-ghost text-xs py-1 px-2.5" onclick="zoomDefectImage(1.25)">+ Zoom In</button>
+        </div>
+      </div>
+
+      <!-- High-Resolution Image Canvas Box -->
+      <div class="h-96 md:h-[460px] rounded-xl bg-black border border-slate-700/80 overflow-hidden relative flex items-center justify-center select-none" id="defect-img-viewport">
+        <div id="defect-img-container" class="relative transition-transform duration-200">
+          <img id="defect-modal-img" src="" alt="Defect High-Resolution View" class="max-h-full max-w-full object-contain" />
+          <svg id="defect-modal-svg-overlay" class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 2592 1944" preserveAspectRatio="none">
+            <!-- Dynamic Bounding Box -->
+          </svg>
+        </div>
+      </div>
+
+      <!-- Metrics & Metrology Details -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        <div class="stat-card p-3">
+          <div class="stat-label">Measured Value</div>
+          <div id="defect-modal-measured" class="stat-value text-white text-lg mt-1">—</div>
+        </div>
+        <div class="stat-card p-3">
+          <div class="stat-label">Nominal Target</div>
+          <div id="defect-modal-nominal" class="stat-value text-slate-300 text-lg mt-1">—</div>
+        </div>
+        <div class="stat-card p-3">
+          <div class="stat-label">Tolerance Delta</div>
+          <div id="defect-modal-delta" class="stat-value text-rose-400 text-lg mt-1">—</div>
+        </div>
+        <div class="stat-card p-3">
+          <div class="stat-label">AI Confidence</div>
+          <div id="defect-modal-confidence" class="stat-value text-emerald-400 text-lg mt-1">—</div>
+        </div>
+      </div>
+
+      <!-- Metadata & Action Buttons -->
+      <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-wrap items-center justify-between gap-4 text-xs">
+        <div class="space-y-1">
+          <div>Seat ID: <strong id="defect-modal-seat-id" class="text-sky-400 font-mono">—</strong></div>
+          <div>Station / ROI: <span id="defect-modal-station-roi" class="text-slate-300">—</span></div>
+          <div>Description: <span id="defect-modal-description" class="text-slate-400">—</span></div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="btn-primary text-xs py-2 px-3" onclick="jumpToReworkFromDefect()">🔧 Inspect in Rework Bench</button>
+          <button class="btn-ghost text-xs py-2 px-3" onclick="jumpToSeatModalFromDefect()">🔍 2×2 Camera Grid</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ============================  JAVASCRIPT  ============================ -->
 <script>
-// ─────────────────────────  Config  ─────────────────────────
+// ─────────────────────────  COMPANION INSPECTION VIEW (Live Camera Tab)  ─────────────────────────
+let companionData = null;
+let currentCompanionTab = 'latest';
+
+function switchCompanionTab(tab) {
+  currentCompanionTab = tab;
+  ['latest', 'golden', 'filmstrip'].forEach(t => {
+    const btn = document.getElementById(`tab-btn-${t}`);
+    const panel = document.getElementById(`panel-companion-${t}`);
+    if (t === tab) {
+      btn?.classList.add('text-white', 'bg-slate-800');
+      btn?.classList.remove('text-slate-400');
+      panel?.classList.remove('hidden');
+    } else {
+      btn?.classList.remove('text-white', 'bg-slate-800');
+      btn?.classList.add('text-slate-400');
+      panel?.classList.add('hidden');
+    }
+  });
+}
+
+async function fetchLiveCompanion(seatId) {
+  try {
+    const url = seatId
+      ? `/api/v1/dashboard/live-companion?seat_id=${encodeURIComponent(seatId)}`
+      : '/api/v1/dashboard/live-companion';
+    companionData = await api(url);
+    renderCompanionView(companionData);
+  } catch (err) {
+    console.warn('Failed to fetch companion view:', err);
+  }
+}
+
+function renderCompanionView(data) {
+  if (!data) return;
+
+  // 1. Render Latest Inspection Tab
+  const seatIdSpan = document.getElementById('comp-seat-id');
+  if (seatIdSpan) {
+    seatIdSpan.textContent = data.seat_id;
+    seatIdSpan.onclick = () => openSeatModal(data.seat_id);
+  }
+  const varSpan = document.getElementById('comp-variant-id');
+  if (varSpan) varSpan.textContent = data.variant_id;
+  const outBadge = document.getElementById('comp-outcome-badge');
+  if (outBadge) outBadge.innerHTML = outcomeBadge(data.outcome);
+
+  const primaryImgUrl = data.latest_inspection?.primary_image_url
+    ? (cfg.apiUrl + '/' + data.latest_inspection.primary_image_url.replace(/^\//, ''))
+    : '';
+  const compImg = document.getElementById('comp-primary-img');
+  if (compImg) compImg.src = primaryImgUrl;
+
+  const stMap = data.latest_inspection?.stations || {};
+  let totalDefects = 0;
+  Object.values(stMap).forEach(s => { totalDefects += (s.defects_count || 0); });
+
+  const defSummary = document.getElementById('comp-defects-summary');
+  if (defSummary) {
+    if (totalDefects > 0) {
+      defSummary.innerHTML = `<span class="text-rose-400 font-bold">⚠️ ${totalDefects} defect(s) flagged on this seat.</span> Click image to inspect.`;
+    } else {
+      defSummary.innerHTML = `<span class="text-emerald-400 font-semibold">✓ All optical inspections cleared for ${escapeHtml(data.seat_id)}.</span>`;
+    }
+  }
+
+  // 2. Render Golden Reference Tab
+  const goldenVarName = document.getElementById('golden-variant-name');
+  if (goldenVarName) goldenVarName.textContent = data.golden_reference?.variant_id || 'FRONT_LH_BLACK';
+  const goldenGrid = document.getElementById('golden-images-grid');
+  const gImages = data.golden_reference?.images || [];
+  if (goldenGrid) {
+    if (gImages.length) {
+      goldenGrid.innerHTML = gImages.map(g => {
+        const url = cfg.apiUrl + '/' + g.image_url.replace(/^\//, '');
+        return `
+        <div class="rounded-lg bg-black/60 border border-slate-800 p-2 text-center group cursor-pointer" onclick="window.open('${escapeHtml(url)}', '_blank')" title="Click to view full golden master">
+          <div class="h-28 overflow-hidden rounded flex items-center justify-center mb-1">
+            <img src="${escapeHtml(url)}" alt="${escapeHtml(g.name)}" class="max-h-full max-w-full object-contain group-hover:scale-105 transition" />
+          </div>
+          <div class="text-[11px] font-semibold text-white truncate">${escapeHtml(g.name)}</div>
+          <div class="text-[10px] text-slate-500">Master Ref</div>
+        </div>`;
+      }).join('');
+    } else {
+      goldenGrid.innerHTML = '<div class="col-span-2 text-slate-500 text-xs text-center py-4">No golden images registered for variant</div>';
+    }
+  }
+
+  const nomList = document.getElementById('golden-nominals-list');
+  const nominals = data.golden_reference?.nominals || {};
+  if (nomList) {
+    const stitchNom = nominals.stitch?.stitches_per_inch || '6.0';
+    const gapNom = nominals.plastic?.shield_gap_mm || '2.5';
+    const angleNom = nominals.mechanism?.recliner_angle_deg || '90.0';
+    nomList.innerHTML = `
+      <div class="p-1.5 rounded bg-slate-800/50 border border-slate-700/50 text-center"><span class="text-slate-400">Stitch:</span> <strong class="text-emerald-400">${stitchNom} SPI</strong></div>
+      <div class="p-1.5 rounded bg-slate-800/50 border border-slate-700/50 text-center"><span class="text-slate-400">Gap:</span> <strong class="text-emerald-400">${gapNom} mm</strong></div>
+      <div class="p-1.5 rounded bg-slate-800/50 border border-slate-700/50 text-center"><span class="text-slate-400">Angle:</span> <strong class="text-emerald-400">${angleNom}°</strong></div>
+    `;
+  }
+
+  // 3. Render Station Filmstrip Tab
+  const filmstrip = document.getElementById('filmstrip-grid');
+  if (filmstrip) {
+    const stKeys = ["STATION_1", "STATION_2", "STATION_3", "STATION_4"];
+    filmstrip.innerHTML = stKeys.map(k => {
+      const st = stMap[k] || { outcome: 'PASS', cycle_time_ms: 0, image_url: '' };
+      const imgUrl = st.image_url ? (cfg.apiUrl + '/' + st.image_url.replace(/^\//, '')) : '';
+      return `
+      <div class="p-2 rounded-lg bg-slate-800/50 border border-slate-700/60 flex flex-col justify-between cursor-pointer hover:border-slate-500 transition" onclick="openSeatModal('${escapeHtml(data.seat_id)}')">
+        <div class="flex justify-between items-center mb-1">
+          <span class="font-bold text-[11px] text-white">${k.replace('_', ' ')}</span>
+          ${outcomeBadge(st.outcome)}
+        </div>
+        <div class="h-20 rounded bg-black/60 overflow-hidden flex items-center justify-center my-1">
+          <img src="${escapeHtml(imgUrl)}" class="max-h-full max-w-full object-contain" />
+        </div>
+        <div class="text-[10px] text-slate-400 flex justify-between">
+          <span>${st.cycle_time_ms ? st.cycle_time_ms.toFixed(0) : '0'} ms</span>
+          <span>${st.defects_count ? `<strong class="text-rose-400">${st.defects_count} defect(s)</strong>` : '<span class="text-emerald-400">OK</span>'}</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  const syncBadge = document.getElementById('companion-sync-badge');
+  if (syncBadge) {
+    syncBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Synced (${escapeHtml(data.seat_id)})`;
+  }
+}
+
+function openCompanionPrimaryModal() {
+  if (companionData && companionData.seat_id) {
+    openSeatModal(companionData.seat_id);
+  }
+}
+
+// ─────────────────────────  DEFECT LIGHTBOX MODAL  ─────────────────────────
+let currentDefect = null;
+let currentDefectZoom = 1.0;
+
+function openDefectModal(index) {
+  const d = galleryData[index];
+  if (!d) return;
+  currentDefect = d;
+  currentDefectZoom = 1.0;
+
+  const safeType = escapeHtml(d.defect_type);
+  const safeSeat = escapeHtml(d.seat_id);
+  const imgUrl = d.image_url ? (cfg.apiUrl + '/' + d.image_url.replace(/^\//, '')) : '';
+
+  document.getElementById('defect-modal-title').textContent = `${safeType} — Seat: ${safeSeat}`;
+  document.getElementById('defect-modal-img').src = imgUrl;
+  document.getElementById('defect-modal-seat-id').textContent = safeSeat;
+  document.getElementById('defect-modal-station-roi').textContent = `${d.station_id} / ${d.roi_name || d.view || 'All'}`;
+  document.getElementById('defect-modal-description').textContent = d.description || 'Out-of-spec measurement or visual anomaly.';
+  document.getElementById('defect-modal-measured').textContent = d.measured_value != null ? `${d.measured_value} ${d.unit || ''}` : '—';
+  document.getElementById('defect-modal-nominal').textContent = d.nominal_value != null ? `${d.nominal_value} ${d.unit || ''}` : '—';
+  document.getElementById('defect-modal-delta').textContent = d.delta != null ? `${d.delta > 0 ? '+' : ''}${d.delta} ${d.unit || ''}` : '—';
+  document.getElementById('defect-modal-confidence').textContent = d.confidence != null ? fmtPct(d.confidence) : '—';
+
+  const svgOverlay = document.getElementById('defect-modal-svg-overlay');
+  if (d.bbox && Array.isArray(d.bbox) && d.bbox.length === 4) {
+    const [x, y, w, h] = d.bbox;
+    svgOverlay.innerHTML = `
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="rgba(239, 68, 68, 0.25)" stroke="#ef4444" stroke-width="6" stroke-dasharray="16,8" />
+      <text x="${x + 8}" y="${Math.max(24, y - 10)}" fill="#ef4444" font-size="28" font-family="monospace" font-weight="bold">${escapeHtml(d.defect_type)} [${w}×${h}px]</text>
+    `;
+    svgOverlay.style.display = 'block';
+    const bboxToggle = document.getElementById('defect-modal-bbox-toggle');
+    if (bboxToggle) bboxToggle.checked = true;
+  } else {
+    svgOverlay.innerHTML = '';
+    svgOverlay.style.display = 'none';
+  }
+
+  document.getElementById('defect-img-container').style.transform = 'scale(1)';
+  document.getElementById('defect-modal').classList.remove('hidden');
+}
+
+function closeDefectModal() {
+  document.getElementById('defect-modal').classList.add('hidden');
+}
+
+function toggleDefectModalBbox() {
+  const show = document.getElementById('defect-modal-bbox-toggle')?.checked;
+  const svg = document.getElementById('defect-modal-svg-overlay');
+  if (svg) svg.style.display = show ? 'block' : 'none';
+}
+
+function zoomDefectImage(factor) {
+  if (factor === 1.0) currentDefectZoom = 1.0;
+  else currentDefectZoom = Math.min(3.0, Math.max(0.5, currentDefectZoom * factor));
+  const container = document.getElementById('defect-img-container');
+  if (container) container.style.transform = `scale(${currentDefectZoom})`;
+}
+
+function jumpToReworkFromDefect() {
+  if (!currentDefect || !currentDefect.seat_id) return;
+  const sid = currentDefect.seat_id;
+  closeDefectModal();
+  setSection('rework');
+  loadReworkSeat(sid);
+}
+
+function jumpToSeatModalFromDefect() {
+  if (!currentDefect || !currentDefect.seat_id) return;
+  const sid = currentDefect.seat_id;
+  closeDefectModal();
+  openSeatModal(sid);
+}
+
+document.getElementById('defect-modal')?.addEventListener('click', (e) => {
+  if (e.target === document.getElementById('defect-modal')) closeDefectModal();
+});
+
 const cfg = {
   apiUrl: sessionStorage.getItem('sg_api_url') || 'http://127.0.0.1:8000',
   apiKey: sessionStorage.getItem('sg_api_key') || '',
@@ -914,6 +1273,7 @@ function toggleCameraStreamView() {
     container.classList.remove('hidden');
     if (btn) btn.textContent = '📊 Hide Camera Stream';
     if (img) img.src = camUrl;
+    fetchLiveCompanion();
   } else {
     container.classList.add('hidden');
     if (btn) btn.textContent = '🎥 Show Camera Stream';
@@ -953,6 +1313,9 @@ async function fetchLive() {
       if (latest.outcome === 'FAIL' && latest.seat_id !== lastNotifiedFailSeatId) {
         lastNotifiedFailSeatId = latest.seat_id;
         triggerAndonAlert(`FAIL detected on seat ${latest.seat_id} (${latest.variant_id || 'UNKNOWN'})`);
+      }
+      if (cameraStreamVisible) {
+        fetchLiveCompanion(latest.seat_id);
       }
     }
 
@@ -1112,10 +1475,17 @@ async function fetchQuality() {
 // ─────────────────────────  DEFECT GALLERY  ─────────────────────────
 async function fetchGallery() {
   try {
-    galleryData = await api('/api/v1/dashboard/defect-gallery?limit=48');
+    const stFilter = document.getElementById('gallery-filter-station')?.value;
+    const typeFilter = document.getElementById('gallery-filter-type')?.value;
+    let url = '/api/v1/dashboard/defect-gallery?limit=48';
+    if (stFilter) url += `&station_id=${encodeURIComponent(stFilter)}`;
+    if (typeFilter) url += `&defect_type=${encodeURIComponent(typeFilter)}`;
+
+    galleryData = await api(url);
     const types = [...new Set(galleryData.map(d => d.defect_type).filter(Boolean))];
     const sel = document.getElementById('gallery-filter-type');
-    sel.innerHTML = '<option value="">All Types</option>' + types.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+    const currentType = sel?.value || '';
+    sel.innerHTML = '<option value="">All Types</option>' + types.map(t => `<option value="${escapeHtml(t)}" ${t === currentType ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
     renderGallery();
   } catch (e) {
     document.getElementById('gallery-grid').innerHTML = `<div class="col-span-4 text-rose-400 text-sm py-10 text-center">${escapeHtml(e.message)}</div>`;
@@ -1124,28 +1494,75 @@ async function fetchGallery() {
 
 function renderGallery() {
   const typeFilter = document.getElementById('gallery-filter-type')?.value;
+  const stationFilter = document.getElementById('gallery-filter-station')?.value;
   let data = galleryData;
-  if (typeFilter) data = data.filter(d => d.defect_type === typeFilter);
 
+  if (typeFilter) data = data.filter(d => d.defect_type === typeFilter);
+  if (stationFilter) {
+    data = data.filter(d => {
+      const st = String(d.station_id || '');
+      return st === stationFilter || st === 'STATION_' + stationFilter || st.endsWith(stationFilter);
+    });
+  }
+
+  const container = document.getElementById('gallery-grid');
   if (!data.length) {
-    document.getElementById('gallery-grid').innerHTML = '<div class="col-span-4 text-slate-600 text-sm py-10 text-center">No defects match the current filter.</div>';
+    container.innerHTML = '<div class="col-span-4 text-slate-600 text-sm py-10 text-center">No defects match the current filter.</div>';
     return;
   }
-  document.getElementById('gallery-grid').innerHTML = data.slice(0, 48).map(d => {
+  container.innerHTML = data.slice(0, 48).map((d, idx) => {
     const safeType = escapeHtml(d.defect_type);
-    const safeRoi = escapeHtml(d.roi_name || '—');
+    const safeSeatId = escapeHtml(d.seat_id);
+    const safeStation = escapeHtml(d.station_id);
+    const safeRoi = escapeHtml(d.roi_name || d.view || '—');
     const safeDesc = escapeHtml(d.description || '—');
+    const imgUrl = d.image_url ? (cfg.apiUrl + '/' + d.image_url.replace(/^\//, '')) : '';
+    const confText = d.confidence != null ? fmtPct(d.confidence) : null;
+    const deltaText = d.delta != null ? `${d.delta > 0 ? '+' : ''}${d.delta} ${escapeHtml(d.unit || 'mm')}` : null;
+
     return `
-    <div class="card p-4 hover:border-amber-400/50 transition">
-      <div class="flex justify-between items-start mb-2">
-        <span class="font-bold text-sm text-white">${safeType}</span>
-        ${outcomeBadge(d.outcome)}
+    <div class="card p-3.5 hover:border-amber-400/50 transition flex flex-col justify-between group">
+      <div>
+        <div class="flex justify-between items-center mb-2">
+          <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950/60 text-sky-400 border border-sky-800/50">${safeStation}</span>
+          <div class="flex items-center gap-1.5">
+            ${confText ? `<span class="text-[10px] font-mono text-slate-400">${confText}</span>` : ''}
+            ${outcomeBadge(d.outcome)}
+          </div>
+        </div>
+
+        <!-- Thumbnail Image with SVG Bounding Box Overlay -->
+        <div class="h-40 rounded-lg bg-black/70 border border-slate-800 overflow-hidden relative cursor-pointer mb-2.5 flex items-center justify-center"
+             onclick="openDefectModal(${idx})">
+          ${imgUrl ? `
+            <img src="${escapeHtml(imgUrl)}" alt="${safeType}" class="w-full h-full object-cover group-hover:scale-105 transition"
+                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+            <div class="hidden absolute inset-0 items-center justify-center text-slate-500 text-xs">📷 No Image</div>
+            ${d.bbox ? `
+              <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 2592 1944" preserveAspectRatio="none">
+                <rect x="${d.bbox[0]}" y="${d.bbox[1]}" width="${d.bbox[2]}" height="${d.bbox[3]}"
+                      fill="rgba(239, 68, 68, 0.25)" stroke="#ef4444" stroke-width="6" stroke-dasharray="16,8" />
+              </svg>
+            ` : ''}
+          ` : `
+            <div class="text-slate-500 text-xs">📷 Replay / Mock Frame</div>
+          `}
+          <div class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/80 text-[10px] text-slate-300 font-mono opacity-0 group-hover:opacity-100 transition">🔍 Inspect</div>
+        </div>
+
+        <div class="font-bold text-sm text-white mb-1 truncate" title="${safeType}">${safeType}</div>
+        <div class="text-xs text-slate-400 mb-1">Seat: <span class="text-sky-400 font-mono cursor-pointer hover:underline" onclick="openSeatModal('${safeSeatId}')">${safeSeatId}</span></div>
+        <div class="text-xs text-slate-400 mb-1">ROI: <span class="text-slate-300">${safeRoi}</span></div>
+
+        <div class="text-xs font-mono py-1 px-2 rounded bg-slate-900/60 border border-slate-800/80 mb-2 flex justify-between items-center">
+          <span class="text-slate-400">Val: <strong class="text-white">${d.measured_value ?? '—'}</strong> ${escapeHtml(d.unit || '')}</span>
+          ${deltaText ? `<span class="text-rose-400 font-bold">Δ ${deltaText}</span>` : ''}
+        </div>
       </div>
-      <div class="space-y-1 text-xs text-slate-400">
-        <div><span class="text-slate-600">ROI:</span> ${safeRoi}</div>
-        <div><span class="text-slate-600">Measured:</span> ${escapeHtml(d.measured_value)} ${escapeHtml(d.unit || '')}</div>
-        ${d.confidence != null ? `<div><span class="text-slate-600">Confidence:</span> ${fmtPct(d.confidence)}</div>` : ''}
-        <div class="truncate text-slate-500 text-[11px]">${safeDesc}</div>
+
+      <div class="pt-2 border-t border-slate-800 text-[11px] text-slate-500 flex justify-between items-center">
+        <span class="truncate max-w-[140px] text-slate-400" title="${safeDesc}">${safeDesc}</span>
+        <button class="text-sky-400 hover:underline font-semibold" onclick="openDefectModal(${idx})">Details →</button>
       </div>
     </div>`;
   }).join('');

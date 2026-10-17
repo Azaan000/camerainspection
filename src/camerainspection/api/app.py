@@ -224,9 +224,26 @@ def create_app(
     )
 
     from fastapi.staticfiles import StaticFiles
-    storage_dir = Path(__file__).resolve().parents[2] / "storage"
-    if storage_dir.exists():
-        app.mount("/storage", StaticFiles(directory=str(storage_dir)), name="storage")
+
+    # Repo root is 3 levels up from src/camerainspection/api/app.py
+    repo_root = Path(__file__).resolve().parents[3]
+
+    # Mount storage directory (for live & recorded captures)
+    storage_dir = repo_root / "storage"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    (storage_dir / "captures").mkdir(parents=True, exist_ok=True)
+    (storage_dir / "images").mkdir(parents=True, exist_ok=True)
+    app.mount("/storage", StaticFiles(directory=str(storage_dir)), name="storage")
+
+    # Mount data directory (for simulation replays and test sets)
+    data_dir = repo_root / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/data", StaticFiles(directory=str(data_dir)), name="data")
+
+    # Mount configs directory (for variant golden images)
+    configs_dir = repo_root / "configs"
+    if configs_dir.is_dir():
+        app.mount("/configs", StaticFiles(directory=str(configs_dir)), name="configs")
 
     @app.get("/", include_in_schema=False)
     def ui_index() -> FileResponse:
@@ -820,29 +837,260 @@ def create_app(
                 "pareto_defects": sorted_pareto,
             }
 
+    def _resolve_defect_image(
+        st_rec: StationResultRecord | None,
+        camera_name: str | None,
+        defect_type: str,
+    ) -> str:
+        """Resolve the best available image URL for a defect with replay fallback."""
+        if st_rec:
+            cam_paths: dict[str, str] = {}
+            if st_rec.camera_image_paths_json:
+                try:
+                    cam_paths = json.loads(st_rec.camera_image_paths_json)
+                except Exception:
+                    pass
+
+            # 1. Camera-specific capture path
+            if camera_name and camera_name in cam_paths and cam_paths[camera_name]:
+                cand = cam_paths[camera_name]
+                if (repo_root / cand.lstrip("/")).is_file():
+                    return "/" + cand.lstrip("/")
+
+            # 2. Station primary annotated image
+            if st_rec.annotated_image_path and (repo_root / st_rec.annotated_image_path.lstrip("/")).is_file():
+                return "/" + st_rec.annotated_image_path.lstrip("/")
+
+            # 3. Station primary raw image
+            if st_rec.raw_image_path and (repo_root / st_rec.raw_image_path.lstrip("/")).is_file():
+                return "/" + st_rec.raw_image_path.lstrip("/")
+
+            # 4. Any camera capture recorded for this station
+            for path_val in cam_paths.values():
+                if path_val and (repo_root / path_val.lstrip("/")).is_file():
+                    return "/" + path_val.lstrip("/")
+
+        # 5. Deterministic fallback to replay dataset based on station and defect type
+        st_id = (st_rec.station_id if st_rec else "").upper()
+        dtype_lower = defect_type.lower()
+        if "STATION_1" in st_id or st_id == "1":
+            if "scratch" in dtype_lower:
+                return "/data/station_1/replay/02_fail_scratch.png"
+            if "cut" in dtype_lower:
+                return "/data/station_1/replay/03_fail_cut.png"
+            if "pinhole" in dtype_lower:
+                return "/data/station_1/replay/04_fail_pinhole.png"
+            if "stain" in dtype_lower:
+                return "/data/station_1/replay/05_review_stain.png"
+            return "/data/station_1/replay/01_pass_clean.png"
+        elif "STATION_2" in st_id or st_id == "2":
+            if "broken" in dtype_lower:
+                return "/data/station_2/replay/03_fail_broken_thread.png"
+            if "skip" in dtype_lower:
+                return "/data/station_2/replay/02_review_skip.png"
+            if "loose" in dtype_lower:
+                return "/data/station_2/replay/04_review_loose_end.png"
+            if "color" in dtype_lower:
+                return "/data/station_2/replay/05_fail_wrong_color.png"
+            return "/data/station_2/replay/01_pass_normal.png"
+        elif "STATION_3" in st_id or st_id == "3":
+            return "/data/station_3/replay/01_pass_scene.png"
+        elif "STATION_4" in st_id or st_id == "4":
+            if "angle" in dtype_lower or "recliner" in dtype_lower:
+                return "/data/station_4/replay/02_fail_recliner_angle.png"
+            if "track" in dtype_lower:
+                return "/data/station_4/replay/03_fail_track_position.png"
+            return "/data/station_4/replay/01_pass_nominal.png"
+
+        return "/data/station_1/replay/01_pass_clean.png"
+
     @app.get("/api/v1/dashboard/defect-gallery")
     def get_defect_gallery(
-        limit: int = Query(20, ge=1, le=100),
+        limit: int = Query(48, ge=1, le=200),
+        station_id: str | None = Query(None),
+        defect_type: str | None = Query(None),
         auth_user: str = Depends(verify_api_key),
     ) -> list[dict[str, Any]]:
-        """View 3: Defect gallery - recent failures with bounding box and measured values."""
+        """View 3: Defect gallery - failures joined with station inspection data and image paths."""
         with db_manager.session_scope() as session:
-            defects = session.query(DefectRecord).order_by(DefectRecord.created_at.desc()).limit(limit).all()
-            return [
-                {
+            query = (
+                session.query(DefectRecord, StationResultRecord)
+                .outerjoin(StationResultRecord, DefectRecord.station_result_id == StationResultRecord.id)
+            )
+
+            if station_id:
+                clean_st = station_id.strip()
+                if not clean_st.startswith("STATION_"):
+                    clean_st = f"STATION_{clean_st}"
+                query = query.filter(StationResultRecord.station_id == clean_st)
+
+            if defect_type:
+                query = query.filter(DefectRecord.defect_type == defect_type.strip())
+
+            results = query.order_by(DefectRecord.created_at.desc()).limit(limit).all()
+
+            output = []
+            for d, st in results:
+                bbox = [d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h] if d.bbox_x is not None else None
+                img_url = _resolve_defect_image(st, d.camera_name, d.defect_type)
+                delta = None
+                if d.measured_value is not None and d.nominal_value is not None:
+                    delta = round(d.measured_value - d.nominal_value, 3)
+
+                output.append({
+                    "id": d.id,
                     "defect_type": d.defect_type,
                     "outcome": d.outcome,
+                    "seat_id": st.seat_id if st else "UNKNOWN",
+                    "station_id": st.station_id if st else "UNKNOWN",
+                    "camera_name": d.camera_name,
+                    "view": d.view,
+                    "roi_name": d.roi_name,
                     "measured_value": d.measured_value,
                     "nominal_value": d.nominal_value,
+                    "delta": delta,
                     "unit": d.unit,
                     "confidence": d.confidence,
-                    "bbox": [d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h],
-                    "roi_name": d.roi_name,
+                    "bbox": bbox,
                     "description": d.description,
+                    "image_url": img_url,
                     "created_at": d.created_at.isoformat() if d.created_at else None,
-                }
-                for d in defects
-            ]
+                })
+            return output
+
+    @app.get("/api/v1/dashboard/live-companion")
+    def get_live_companion_view(
+        seat_id: str | None = Query(None),
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Provide latest seat inspection snapshots, station views, and golden references."""
+        with db_manager.session_scope() as session:
+            seat_rec = None
+            if seat_id:
+                valid_sid = validate_seat_id(seat_id)
+                seat_rec = session.query(SeatInspectionRecord).filter_by(seat_id=valid_sid).first()
+            if not seat_rec:
+                seat_rec = (
+                    session.query(SeatInspectionRecord)
+                    .order_by(SeatInspectionRecord.created_at.desc())
+                    .first()
+                )
+
+            variant_id = seat_rec.variant_id if seat_rec else "FRONT_LH_BLACK"
+            active_seat_id = seat_rec.seat_id if seat_rec else "SEAT-DEMO"
+            overall_outcome = seat_rec.outcome if seat_rec else "PASS"
+
+            st_records = []
+            if seat_rec:
+                st_records = (
+                    session.query(StationResultRecord)
+                    .filter_by(seat_id=seat_rec.seat_id)
+                    .order_by(StationResultRecord.station_id.asc())
+                    .all()
+                )
+
+            station_map: dict[str, Any] = {}
+            for st in ("STATION_1", "STATION_2", "STATION_3", "STATION_4"):
+                matching_st = next((s for s in st_records if s.station_id == st), None)
+                if matching_st:
+                    cam_paths = (
+                        json.loads(matching_st.camera_image_paths_json)
+                        if matching_st.camera_image_paths_json
+                        else {}
+                    )
+                    primary_img = (
+                        matching_st.annotated_image_path
+                        or matching_st.raw_image_path
+                        or (next(iter(cam_paths.values()), None) if cam_paths else None)
+                    )
+                    if primary_img and not primary_img.startswith("/"):
+                        primary_img = "/" + primary_img
+
+                    if not primary_img or not (repo_root / primary_img.lstrip("/")).is_file():
+                        primary_img = (
+                            f"/data/{st.lower()}/replay/01_pass_clean.png" if st == "STATION_1" else (
+                                f"/data/{st.lower()}/replay/01_pass_normal.png" if st == "STATION_2" else (
+                                    f"/data/{st.lower()}/replay/01_pass_scene.png" if st == "STATION_3" else
+                                    f"/data/{st.lower()}/replay/01_pass_nominal.png"
+                                )
+                            )
+                        )
+
+                    station_map[st] = {
+                        "station_id": st,
+                        "outcome": matching_st.outcome,
+                        "cycle_time_ms": matching_st.cycle_time_ms,
+                        "image_url": primary_img,
+                        "defects_count": len(matching_st.defects),
+                        "camera_count": len(cam_paths) or 1,
+                    }
+                else:
+                    def_img = (
+                        f"/data/{st.lower()}/replay/01_pass_clean.png" if st == "STATION_1" else (
+                            f"/data/{st.lower()}/replay/01_pass_normal.png" if st == "STATION_2" else (
+                                f"/data/{st.lower()}/replay/01_pass_scene.png" if st == "STATION_3" else
+                                f"/data/{st.lower()}/replay/01_pass_nominal.png"
+                            )
+                        )
+                    )
+                    station_map[st] = {
+                        "station_id": st,
+                        "outcome": "PASS",
+                        "cycle_time_ms": 0.0,
+                        "image_url": def_img,
+                        "defects_count": 0,
+                        "camera_count": 1,
+                    }
+
+            primary_snapshot_url = station_map["STATION_1"]["image_url"]
+            for st_key in ("STATION_1", "STATION_2", "STATION_3", "STATION_4"):
+                if station_map[st_key]["outcome"] in ("FAIL", "REVIEW"):
+                    primary_snapshot_url = station_map[st_key]["image_url"]
+                    break
+
+            golden_refs: list[dict[str, Any]] = []
+            variant_folder = repo_root / "configs" / "variants" / variant_id
+            if not variant_folder.is_dir():
+                variant_folder = repo_root / "configs" / "variants" / "FRONT_LH_BLACK"
+
+            golden_dir = variant_folder / "golden_images"
+            if golden_dir.is_dir():
+                for p in sorted(golden_dir.iterdir()):
+                    if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg"):
+                        name_clean = p.stem.replace("_", " ").title()
+                        rel_url = f"/configs/variants/{variant_folder.name}/golden_images/{p.name}"
+                        golden_refs.append({
+                            "name": name_clean,
+                            "filename": p.name,
+                            "image_url": rel_url,
+                        })
+
+            variant_cfg_file = variant_folder / "config.yaml"
+            nominals: dict[str, Any] = {}
+            if variant_cfg_file.is_file():
+                import yaml
+                try:
+                    with open(variant_cfg_file, encoding="utf-8") as vf:
+                        v_parsed = yaml.safe_load(vf)
+                        nominals = v_parsed.get("nominals", {})
+                except Exception as y_err:
+                    logger.warning(f"Failed to parse variant yaml: {y_err}")
+
+            return {
+                "seat_id": active_seat_id,
+                "variant_id": variant_id,
+                "outcome": overall_outcome,
+                "timestamp": seat_rec.created_at.isoformat() if seat_rec and seat_rec.created_at else datetime.now(UTC).isoformat(),
+                "latest_inspection": {
+                    "primary_image_url": primary_snapshot_url,
+                    "stations": station_map,
+                },
+                "golden_reference": {
+                    "variant_id": variant_id,
+                    "images": golden_refs,
+                    "nominals": nominals,
+                },
+            }
 
     @app.get("/api/v1/dashboard/shadow-mode")
     def get_shadow_mode_stats(

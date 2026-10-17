@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 
 from camerainspection.core.config import (
@@ -290,6 +291,13 @@ class BaseStation(ABC):
             primary_raw_path: str | None = None
             primary_annotated_path: str | None = None
 
+            safe_seat_id = "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in seat_id)
+            storage_captures_dir = Path("storage/captures") / safe_seat_id
+            try:
+                storage_captures_dir.mkdir(parents=True, exist_ok=True)
+            except Exception as dir_err:
+                logger.warning(f"Failed to create capture directory {storage_captures_dir}: {dir_err}")
+
             # 6. Execute capture sequence
             for step_cfg, cam_cfg in sequence_steps:
                 cam_name = cam_cfg.name or "main"
@@ -427,6 +435,29 @@ class BaseStation(ABC):
                     if not d.view:
                         d.view = cam_view
 
+                # Persist raw & annotated frames to disk
+                safe_cam_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in cam_name)
+                raw_rel_path = f"storage/captures/{safe_seat_id}/{self.station_id}_{safe_cam_name}_raw.png"
+                try:
+                    cv2.imwrite(raw_rel_path, image)
+                except Exception as write_err:
+                    logger.warning(f"Failed to write raw capture to {raw_rel_path}: {write_err}")
+
+                annotated_rel_path = raw_rel_path
+                if cam_annotated is not None:
+                    ann_rel_path = f"storage/captures/{safe_seat_id}/{self.station_id}_{safe_cam_name}_annotated.png"
+                    try:
+                        cv2.imwrite(ann_rel_path, cam_annotated)
+                        annotated_rel_path = ann_rel_path
+                    except Exception as write_err:
+                        logger.warning(f"Failed to write annotated capture to {ann_rel_path}: {write_err}")
+
+                camera_image_paths[cam_name] = annotated_rel_path
+                if primary_raw_path is None:
+                    primary_raw_path = raw_rel_path
+                if primary_annotated_path is None and annotated_rel_path:
+                    primary_annotated_path = annotated_rel_path
+
                 # Determine camera outcome
                 cam_outcomes = [d.outcome for d in cam_defects] if cam_defects else [Outcome.PASS]
                 cam_outcome = Outcome.aggregate(cam_outcomes)
@@ -438,6 +469,8 @@ class BaseStation(ABC):
                     defects=cam_defects,
                     measurements=cam_measurements,
                     pixel_size_mm=cam_cfg.pixel_size_mm,
+                    raw_image_path=raw_rel_path,
+                    annotated_image_path=annotated_rel_path,
                 )
                 camera_results[cam_name] = cam_res
                 all_defects.extend(cam_defects)

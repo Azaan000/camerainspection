@@ -110,3 +110,75 @@ def test_api_review_queue_workflow(api_client: TestClient, in_memory_db: Databas
     assert audit_res.status_code == 200
     logs = audit_res.json()
     assert len(logs) >= 1
+
+
+def test_static_mounts_storage_data_configs(api_client: TestClient) -> None:
+    """Verify /storage, /data, and /configs are mounted and servable."""
+    res_data = api_client.get("/data/station_1/replay/01_pass_clean.png")
+    assert res_data.status_code == 200
+    assert res_data.headers["content-type"].startswith("image/")
+
+    res_configs = api_client.get("/configs/variants/FRONT_LH_BLACK/golden_images/side_shield.png")
+    assert res_configs.status_code == 200
+    assert res_configs.headers["content-type"].startswith("image/")
+
+    res_404 = api_client.get("/storage/captures/NONEXISTENT/image.png")
+    assert res_404.status_code == 404
+
+
+def test_defect_gallery_joined_station_result(api_client: TestClient) -> None:
+    """Verify defect-gallery returns seat_id, station_id, image_url, bbox, and delta."""
+    payload = {
+        "seat_id": "SEAT-GALLERY-TEST",
+        "station_id": "STATION_2",
+        "variant_id": "FRONT_LH_BLACK",
+        "outcome": "FAIL",
+        "cycle_time_ms": 140.0,
+        "defects": [
+            {
+                "defect_type": "stitch.broken_thread",
+                "outcome": "FAIL",
+                "measured_value": 0.0,
+                "nominal_value": 6.0,
+                "unit": "spi",
+                "confidence": 0.94,
+                "bounding_box": {"x": 120, "y": 80, "w": 40, "h": 30},
+                "camera_name": "seam_arm",
+                "view": "seam_arm",
+                "description": "Broken thread detected along seam boundary",
+            }
+        ],
+        "camera_image_paths": {"seam_arm": "data/station_2/replay/03_fail_broken_thread.png"},
+    }
+    submit_res = api_client.post("/api/v1/stations/result", json=payload, headers=_AUTH_HEADERS)
+    assert submit_res.status_code == 201
+
+    # Query gallery
+    gallery_res = api_client.get("/api/v1/dashboard/defect-gallery", headers=_AUTH_HEADERS)
+    assert gallery_res.status_code == 200
+    items = gallery_res.json()
+    assert len(items) >= 1
+    defect_item = next(it for it in items if it["seat_id"] == "SEAT-GALLERY-TEST")
+    assert defect_item["station_id"] == "STATION_2"
+    assert defect_item["bbox"] == [120, 80, 40, 30]
+    assert defect_item["delta"] == -6.0
+    assert defect_item["image_url"].endswith(".png")
+
+    # Test station filter query param
+    st2_res = api_client.get("/api/v1/dashboard/defect-gallery?station_id=STATION_2", headers=_AUTH_HEADERS)
+    assert st2_res.status_code == 200
+    assert all(it["station_id"] == "STATION_2" for it in st2_res.json())
+
+
+def test_live_companion_endpoint(api_client: TestClient) -> None:
+    """Verify live-companion returns latest snapshots, stations map, and golden references."""
+    res = api_client.get("/api/v1/dashboard/live-companion", headers=_AUTH_HEADERS)
+    assert res.status_code == 200
+    data = res.json()
+    assert "seat_id" in data
+    assert "variant_id" in data
+    assert "latest_inspection" in data
+    assert "stations" in data["latest_inspection"]
+    assert "golden_reference" in data
+    assert "images" in data["golden_reference"]
+
