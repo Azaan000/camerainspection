@@ -145,3 +145,41 @@ The single-page web UI (`ui/index.html`) provides dark-mode monitoring and rewor
 
 -	echo $env:INSPECTION_API_KEY should print the key.
 -	python -m camerainspection.main
+
+1. Running the Tests
+
+# Run the complete test suite (all 169 unit & integration tests)
+pytest tests/ -v
+# Run API service unit tests specifically
+pytest tests/unit/test_api_service.py -v
+
+2. Starting the Web Dashboard & FastAPI Backend
+
+# Start the FastAPI web service on http://127.0.0.1:8000
+python -m camerainspection.api.app
+# OR using uvicorn directly
+uvicorn camerainspection.api.app:app --host 127.0.0.1 --port 8000 --reload
+(Once started, open http://127.0.0.1:8000 in your browser to view the live camera companion workspace and interactive defect gallery lightbox).
+
+3. Running Line Simulations & Acceptance Tests
+
+# Run multi-station simulation loop (cycles through seats, PLC triggers, and image saves)
+python -m camerainspection.run_simulation --cycles 10
+# Execute automated acceptance test suite (100 clean seats + 6 seeded defect seats)
+python tools/acceptance_test.py --clean-seats 100
+
+4. Camera & Live Stream Testing Tools
+
+# Test interactive PatchCore anomaly detection with local webcam
+python tools/test_live_camera.py --camera 0
+# Test with phone IP camera app (e.g. Android IP Webcam)
+python tools/test_live_camera.py --url "http://192.168.1.50:8080/video"
+# Test interactively on a static image
+python tools/test_live_camera.py --image data/leather/test/scratch/000.png
+
+5. Calibration & Shift Reports
+
+# Run camera calibration with checkerboard images
+python tools/calibrate_camera.py --camera-name main --images-dir ./data/calibration_images/ --square-size-mm 25.0
+# Generate end-of-shift quality report (Shadow Mode)
+python tools/shift_report.py --db-url "sqlite:///./data/inspection.db" --alert-threshold-pct 3.0
