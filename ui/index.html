@@ -100,6 +100,30 @@
       border-radius: 12px;
       padding: 18px 20px;
     }
+    .station-frame {
+      background: linear-gradient(135deg, #111d35 0%, #0d1526 100%);
+      border: 1px solid #263348;
+      border-left: 4px solid #38bdf8;
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+      transition: all 0.2s;
+    }
+    .station-frame:hover {
+      border-color: #38bdf8;
+      box-shadow: 0 6px 24px rgba(56,189,248,0.15);
+    }
+    .variant-badge {
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #38bdf8;
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.75rem;
+      display: inline-block;
+      letter-spacing: 0.03em;
+    }
     .stat-value {
       font-size: 1.85rem;
       font-weight: 800;
@@ -917,7 +941,7 @@ function renderCompanionView(data) {
     seatIdSpan.onclick = () => openSeatModal(data.seat_id);
   }
   const varSpan = document.getElementById('comp-variant-id');
-  if (varSpan) varSpan.textContent = data.variant_id;
+  if (varSpan) varSpan.innerHTML = `<span class="variant-badge">${formatVariantName(data.variant_id)}</span>`;
   const outBadge = document.getElementById('comp-outcome-badge');
   if (outBadge) outBadge.innerHTML = outcomeBadge(data.outcome);
 
@@ -942,7 +966,7 @@ function renderCompanionView(data) {
 
   // 2. Render Golden Reference Tab
   const goldenVarName = document.getElementById('golden-variant-name');
-  if (goldenVarName) goldenVarName.textContent = data.golden_reference?.variant_id || 'FRONT_LH_BLACK';
+  if (goldenVarName) goldenVarName.innerHTML = `<span class="variant-badge">${formatVariantName(data.golden_reference?.variant_id || 'FRONT_LH_BLACK')}</span>`;
   const goldenGrid = document.getElementById('golden-images-grid');
   const gImages = data.golden_reference?.images || [];
   if (goldenGrid) {
@@ -984,17 +1008,17 @@ function renderCompanionView(data) {
       const st = stMap[k] || { outcome: 'PASS', cycle_time_ms: 0, image_url: '' };
       const imgUrl = st.image_url ? (cfg.apiUrl + '/' + st.image_url.replace(/^\//, '')) : '';
       return `
-      <div class="p-2 rounded-lg bg-slate-800/50 border border-slate-700/60 flex flex-col justify-between cursor-pointer hover:border-slate-500 transition" onclick="openSeatModal('${escapeHtml(data.seat_id)}')">
-        <div class="flex justify-between items-center mb-1">
-          <span class="font-bold text-[11px] text-white">${k.replace('_', ' ')}</span>
+      <div class="station-frame cursor-pointer flex flex-col justify-between" onclick="openSeatModal('${escapeHtml(data.seat_id)}')">
+        <div class="flex justify-between items-center mb-2">
+          <span class="font-bold text-xs text-sky-300">${formatStationName(k)}</span>
           ${outcomeBadge(st.outcome)}
         </div>
-        <div class="h-20 rounded bg-black/60 overflow-hidden flex items-center justify-center my-1">
+        <div class="h-24 rounded-lg bg-black/70 border border-slate-800 overflow-hidden flex items-center justify-center my-1.5">
           <img src="${escapeHtml(imgUrl)}" class="max-h-full max-w-full object-contain" />
         </div>
-        <div class="text-[10px] text-slate-400 flex justify-between">
-          <span>${st.cycle_time_ms ? st.cycle_time_ms.toFixed(0) : '0'} ms</span>
-          <span>${st.defects_count ? `<strong class="text-rose-400">${st.defects_count} defect(s)</strong>` : '<span class="text-emerald-400">OK</span>'}</span>
+        <div class="text-xs text-slate-400 flex justify-between pt-1">
+          <span>Cycle: ${st.cycle_time_ms ? st.cycle_time_ms.toFixed(0) : '0'} ms</span>
+          <span>${st.defects_count ? `<strong class="text-rose-400">${st.defects_count} defect(s)</strong>` : '<span class="text-emerald-400">Clear</span>'}</span>
         </div>
       </div>`;
     }).join('');
@@ -1097,6 +1121,32 @@ const cfg = {
   refreshInterval: parseInt(sessionStorage.getItem('sg_refresh_s') || '5', 10) * 1000,
   cameraUrl: sessionStorage.getItem('sg_camera_url') || '',
 };
+
+// Human-friendly formatting helpers
+function formatStationName(stId) {
+  if (!stId) return 'Station';
+  const clean = String(stId).toUpperCase().trim();
+  const mapping = {
+    'STATION_1': 'Station 1 — Surface & Leather',
+    'STATION_2': 'Station 2 — Stitch Inspection',
+    'STATION_3': 'Station 3 — Plastic Shield & Gap',
+    'STATION_4': 'Station 4 — Mechanism & Assembly'
+  };
+  if (mapping[clean]) return mapping[clean];
+  return clean.replace(/_/g, ' ');
+}
+
+function formatVariantName(vId) {
+  if (!vId) return 'Standard Seat';
+  const clean = String(vId).toUpperCase().trim();
+  const mapping = {
+    'FRONT_RH_BLACK': 'Front Right Black Seat',
+    'FRONT_LH_GREY': 'Front Left Grey Seat',
+    'REAR_BENCH_BLACK': 'Rear Bench Black Seat'
+  };
+  if (mapping[clean]) return mapping[clean];
+  return clean.split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+}
 
 // HTML sanitization helper to eliminate Stored XSS
 function escapeHtml(val) {
@@ -1345,7 +1395,7 @@ async function fetchLive() {
         <div class="text-xl">${icon}</div>
         <div class="mt-1 text-center px-1" style="font-size:0.6rem;word-break:break-all;">${safeSeatId}</div>
         <div style="font-size:0.6rem;" class="opacity-70">${escapeHtml(s.outcome) || '?'}</div>
-        <div class="tooltip-box">${safeSeatId}<br>${safeVariant}<br>${fmtTs(s.timestamp)}</div>
+        <div class="tooltip-box">${safeSeatId}<br>${formatVariantName(s.variant_id)}<br>${fmtTs(s.timestamp)}</div>
       </div>`;
     }).join('');
 
@@ -1356,7 +1406,7 @@ async function fetchLive() {
       return `
       <tr class="audit-row border-b border-slate-800 hover:bg-slate-800/30 cursor-pointer" data-seat-id="${safeSeatId}">
         <td class="px-4 py-3 font-mono text-sky-400">${safeSeatId}</td>
-        <td class="px-4 py-3 text-slate-400">${escapeHtml(s.variant_id) || '—'}</td>
+        <td class="px-4 py-3"><span class="variant-badge">${formatVariantName(s.variant_id)}</span></td>
         <td class="px-4 py-3">${outcomeBadge(s.outcome)}</td>
         <td class="px-4 py-3 text-slate-400">—</td>
         <td class="px-4 py-3">${s.label_printer ? '<span class="text-emerald-400">✓ ON</span>' : '<span class="text-slate-500">— OFF</span>'}</td>
@@ -1579,10 +1629,10 @@ async function fetchHealth() {
           const safeStatus = escapeHtml(st.status || 'OFFLINE');
           const safeVer = escapeHtml(st.model_version || '—');
           return `
-          <div class="flex items-center justify-between p-3 rounded-lg bg-slate-800/40 border border-slate-700/50">
+          <div class="station-frame flex items-center justify-between">
             <div>
-              <div class="font-semibold text-sm text-white">${safeId}</div>
-              <div class="text-xs text-slate-500">Model: ${safeVer}</div>
+              <div class="font-bold text-sm text-sky-300">${formatStationName(id)}</div>
+              <div class="text-xs text-slate-400">Model: ${safeVer}</div>
             </div>
             <span class="badge-pass px-2 py-0.5 rounded text-xs font-bold">${safeStatus}</span>
           </div>`;
@@ -1776,7 +1826,7 @@ function renderReworkBench(data, auditLogs) {
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div class="flex items-center gap-4">
           <div class="text-xl font-bold font-mono text-sky-400">${safeSeatId}</div>
-          <div class="text-sm text-slate-400">Variant: <span class="text-white font-semibold">${safeVariant}</span></div>
+          <div class="text-sm text-slate-400">Variant: <span class="variant-badge">${formatVariantName(data.variant_id)}</span></div>
           ${outcomeBadge(data.outcome)}
         </div>
         <div class="flex items-center gap-3">
@@ -1802,10 +1852,10 @@ function renderReworkBench(data, auditLogs) {
           const camPaths = sr.camera_image_paths || {};
           const camKeys = Object.keys(camResults);
           return `
-          <div class="p-4 rounded-xl bg-slate-800/40 border border-slate-700/60 flex flex-col justify-between">
+          <div class="station-frame flex flex-col justify-between">
             <div>
               <div class="flex justify-between items-center mb-2">
-                <span class="font-bold text-sm text-white">${safeSt}</span>
+                <span class="font-bold text-sm text-sky-300">${formatStationName(sr.station_id)}</span>
                 ${outcomeBadge(sr.outcome)}
               </div>
               <div class="text-xs text-slate-500 mb-3">Cycle time: ${sr.cycle_time_ms ? sr.cycle_time_ms.toFixed(1) : 0} ms</div>
@@ -2036,7 +2086,7 @@ async function openSeatModal(seatId) {
     document.getElementById('modal-body').innerHTML = `
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div class="stat-card"><div class="stat-label">Overall Outcome</div><div class="mt-1">${outcomeBadge(data.outcome)}</div></div>
-        <div class="stat-card"><div class="stat-label">Variant</div><div class="text-white text-sm font-semibold mt-1 truncate">${escapeHtml(data.variant_id) || '—'}</div></div>
+        <div class="stat-card"><div class="stat-label">Variant</div><div class="mt-1"><span class="variant-badge">${formatVariantName(data.variant_id)}</span></div></div>
         <div class="stat-card"><div class="stat-label">Label Printer</div><div class="mt-1">${data.label_printer_enabled ? '<span class="text-emerald-400 font-bold">✓ Enabled</span>' : '<span class="text-slate-500">— Disabled</span>'}</div></div>
         <div class="stat-card"><div class="stat-label">Mechanism Lock</div><div class="mt-1">${data.lock_sensor_confirmed ? '<span class="text-emerald-400 font-bold">✓ Confirmed</span>' : '<span class="text-slate-500">— Unlocked</span>'}</div></div>
       </div>
@@ -2053,10 +2103,10 @@ async function openSeatModal(seatId) {
             const imgUrl = firstImgPath ? (cfg.apiUrl + '/' + firstImgPath.replace(/^\//, '')) : null;
 
             return `
-            <div class="p-4 rounded-xl border border-slate-700/60 bg-slate-900/50 flex flex-col justify-between">
+            <div class="station-frame flex flex-col justify-between">
               <div>
                 <div class="flex justify-between items-center mb-2">
-                  <span class="font-bold text-sm text-white">${safeStId}</span>
+                  <span class="font-bold text-sm text-sky-300">${formatStationName(s.station_id)}</span>
                   ${outcomeBadge(s.outcome)}
                 </div>
                 <div class="text-xs text-slate-400 mb-3 flex justify-between">
