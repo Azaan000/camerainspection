@@ -96,6 +96,8 @@ class StationModelConfig(BaseModel):
     threshold: float = 0.5
     pass_below: float = 0.40
     fail_above: float = 0.60
+    # Class names for YOLO detection models — must match training order
+    class_names: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_thresholds(self) -> StationModelConfig:

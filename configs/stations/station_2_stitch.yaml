@@ -118,11 +118,14 @@ regions_of_interest:
     h: 400
 
 model:
-  backend: "mock"
+  backend: "onnx"
   model_type: "yolo_stitch_defect"
   weights_path: "models/station_2/yolo_defect.onnx"
-  version: "v0.1.0"
+  version: "v1.0.0"
   threshold: 0.50
+  class_names:
+    - "broken_thread"
+    - "skip_stitch"
 
 trigger:
   timeout_s: 5.0

@@ -174,18 +174,39 @@ def build_line(
         # Load inference engine if station model backend is "onnx"
         inference_engine = None
         if st_cfg.model.backend == "onnx":
+            model_type = st_cfg.model.model_type.lower()
             try:
-                from camerainspection.inference.onnx_patchcore import OnnxPatchCoreEngine  # noqa: PLC0415
+                if "patchcore" in model_type or "anomalib" in model_type:
+                    from camerainspection.inference.onnx_patchcore import OnnxPatchCoreEngine  # noqa: PLC0415
 
-                inference_engine = OnnxPatchCoreEngine(
-                    pass_below=st_cfg.model.pass_below,
-                    fail_above=st_cfg.model.fail_above,
-                )
-                inference_engine.load(st_cfg.model.weights_path)
-                logger.info(
-                    "Loaded ONNX PatchCore engine for %s: %s (pass_below=%.2f fail_above=%.2f)",
-                    st_id, st_cfg.model.weights_path, st_cfg.model.pass_below, st_cfg.model.fail_above,
-                )
+                    inference_engine = OnnxPatchCoreEngine(
+                        pass_below=st_cfg.model.pass_below,
+                        fail_above=st_cfg.model.fail_above,
+                    )
+                    inference_engine.load(st_cfg.model.weights_path)
+                    logger.info(
+                        "Loaded ONNX PatchCore engine for %s: %s (pass_below=%.2f fail_above=%.2f)",
+                        st_id, st_cfg.model.weights_path, st_cfg.model.pass_below, st_cfg.model.fail_above,
+                    )
+                elif "yolo" in model_type or "detection" in model_type:
+                    from camerainspection.inference.onnx_yolo import OnnxYoloEngine  # noqa: PLC0415
+
+                    # Use class_names from config, fallback to defaults
+                    class_names = st_cfg.model.class_names or ["broken_thread", "skip_stitch"]
+                    inference_engine = OnnxYoloEngine(
+                        class_names=class_names,
+                        confidence_threshold=st_cfg.model.threshold,
+                    )
+                    inference_engine.load(st_cfg.model.weights_path)
+                    logger.info(
+                        "Loaded ONNX YOLO engine for %s: %s (classes=%s, threshold=%.2f)",
+                        st_id, st_cfg.model.weights_path, class_names, st_cfg.model.threshold,
+                    )
+                else:
+                    logger.warning(
+                        "Unknown model_type '%s' for %s — using mock engine",
+                        model_type, st_id,
+                    )
             except Exception as exc:
                 logger.error(
                     "Failed to load ONNX engine for %s — station will fail-safe: %s", st_id, exc

@@ -1119,4 +1119,147 @@ def create_app(
             },
         }
 
+    @app.post("/api/v1/live-inspect-frame")
+    async def live_inspect_frame(
+        request: Request,
+        threshold: float = Query(0.55, ge=0.0, le=1.0),
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Accept a JPEG frame as raw bytes, run Station 1 surface analysis, return defects."""
+        import cv2
+        import numpy as np
+
+        from camerainspection.vision.station1 import SurfaceAnalyzer
+
+        body = await request.body()
+        if not body:
+            raise HTTPException(status_code=400, detail="No image data received.")
+
+        arr = np.frombuffer(body, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise HTTPException(status_code=422, detail="Could not decode image.")
+
+        analyzer = SurfaceAnalyzer(anomaly_threshold=threshold)
+        regions = analyzer.analyze(frame)
+
+        min_score = threshold * 0.5
+        defects = [
+            {
+                "defect_type": r.defect_type.value,
+                "anomaly_score": round(r.anomaly_score, 3),
+                "bbox": list(r.bbox_px),
+                "area_px": round(r.area_px),
+                "aspect_ratio": round(r.aspect_ratio, 2),
+            }
+            for r in regions
+            if r.anomaly_score >= min_score
+        ]
+
+        high_confidence = [d for d in defects if d["anomaly_score"] >= threshold]
+        outcome = "FAIL" if high_confidence else ("REVIEW" if defects else "PASS")
+
+        return {
+            "outcome": outcome,
+            "defect_count": len(defects),
+            "high_confidence_count": len(high_confidence),
+            "frame_size": [frame.shape[1], frame.shape[0]],
+            "defects": defects,
+            "mode": "onnx" if analyzer._session is not None else "heuristic",
+        }
+
+    @app.get("/api/v1/camera/snapshot")
+    def camera_snapshot(
+        device_index: int = Query(0),
+        auth_user: str = Depends(verify_api_key),
+    ) -> Response:
+        """Capture a JPEG frame from the camera device and return it as an image."""
+        import cv2
+
+        frame = None
+        for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
+            try:
+                cap = cv2.VideoCapture(device_index, backend)
+                if cap.isOpened():
+                    # Read a few frames to let camera warm up
+                    for _ in range(3):
+                        cap.read()
+                    ret, frame = cap.read()
+                    cap.release()
+                    if ret and frame is not None:
+                        break
+                    frame = None
+            except Exception:
+                frame = None
+
+        if frame is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not capture from camera device {device_index}. Make sure DroidCam PC client is connected.",
+            )
+
+        _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        return Response(content=jpeg.tobytes(), media_type="image/jpeg")
+
+    @app.get("/api/v1/live-inspect-proxy")
+    def live_inspect_proxy(
+        camera_url: str = Query("", description="Unused — kept for compatibility"),
+        device_index: int = Query(0, description="Camera device index"),
+        threshold: float = Query(0.55, ge=0.0, le=1.0),
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Capture a frame from camera device, run Station 1 surface analysis, return defects."""
+        import cv2
+
+        from camerainspection.vision.station1 import SurfaceAnalyzer
+
+        frame = None
+        for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
+            try:
+                cap = cv2.VideoCapture(device_index, backend)
+                if cap.isOpened():
+                    for _ in range(3):
+                        cap.read()
+                    ret, frame = cap.read()
+                    cap.release()
+                    if ret and frame is not None:
+                        break
+                    frame = None
+            except Exception:
+                frame = None
+
+        if frame is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not capture from camera device {device_index}. Connect DroidCam PC client first.",
+            )
+
+        analyzer = SurfaceAnalyzer(anomaly_threshold=threshold)
+        regions = analyzer.analyze(frame)
+
+        min_score = threshold * 0.5
+        defects = [
+            {
+                "defect_type": r.defect_type.value,
+                "anomaly_score": round(r.anomaly_score, 3),
+                "bbox": list(r.bbox_px),
+                "area_px": round(r.area_px),
+                "aspect_ratio": round(r.aspect_ratio, 2),
+            }
+            for r in regions
+            if r.anomaly_score >= min_score
+        ]
+
+        high_confidence = [d for d in defects if d["anomaly_score"] >= threshold]
+        outcome = "FAIL" if high_confidence else ("REVIEW" if defects else "PASS")
+
+        return {
+            "outcome": outcome,
+            "defect_count": len(defects),
+            "high_confidence_count": len(high_confidence),
+            "frame_size": [frame.shape[1], frame.shape[0]],
+            "defects": defects,
+            "mode": "onnx" if analyzer._session is not None else "heuristic",
+        }
+
     return app

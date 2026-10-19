@@ -1,25 +1,35 @@
 """Surface anomaly analysis for leather / rexene panel inspection (Station 1).
 
-Algorithm (development / mock mode — no Anomalib dependency):
-  1. Large-kernel Gaussian blur on raw gray → background luminance estimate.
-  2. Signed difference → bright/dark anomaly map (sign preserved for classification).
-  3. CLAHE-enhanced abs-diff for threshold — captures low-contrast defects.
-  4. Absolute-value threshold + morphological clean-up → candidate mask.
-  5. Connected-component analysis + geometric classifier.
+Two modes (selected automatically at construction time):
 
-Priority order in classifier:
-  pinhole (tiny dark) → cut (dark + elongated) → scratch (bright + elongated)
-  → shade_band (large area, any sign) → coating_streak (bright + long)
-  → stain (dark blob) → unknown
+  ONNX mode (preferred):
+    Loads models/station_1/model.onnx — an Anomalib PatchCore export.
+    Input : float32 [2, 3, H, W]  (image duplicated along batch dim, normalised)
+    Outputs: pred_score [2], pred_label [2], anomaly_map [2,1,256,256],
+             pred_mask [2,1,256,256]
+    The anomaly_map is upscaled to the ROI size, thresholded, and connected
+    components are labelled with defect types via the same geometric classifier
+    as the heuristic path.
+
+  Heuristic mode (fallback — no model file):
+    Gaussian background-subtraction + morphological clean-up, same as before.
 """
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# Default model path relative to project root (two levels up from this file's package)
+_DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[4] / "models" / "station_1" / "model.onnx"
 
 
 class LeatherDefectType(StrEnum):
@@ -43,25 +53,129 @@ class LeatherDefectRegion:
 
 
 class SurfaceAnalyzer:
-    """Detect and classify surface defects on dark leather/rexene panels."""
+    """Detect and classify surface defects on dark leather/rexene panels.
+
+    Pass ``model_path`` to use the trained ONNX model (Anomalib PatchCore).
+    Omit it (or point to a missing file) to fall back to the heuristic pipeline.
+    """
 
     def __init__(
         self,
+        model_path: str | Path | None = _DEFAULT_MODEL_PATH,
+        anomaly_threshold: float = 0.5,   # pred_score threshold for PASS/FAIL
+        map_threshold: float = 0.4,        # normalised anomaly_map threshold for mask
+        # heuristic fallback params
         blur_ksize: int = 51,
         diff_threshold: int = 14,
         min_area_px: int = 4,
         max_area_px: int = 200_000,
     ) -> None:
-        self.blur_ksize = blur_ksize | 1  # ensure odd
+        self.anomaly_threshold = anomaly_threshold
+        self.map_threshold = map_threshold
+        self.blur_ksize = blur_ksize | 1
         self.diff_threshold = diff_threshold
         self.min_area_px = min_area_px
         self.max_area_px = max_area_px
+
+        self._session = None
+        self._input_name: str = "input"
+
+        if model_path is not None:
+            mp = Path(model_path)
+            if mp.exists():
+                try:
+                    import onnxruntime as rt
+                    self._session = rt.InferenceSession(
+                        str(mp), providers=["CPUExecutionProvider"]
+                    )
+                    self._input_name = self._session.get_inputs()[0].name
+                    logger.info("SurfaceAnalyzer: loaded ONNX model from %s", mp)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("SurfaceAnalyzer: could not load ONNX model (%s) — using heuristic", exc)
+            else:
+                logger.warning("SurfaceAnalyzer: model not found at %s — using heuristic", mp)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def analyze(self, roi_bgr: np.ndarray) -> list[LeatherDefectRegion]:
         """Run detection-classification pipeline on a single ROI image."""
         if roi_bgr is None or roi_bgr.size == 0:
             return []
 
+        if self._session is not None:
+            return self._analyze_onnx(roi_bgr)
+        return self._analyze_heuristic(roi_bgr)
+
+    # ------------------------------------------------------------------
+    # ONNX inference path
+    # ------------------------------------------------------------------
+
+    def _analyze_onnx(self, roi_bgr: np.ndarray) -> list[LeatherDefectRegion]:
+        h, w = roi_bgr.shape[:2]
+
+        # Normalise to float32 [0,1], RGB, resize to 256×256
+        rgb = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB)
+        resized = cv2.resize(rgb, (256, 256)).astype(np.float32) / 255.0
+
+        # ImageNet normalisation (standard for Anomalib PatchCore)
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        normalised = (resized - mean) / std                          # [256,256,3]
+        chw = normalised.transpose(2, 0, 1)                          # [3,256,256]
+        batch = np.stack([chw, chw], axis=0)                         # [2,3,256,256]
+
+        outputs = self._session.run(None, {self._input_name: batch})
+        # outputs: pred_score[2], pred_label[2], anomaly_map[2,1,256,256], pred_mask[2,1,256,256]
+        pred_score  = float(outputs[0][0])
+        anomaly_map = outputs[2][0, 0]   # [256,256] float32
+        pred_mask   = outputs[3][0, 0]   # [256,256] bool
+
+        # Normalise anomaly map to [0,1]
+        a_min, a_max = anomaly_map.min(), anomaly_map.max()
+        if a_max > a_min:
+            norm_map = (anomaly_map - a_min) / (a_max - a_min)
+        else:
+            norm_map = np.zeros_like(anomaly_map)
+
+        # Build mask: use model's pred_mask OR threshold the normalised map
+        mask_256 = pred_mask.astype(np.uint8) * 255
+        if mask_256.sum() == 0:
+            mask_256 = (norm_map >= self.map_threshold).astype(np.uint8) * 255
+
+        # Upscale mask back to original ROI size
+        if (h, w) != (256, 256):
+            mask_roi = cv2.resize(mask_256, (w, h), interpolation=cv2.INTER_NEAREST)
+        else:
+            mask_roi = mask_256
+
+        # Morphological cleanup
+        k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask_roi = cv2.morphologyEx(mask_roi, cv2.MORPH_OPEN,  k3)
+        mask_roi = cv2.morphologyEx(mask_roi, cv2.MORPH_CLOSE, k5)
+
+        # For defect type classification we still need signed_diff from gray
+        gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        bg   = cv2.GaussianBlur(gray, (self.blur_ksize, self.blur_ksize), 0)
+        signed_diff = gray - bg
+
+        regions = self._extract_regions(mask_roi, signed_diff)
+
+        # Attach the global anomaly score to every region (overrides per-region score
+        # only when the model fired overall; keeps per-region score otherwise)
+        if pred_score >= self.anomaly_threshold:
+            for r in regions:
+                r.anomaly_score = max(r.anomaly_score, pred_score)
+
+        return regions
+
+    # ------------------------------------------------------------------
+    # Heuristic fallback path (original algorithm)
+    # ------------------------------------------------------------------
+
+    def _analyze_heuristic(self, roi_bgr: np.ndarray) -> list[LeatherDefectRegion]:
         gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY) if len(roi_bgr.shape) == 3 else roi_bgr.copy()
         h, w = gray.shape[:2]
 
