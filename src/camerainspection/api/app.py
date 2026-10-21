@@ -1353,4 +1353,280 @@ def create_app(
             )
         return result
 
+    # ------------------------------------------------------------------
+    # Camera detection and configuration endpoints
+    # ------------------------------------------------------------------
+
+    @app.get("/api/v1/cameras/detect")
+    def detect_cameras(
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Detect all connected cameras (webcam, Basler, Hikrobot) and return list."""
+        cameras: list[dict[str, Any]] = []
+
+        # 1. Detect webcams via OpenCV
+        import cv2
+        for i in range(10):  # Check first 10 indices
+            for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
+                try:
+                    cap = cv2.VideoCapture(i, backend)
+                    if cap.isOpened():
+                        # Read test frame to confirm camera works
+                        ret, frame = cap.read()
+                        cap.release()
+                        if ret and frame is not None:
+                            cameras.append({
+                                "type": "webcam",
+                                "device_index": i,
+                                "name": f"Webcam {i}",
+                                "resolution": [frame.shape[1], frame.shape[0]],
+                                "adapter": "webcam",
+                                "camera_id": str(i),
+                            })
+                            break
+                except Exception:
+                    pass
+
+        # 2. Detect Basler cameras (if pypylon installed)
+        try:
+            import pypylon.pylon as pylon  # noqa: PLC0415
+            tl_factory = pylon.TlFactory.GetInstance()
+            devices = tl_factory.EnumerateDevices()
+            for dev in devices:
+                cameras.append({
+                    "type": "basler",
+                    "serial_number": dev.GetSerialNumber(),
+                    "name": dev.GetFriendlyName() or f"Basler {dev.GetSerialNumber()}",
+                    "model": dev.GetModelName(),
+                    "adapter": "basler",
+                    "camera_id": dev.GetSerialNumber(),
+                })
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Basler detection failed: {e}")
+
+        # 3. Detect Hikrobot cameras (if MVS SDK installed)
+        try:
+            from MvImport.MvCameraControl_class import *  # noqa: F401, PLC0415
+            # MVS SDK enumeration would go here
+            # For now, placeholder
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Hikrobot detection failed: {e}")
+
+        return {
+            "cameras": cameras,
+            "count": len(cameras),
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+    @app.get("/api/v1/cameras/test")
+    def test_camera(
+        adapter: str = Query("webcam", description="Camera adapter: webcam, basler, hikrobot"),
+        camera_id: str = Query("0", description="Device index (webcam) or serial number (industrial)"),
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Test camera connection and return metadata + test capture status."""
+        import cv2
+
+        result = {
+            "adapter": adapter,
+            "camera_id": camera_id,
+            "connected": False,
+            "resolution": None,
+            "error": None,
+        }
+
+        try:
+            if adapter == "webcam":
+                idx = int(camera_id)
+                cap = cv2.VideoCapture(idx, cv2.CAP_MSMF)
+                if cap.isOpened():
+                    for _ in range(3):  # Warm-up frames
+                        cap.read()
+                    ret, frame = cap.read()
+                    cap.release()
+                    if ret and frame is not None:
+                        result["connected"] = True
+                        result["resolution"] = [frame.shape[1], frame.shape[0]]
+                    else:
+                        result["error"] = "Could not read frame from webcam"
+                else:
+                    result["error"] = f"Could not open webcam device {idx}"
+
+            elif adapter == "basler":
+                import pypylon.pylon as pylon  # noqa: PLC0415
+                tl_factory = pylon.TlFactory.GetInstance()
+                info = pylon.CDeviceInfo()
+                info.SetSerialNumber(camera_id)
+                camera = pylon.InstantCamera(tl_factory.CreateDevice(info))
+                camera.Open()
+                result["connected"] = True
+                result["resolution"] = [camera.Width.GetValue(), camera.Height.GetValue()]
+                camera.Close()
+
+            elif adapter == "hikrobot":
+                result["error"] = "Hikrobot test not yet implemented"
+
+            else:
+                result["error"] = f"Unknown adapter: {adapter}"
+
+        except ImportError as e:
+            result["error"] = f"SDK not installed for {adapter}: {e}"
+        except Exception as e:
+            result["error"] = str(e)
+
+        return result
+
+    @app.get("/api/v1/cameras/snapshot")
+    def camera_snapshot_direct(
+        adapter: str = Query("webcam"),
+        camera_id: str = Query("0"),
+        auth_user: str = Depends(verify_api_key),
+    ) -> Response:
+        """Capture a test frame from camera and return as JPEG image."""
+        import cv2
+
+        if adapter == "webcam":
+            idx = int(camera_id)
+            frame = None
+            for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
+                try:
+                    cap = cv2.VideoCapture(idx, backend)
+                    if cap.isOpened():
+                        for _ in range(3):
+                            cap.read()
+                        ret, frame = cap.read()
+                        cap.release()
+                        if ret and frame is not None:
+                            break
+                        frame = None
+                except Exception:
+                    frame = None
+
+            if frame is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Could not capture from {adapter} camera {camera_id}",
+                )
+
+            _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            return Response(content=jpeg.tobytes(), media_type="image/jpeg")
+
+        elif adapter in ("basler", "hikrobot"):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=f"Snapshot for {adapter} cameras requires hardware SDK",
+            )
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown adapter: {adapter}",
+        )
+
+    @app.get("/api/v1/cameras/config")
+    def get_camera_configs(
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Return current station camera configurations from YAML files."""
+        import yaml
+
+        configs_dir = Path("configs/stations")
+        station_configs: dict[str, Any] = {}
+
+        for cfg_file in configs_dir.glob("station_*.yaml"):
+            try:
+                with open(cfg_file, encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                    station_id = cfg_file.stem.replace("station_", "STATION_").upper()
+                    station_configs[station_id] = {
+                        "config_file": str(cfg_file),
+                        "cameras": data.get("cameras", []),
+                        "station_name": data.get("station", {}).get("name", station_id),
+                    }
+            except Exception as e:
+                logger.warning(f"Could not load {cfg_file}: {e}")
+
+        return {
+            "stations": station_configs,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+    class CameraConfigPayload(BaseModel):
+        station_id: str
+        camera_name: str
+        adapter: str
+        camera_id: str
+        exposure_us: int = 15000
+        gain_db: float = 0.0
+        resolution: list[int] = [1920, 1080]
+
+    @app.post("/api/v1/cameras/config")
+    def update_camera_config(
+        payload: CameraConfigPayload,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Update camera configuration in station YAML file (requires app restart to take effect)."""
+        import yaml
+
+        station_map = {
+            "STATION_1": "station_1_leather.yaml",
+            "STATION_2": "station_2_stitch.yaml",
+            "STATION_3": "station_3_plastic.yaml",
+            "STATION_4": "station_4_complete.yaml",
+        }
+
+        cfg_file = Path("configs/stations") / station_map.get(payload.station_id, f"{payload.station_id.lower()}.yaml")
+        if not cfg_file.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Station config file not found: {cfg_file}",
+            )
+
+        with open(cfg_file, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        # Find and update the camera config
+        updated = False
+        for cam in data.get("cameras", []):
+            if cam.get("name") == payload.camera_name:
+                cam["adapter"] = payload.adapter
+                cam["camera_id"] = payload.camera_id
+                cam["exposure_us"] = payload.exposure_us
+                cam["gain_db"] = payload.gain_db
+                cam["resolution"] = payload.resolution
+                cam["enabled"] = True
+                updated = True
+                break
+
+        if not updated:
+            # Add new camera
+            data.setdefault("cameras", []).append({
+                "name": payload.camera_name,
+                "adapter": payload.adapter,
+                "camera_id": payload.camera_id,
+                "exposure_us": payload.exposure_us,
+                "gain_db": payload.gain_db,
+                "resolution": payload.resolution,
+                "enabled": True,
+            })
+
+        with open(cfg_file, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+        db_manager.log_audit(
+            event_type="CAMERA_CONFIG_UPDATED",
+            details=f"{payload.station_id}/{payload.camera_name} -> {payload.adapter}:{payload.camera_id} by {auth_user}",
+        )
+
+        return {
+            "success": True,
+            "station_id": payload.station_id,
+            "camera_name": payload.camera_name,
+            "config_file": str(cfg_file),
+            "restart_required": True,
+        }
+
     return app

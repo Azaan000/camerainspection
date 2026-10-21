@@ -711,6 +711,66 @@
           <a id="link-redoc" href="#" class="block text-primary-400 hover:text-primary-300 font-medium transition">→ ReDoc Reference</a>
         </div>
       </div>
+
+      <!-- Camera Management -->
+      <div class="card p-8 space-y-6 lg:col-span-2">
+        <div class="section-title">Camera Management</div>
+
+        <!-- Detect Cameras -->
+        <div class="flex items-center justify-between">
+          <div>
+            <button class="btn-primary" onclick="detectCameras()">🔍 Detect Cameras</button>
+            <span id="camera-count" class="ml-3 text-sm text-zinc-400"></span>
+          </div>
+          <button class="btn-ghost" onclick="refreshCameraConfig()">↻ Reload Config</button>
+        </div>
+
+        <!-- Detected Cameras List -->
+        <div id="detected-cameras" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div class="text-zinc-500 text-sm">Click "Detect Cameras" to scan for connected cameras...</div>
+        </div>
+
+        <!-- Test Capture -->
+        <div class="border-t border-surface-700 pt-6">
+          <div class="section-title text-base mb-4">Test Camera Capture</div>
+          <div class="flex flex-wrap items-end gap-4">
+            <div class="flex-1 min-w-[140px]">
+              <label class="block text-xs text-zinc-400 mb-1">Adapter</label>
+              <select id="test-camera-adapter" class="w-full">
+                <option value="webcam">Webcam / USB</option>
+                <option value="basler">Basler (GigE/USB3)</option>
+                <option value="hikrobot">Hikrobot</option>
+              </select>
+            </div>
+            <div class="flex-1 min-w-[100px]">
+              <label class="block text-xs text-zinc-400 mb-1">Device ID</label>
+              <input type="text" id="test-camera-id" class="w-full" placeholder="0 or SN" value="0" />
+            </div>
+            <button class="btn-primary" onclick="testCameraCapture()">📷 Capture</button>
+          </div>
+          <!-- Test Result -->
+          <div id="camera-test-result" class="mt-4 hidden">
+            <div class="flex gap-4 items-start">
+              <div class="flex-1">
+                <img id="camera-test-image" class="max-h-64 rounded-lg border border-surface-700" />
+              </div>
+              <div class="text-sm space-y-2 min-w-[200px]">
+                <div class="flex justify-between"><span class="text-zinc-400">Status:</span><span id="test-status" class="text-success-400 font-medium">Connected</span></div>
+                <div class="flex justify-between"><span class="text-zinc-400">Resolution:</span><span id="test-resolution" class="text-white">—</span></div>
+                <div class="flex justify-between"><span class="text-zinc-400">Adapter:</span><span id="test-adapter" class="text-white">—</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Station Camera Config -->
+        <div class="border-t border-surface-700 pt-6">
+          <div class="section-title text-base mb-4">Station Camera Configuration</div>
+          <div id="station-camera-config" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="text-zinc-500 text-sm">Loading station configs...</div>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1602,6 +1662,134 @@ async function runImageCleanup(dryRun = false) {
     if (btn) { btn.disabled = false; btn.textContent = dryRun ? 'Preview Cleanup' : 'Run Cleanup Now'; }
   }
 }
+
+// ── Camera Management ───────────────────────────────────────────────────────
+
+let detectedCameras = [];
+
+async function detectCameras() {
+  const container = document.getElementById('detected-cameras');
+  const countEl = document.getElementById('camera-count');
+  container.innerHTML = '<div class="text-zinc-400 text-sm">Scanning for cameras...</div>';
+  try {
+    const res = await api('/api/v1/cameras/detect');
+    detectedCameras = res.cameras || [];
+    countEl.textContent = `${detectedCameras.length} camera(s) found`;
+    if (!detectedCameras.length) {
+      container.innerHTML = '<div class="text-warning-400 text-sm">No cameras detected. Make sure cameras are connected and drivers installed.</div>';
+      return;
+    }
+    container.innerHTML = detectedCameras.map(cam => {
+      const icon = cam.type === 'webcam' ? '📷' : (cam.type === 'basler' ? '🔵' : '🟢');
+      return `
+      <div class="card p-4 border border-surface-700 hover:border-primary-500/50 transition">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-lg">${icon}</span>
+          <span class="text-xs px-2 py-1 rounded bg-success-500/20 text-success-400 font-medium">${cam.type}</span>
+        </div>
+        <div class="font-bold text-white text-sm mb-1">${escapeHtml(cam.name)}</div>
+        <div class="text-xs text-zinc-400 space-y-1">
+          <div>Adapter: <span class="text-white">${escapeHtml(cam.adapter)}</span></div>
+          <div>ID: <span class="text-white font-mono">${escapeHtml(cam.camera_id)}</span></div>
+          ${cam.resolution ? `<div>Resolution: <span class="text-white">${cam.resolution[0]}×${cam.resolution[1]}</span></div>` : ''}
+          ${cam.model ? `<div>Model: <span class="text-white">${escapeHtml(cam.model)}</span></div>` : ''}
+        </div>
+        <button class="btn-ghost mt-3 w-full text-sm" onclick="quickTestCamera('${cam.adapter}', '${cam.camera_id}')">Quick Test</button>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    container.innerHTML = `<div class="text-danger-400 text-sm">Detection failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function testCameraCapture() {
+  const adapter = document.getElementById('test-camera-adapter').value;
+  const cameraId = document.getElementById('test-camera-id').value;
+  const resultEl = document.getElementById('camera-test-result');
+  resultEl.classList.remove('hidden');
+
+  const testImg = document.getElementById('camera-test-image');
+  testImg.src = '';
+  document.getElementById('test-status').textContent = 'Connecting...';
+  document.getElementById('test-status').className = 'text-warning-400 font-medium';
+
+  try {
+    // First test the connection
+    const testRes = await api(`/api/v1/cameras/test?adapter=${adapter}&camera_id=${encodeURIComponent(cameraId)}`);
+    if (!testRes.connected) {
+      throw new Error(testRes.error || 'Camera connection failed');
+    }
+
+    // Get snapshot
+    const snapshotRes = await api(`/api/v1/cameras/snapshot?adapter=${adapter}&camera_id=${encodeURIComponent(cameraId)}`);
+    // For image response, we need to fetch as blob
+    const blob = await fetch(cfg.apiUrl + `/api/v1/cameras/snapshot?adapter=${adapter}&camera_id=${encodeURIComponent(cameraId)}`).then(r => r.blob());
+    const url = URL.createObjectURL(blob);
+    testImg.src = url;
+
+    document.getElementById('test-status').textContent = 'Connected';
+    document.getElementById('test-status').className = 'text-success-400 font-medium';
+    document.getElementById('test-resolution').textContent = testRes.resolution ? `${testRes.resolution[0]}×${testRes.resolution[1]}` : '—';
+    document.getElementById('test-adapter').textContent = adapter;
+    showToast('Camera capture successful!', 'success');
+  } catch (e) {
+    document.getElementById('test-status').textContent = 'Failed';
+    document.getElementById('test-status').className = 'text-danger-400 font-medium';
+    testImg.alt = `Error: ${escapeHtml(e.message)}`;
+    showToast(`Camera test failed: ${e.message}`, 'error');
+  }
+}
+
+async function quickTestCamera(adapter, cameraId) {
+  document.getElementById('test-camera-adapter').value = adapter;
+  document.getElementById('test-camera-id').value = cameraId;
+  await testCameraCapture();
+}
+
+async function refreshCameraConfig() {
+  const container = document.getElementById('station-camera-config');
+  container.innerHTML = '<div class="text-zinc-400 text-sm">Loading configs...</div>';
+  try {
+    const res = await api('/api/v1/cameras/config');
+    const stations = res.stations || {};
+    if (Object.keys(stations).length === 0) {
+      container.innerHTML = '<div class="text-zinc-500 text-sm">No station configs found.</div>';
+      return;
+    }
+    container.innerHTML = Object.entries(stations).map(([stId, cfg]) => `
+      <div class="card p-4 border border-surface-700">
+        <div class="flex items-center justify-between mb-3">
+          <span class="font-bold text-primary-300">${formatStationName(stId)}</span>
+          <span class="text-xs text-zinc-500">${cfg.config_file}</span>
+        </div>
+        <div class="space-y-2">
+          ${(cfg.cameras || []).map(cam => `
+            <div class="flex items-center justify-between bg-surface-900 p-2 rounded-lg text-sm">
+              <div>
+                <span class="text-white font-medium">${escapeHtml(cam.name)}</span>
+                <span class="text-zinc-500 ml-2">${escapeHtml(cam.adapter)}:${escapeHtml(String(cam.camera_id))}</span>
+              </div>
+              <span class="text-xs ${cam.enabled ? 'text-success-400' : 'text-zinc-500'}">${cam.enabled ? '✓ Enabled' : '✕ Disabled'}</span>
+            </div>
+          `).join('')}
+          ${(!cfg.cameras || cfg.cameras.length === 0) ? '<div class="text-zinc-500 text-xs">No cameras configured</div>' : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    container.innerHTML = `<div class="text-danger-400 text-sm">Failed to load configs: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// Auto-load camera config when settings section is shown
+const originalSetSection = setSection;
+setSection = function(id) {
+  originalSetSection(id);
+  if (id === 'settings') {
+    refreshCameraConfig();
+    detectCameras();
+  }
+};
 
 // Init
 let refreshTimer;
