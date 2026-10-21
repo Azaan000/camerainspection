@@ -43,7 +43,9 @@ class Station1Service(BaseStation):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        analyzer_model_path = self.config.model.weights_path if getattr(self.config.model, "backend", "classical") == "onnx" else None
         self._analyzer = SurfaceAnalyzer(
+            model_path=analyzer_model_path,
             blur_ksize=51,
             diff_threshold=14,
             min_area_px=4,

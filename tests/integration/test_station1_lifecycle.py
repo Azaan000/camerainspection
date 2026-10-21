@@ -57,7 +57,6 @@ def test_station1_e2e_pass_clean_leather(
     station = _make_station(configs_dir, variants_dir, station1_replay_dir, in_memory_db, plc_sim)
     plc_sim.simulate_arrival("STATION_1", "SEAT-101_FRONT_LH_BLACK")
     res = station.run_cycle()
-
     assert res.outcome == Outcome.PASS
     assert res.seat_id == "SEAT-101"
     assert plc_sim.is_pallet_held("STATION_1") is False

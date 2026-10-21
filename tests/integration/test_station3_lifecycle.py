@@ -63,7 +63,6 @@ def test_station3_e2e_pass_cycle(
     # Test Frame 1: Normal PASS
     plc_sim.simulate_arrival("STATION_3", "SEAT-301_FRONT_LH_BLACK")
     res = station.run_cycle()
-
     assert res.outcome == Outcome.PASS
     assert res.seat_id == "SEAT-301"
     assert plc_sim.is_pallet_held("STATION_3") is False

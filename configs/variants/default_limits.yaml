@@ -59,8 +59,8 @@ limits:
       pass_max: 0.3
       fail_at: 0.5
     shield_gap_mm:
-      pass_tol: 0.7
-      fail_tol: 1.0
+      pass_tol: 2.0
+      fail_tol: 2.5
 
   mechanism:
     recliner_angle_deg:

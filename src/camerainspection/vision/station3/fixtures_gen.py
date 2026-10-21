@@ -49,7 +49,7 @@ def generate_station3_test_scene(
     missing_shield: bool = False,
     wrong_hand_shield: bool = False,
     discolored_shield: bool = False,
-    shield_gap_offset_px: int = 25,  # 25px * 0.1mm = 2.5mm (nominal)
+    shield_gap_offset_px: int = 14,  # 14px * 0.18mm = 2.52mm (nominal)
     add_flash_px: int = 0,
 ) -> np.ndarray:
     """Generate a realistic synthetic station 3 scene with configurable defects."""

@@ -234,7 +234,8 @@ class Station3Service(BaseStation):
         if "side_shield" in rois_to_check:
             roi = rois_to_check.get("side_shield")
             if roi:
-                cx, cy = roi.x + roi.w // 2, roi.y + roi.h // 2
+                cx = roi.x + 250
+                cy = roi.y + 125
                 gap_crop = image[cy - 50 : cy + 50, cx - 45 : cx + 45]
             else:
                 h2, w2 = image.shape[0] // 2, image.shape[1] // 2

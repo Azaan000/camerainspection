@@ -273,6 +273,7 @@
     <span class="nav-link" onclick="setSection('quality')">Quality</span>
     <span class="nav-link" onclick="setSection('gallery')">Gallery</span>
     <span class="nav-link" onclick="setSection('health')">Health</span>
+    <span class="nav-link" onclick="setSection('cameras')">Cameras</span>
     <span class="nav-link" onclick="setSection('review')">Review</span>
     
     <div class="relative" id="tools-dropdown-wrap">
@@ -665,6 +666,82 @@
       <div class="card p-6">
         <div class="section-title mb-6">Detailed Metrics</div>
         <div id="shadow-details" class="text-sm text-zinc-300 space-y-4"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CAMERAS & FEED INJECTION -->
+  <section id="section-cameras" class="section">
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <h2 class="font-bold text-white text-2xl">Live Cameras & Test Image Injection</h2>
+        <p class="text-sm text-zinc-400 mt-1">Monitor live camera views or feed custom test images into any station pipeline.</p>
+      </div>
+      <div class="flex gap-3">
+        <button class="btn-primary" onclick="loadAllCamerasStatus()">🔄 Refresh Feeds</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <!-- Live Feeds Grid (2 cols) -->
+      <div class="lg:col-span-2 space-y-6">
+        <div class="card p-6">
+          <div class="flex justify-between items-center mb-4">
+            <div class="section-title">All Line Cameras (Live Snapshots)</div>
+            <label class="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
+              <input type="checkbox" id="auto-refresh-cams" onchange="toggleCameraAutoRefresh(this.checked)" class="rounded bg-surface-800 border-surface-700 text-primary-600 focus:ring-0" />
+              Auto-refresh (2s)
+            </label>
+          </div>
+          <div id="live-camera-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="text-zinc-500 text-sm py-12 text-center col-span-full">Loading camera feeds...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Manual Image Injection Panel (1 col) -->
+      <div class="space-y-6">
+        <div class="card p-6 space-y-5">
+          <div class="section-title">Feed Test Image to Station</div>
+          <p class="text-xs text-zinc-400">Upload a sample image to test AI defect detection and rules without hardware.</p>
+
+          <div>
+            <label class="block text-xs font-medium text-zinc-400 mb-1.5">Target Station</label>
+            <select id="inject-station" class="w-full">
+              <option value="STATION_1">Station 1 (Leather / Anomaly)</option>
+              <option value="STATION_2">Station 2 (Stitching / YOLO)</option>
+              <option value="STATION_3">Station 3 (Plastic / Presence)</option>
+              <option value="STATION_4">Station 4 (Cosmetics / Recliner)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-zinc-400 mb-1.5">Camera View Name</label>
+            <input type="text" id="inject-camera-name" class="w-full" value="front_cushion" placeholder="e.g. left_bolster" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-zinc-400 mb-1.5">Seat Variant</label>
+            <select id="inject-variant" class="w-full">
+              <option value="FRONT_LH_BLACK">Front LH Black</option>
+              <option value="FRONT_RH_BLACK">Front RH Black</option>
+              <option value="REAR_BENCH_GREY">Rear Bench Grey</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-zinc-400 mb-1.5">Select Image File</label>
+            <input type="file" id="inject-file-input" accept="image/*" class="w-full text-xs text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-primary-600 file:text-white hover:file:bg-primary-500 cursor-pointer" />
+          </div>
+
+          <button class="btn-primary w-full py-2.5" onclick="submitInjectedImage()">🚀 Run Station Inspection</button>
+        </div>
+
+        <!-- Injection Result -->
+        <div id="injection-result-card" class="card p-6 hidden">
+          <div class="section-title mb-3">Inspection Result</div>
+          <div id="injection-result-content" class="text-sm space-y-2"></div>
+        </div>
       </div>
     </div>
   </section>
@@ -1811,6 +1888,122 @@ document.addEventListener('click', (e) => {
   if (tile && !e.target.closest('.tooltip-wrapper')) openSeatModal(tile.getAttribute('data-seat-id'));
 });
 document.getElementById('seat-modal').addEventListener('click', (e) => { if(e.target === document.getElementById('seat-modal')) closeModal(); });
+
+// ── Live Cameras Grid & Image Injection ─────────────────────────────────────
+
+let cameraAutoRefreshTimer = null;
+
+async function loadAllCamerasStatus() {
+  const container = document.getElementById('live-camera-grid');
+  try {
+    const res = await api('/api/v1/cameras/all-status');
+    const cams = res.cameras || [];
+    if (!cams.length) {
+      container.innerHTML = '<div class="text-zinc-500 text-sm py-8 text-center col-span-full">No cameras configured in station YAML files.</div>';
+      return;
+    }
+    container.innerHTML = cams.map((cam, idx) => {
+      const snapshotUrl = `${cfg.apiUrl}/api/v1/cameras/snapshot?adapter=${cam.adapter}&camera_id=${encodeURIComponent(cam.camera_id)}&t=${Date.now()}`;
+      return `
+      <div class="card p-4 border border-surface-700 bg-surface-900">
+        <div class="flex items-center justify-between mb-2">
+          <span class="font-bold text-primary-300 text-sm">${escapeHtml(formatStationName(cam.station_id))}</span>
+          <span class="text-xs px-2 py-0.5 rounded bg-surface-800 text-zinc-300 font-mono">${escapeHtml(cam.camera_name)}</span>
+        </div>
+        <div class="h-44 rounded-lg bg-black border border-surface-700 overflow-hidden flex items-center justify-center relative mb-3 group">
+          <img src="${snapshotUrl}" alt="${escapeHtml(cam.camera_name)}" class="max-h-full max-w-full object-contain" onerror="this.onerror=null; this.src='data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'100\' height=\'100\'><rect width=\'100\' height=\'100\' fill=\'%23111\'/><text x=\'50%\' y=\'50%\' fill=\'%23666\' font-size=\'12\' dominant-baseline=\'middle\' text-anchor=\'middle\' font-family=\'sans-serif\'>Offline / Sim</text></svg>';" />
+          <div class="absolute bottom-2 right-2 bg-black/70 text-zinc-300 px-2 py-1 rounded text-[10px] font-mono">${escapeHtml(cam.adapter)}</div>
+        </div>
+        <div class="flex justify-between items-center text-xs text-zinc-400">
+          <span>ID: <strong class="text-white font-mono">${escapeHtml(String(cam.camera_id))}</strong></span>
+          <span class="${cam.enabled ? 'text-success-400' : 'text-zinc-500'}">${cam.enabled ? '● Active' : '○ Disabled'}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    container.innerHTML = `<div class="text-danger-400 text-sm py-8 text-center col-span-full">Failed to load live camera feeds: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function toggleCameraAutoRefresh(enabled) {
+  if (cameraAutoRefreshTimer) {
+    clearInterval(cameraAutoRefreshTimer);
+    cameraAutoRefreshTimer = null;
+  }
+  if (enabled) {
+    cameraAutoRefreshTimer = setInterval(loadAllCamerasStatus, 2000);
+    showToast('Camera auto-refresh enabled (2s)', 'info');
+  } else {
+    showToast('Camera auto-refresh disabled', 'info');
+  }
+}
+
+async function submitInjectedImage() {
+  const stationId = document.getElementById('inject-station').value;
+  const cameraName = document.getElementById('inject-camera-name').value.trim() || 'main';
+  const variantId = document.getElementById('inject-variant').value;
+  const fileInput = document.getElementById('inject-file-input');
+
+  if (!fileInput.files || fileInput.files.length === 0) {
+    return showToast('Please select an image file to inject', 'error');
+  }
+
+  const file = fileInput.files[0];
+  showToast('Running inspection pipeline...', 'info');
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const headers = {
+      'Content-Type': file.type || 'image/jpeg',
+      ...(cfg.apiKey ? { 'X-API-Key': cfg.apiKey } : {}),
+    };
+
+    const res = await fetch(`${cfg.apiUrl}/api/v1/stations/${stationId}/inject-image?camera_name=${encodeURIComponent(cameraName)}&variant_id=${encodeURIComponent(variantId)}`, {
+      method: 'POST',
+      headers,
+      body: arrayBuffer,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(errText || 'Injection failed');
+    }
+
+    const data = await res.json();
+    const resultCard = document.getElementById('injection-result-card');
+    const resultContent = document.getElementById('injection-result-content');
+    resultCard.classList.remove('hidden');
+
+    const outcomeColor = data.outcome === 'PASS' ? 'text-success-400' : (data.outcome === 'FAIL' ? 'text-danger-400' : 'text-warning-400');
+    const annotatedUrl = data.annotated_image_url ? `${cfg.apiUrl}${data.annotated_image_url}` : '';
+
+    resultContent.innerHTML = `
+      <div class="flex justify-between py-1 border-b border-surface-700"><span class="text-zinc-400">Station</span><span class="text-white font-bold">${escapeHtml(data.station_id)}</span></div>
+      <div class="flex justify-between py-1 border-b border-surface-700"><span class="text-zinc-400">Outcome</span><span class="${outcomeColor} font-bold">${escapeHtml(data.outcome)}</span></div>
+      <div class="flex justify-between py-1 border-b border-surface-700"><span class="text-zinc-400">Defects Found</span><span class="text-danger-400 font-bold">${data.defect_count}</span></div>
+      ${annotatedUrl ? `<div class="mt-3"><div class="text-zinc-400 mb-1">Annotated Output:</div><div class="rounded-lg overflow-hidden bg-black border border-surface-700 max-h-48 flex items-center justify-center"><img src="${annotatedUrl}" class="max-h-48 object-contain" /></div></div>` : ''}
+      ${data.defects.length ? `<div class="mt-2 text-xs text-danger-300"><strong>Defects:</strong> ${data.defects.map(d => escapeHtml(d.defect_type)).join(', ')}</div>` : ''}
+    `;
+
+    showToast(`Inspection complete: ${data.outcome}`, data.outcome === 'PASS' ? 'success' : 'error');
+  } catch (e) {
+    showToast(`Injection error: ${e.message}`, 'error');
+  }
+}
+
+// Hook setSection to load camera feeds when 'cameras' section is active
+const _superSetSection = setSection;
+setSection = function(id) {
+  _superSetSection(id);
+  if (id === 'cameras') {
+    loadAllCamerasStatus();
+  } else {
+    toggleCameraAutoRefresh(false);
+    const cb = document.getElementById('auto-refresh-cams');
+    if (cb) cb.checked = false;
+  }
+};
+
 
 </script>
 </body>

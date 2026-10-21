@@ -145,6 +145,7 @@ The single-page web UI (`ui/index.html`) provides dark-mode monitoring and rewor
 
 -	echo $env:INSPECTION_API_KEY should print the key.
 -	python -m camerainspection.main
+python -m camerainspection.main --run-worker
 
 1. Running the Tests
 

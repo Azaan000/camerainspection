@@ -48,6 +48,16 @@ DEFAULT_CORS_ORIGINS = (
 )
 
 
+class CameraConfigPayload(BaseModel):
+    station_id: str
+    camera_name: str
+    adapter: str
+    camera_id: str
+    exposure_us: int = 15000
+    gain_db: float = 0.0
+    resolution: list[int] = [1920, 1080]
+
+
 def get_ui_index_path() -> Path:
     """Locate ui/index.html (override with UI_INDEX_PATH)."""
     override = os.getenv("UI_INDEX_PATH")
@@ -1408,7 +1418,7 @@ def create_app(
 
         # 3. Detect Hikrobot cameras (if MVS SDK installed)
         try:
-            from MvImport.MvCameraControl_class import *  # noqa: F401, PLC0415
+            import MvImport  # noqa: F401, PLC0415
             # MVS SDK enumeration would go here
             # For now, placeholder
         except ImportError:
@@ -1544,7 +1554,7 @@ def create_app(
                     station_configs[station_id] = {
                         "config_file": str(cfg_file),
                         "cameras": data.get("cameras", []),
-                        "station_name": data.get("station", {}).get("name", station_id),
+                        "station_name": data.get("name", station_id),
                     }
             except Exception as e:
                 logger.warning(f"Could not load {cfg_file}: {e}")
@@ -1554,14 +1564,132 @@ def create_app(
             "timestamp": datetime.now(UTC).isoformat(),
         }
 
-    class CameraConfigPayload(BaseModel):
-        station_id: str
-        camera_name: str
-        adapter: str
-        camera_id: str
-        exposure_us: int = 15000
-        gain_db: float = 0.0
-        resolution: list[int] = [1920, 1080]
+    @app.get("/api/v1/cameras/all-status")
+    def get_all_cameras_status(
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Return list of all configured cameras across all stations and their status."""
+        import yaml
+
+        configs_dir = Path("configs/stations")
+        cameras_list = []
+
+        for cfg_file in configs_dir.glob("station_*.yaml"):
+            try:
+                with open(cfg_file, encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                    station_id = cfg_file.stem.replace("station_", "STATION_").upper()
+                    for cam in data.get("cameras", []):
+                        cameras_list.append({
+                            "station_id": station_id,
+                            "camera_name": cam.get("name", "main"),
+                            "view": cam.get("view", "main"),
+                            "adapter": cam.get("adapter", "replay"),
+                            "camera_id": cam.get("camera_id", 0),
+                            "enabled": cam.get("enabled", True),
+                        })
+            except Exception:
+                pass
+
+        return {"cameras": cameras_list, "timestamp": datetime.now(UTC).isoformat()}
+
+    @app.post("/api/v1/stations/{station_id}/inject-image")
+    async def inject_station_image(
+        station_id: str,
+        request: Request,
+        camera_name: str = Query("main", description="Camera or view name"),
+        variant_id: str = Query("FRONT_LH_BLACK", description="Seat variant ID"),
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Manually inject an image into a station pipeline to test AI inference and limits."""
+        import cv2
+        import numpy as np
+
+        if line_runtime is None or station_id.upper() not in line_runtime.stations:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Line runtime not active or unknown station '{station_id}'",
+            )
+
+        body = await request.body()
+        if not body:
+            raise HTTPException(status_code=400, detail="No image data provided.")
+
+        arr = np.frombuffer(body, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise HTTPException(status_code=422, detail="Could not decode image data.")
+
+        station_svc = line_runtime.stations[station_id.upper()]
+
+        # Run inspection through station service
+        from camerainspection.core.limits import LimitsEvaluator
+        from camerainspection.core.config import load_variant_config
+
+        try:
+            var_cfg, limits_dict = load_variant_config(variant_id, line_runtime.config.database.url and Path("configs/variants") or Path("configs/variants"))
+        except Exception:
+            limits_dict = {}
+            var_cfg = None
+
+        evaluator = LimitsEvaluator(limits_dict)
+
+        try:
+            defects, measurements, annotated = station_svc.inspect_image(
+                image=frame,
+                variant_id=variant_id,
+                evaluator=evaluator,
+                variant_nominals=var_cfg.nominals if var_cfg else {},
+            )
+        except Exception as e:
+            logger.error(f"Error inspecting injected image for {station_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Inspection pipeline error: {e}")
+
+        # Determine outcome
+        from camerainspection.core.models import Outcome, StationInspectionResult
+        outcome = Outcome.PASS
+        for d in defects:
+            if d.outcome == Outcome.FAIL:
+                outcome = Outcome.FAIL
+                break
+            elif d.outcome == Outcome.REVIEW and outcome != Outcome.FAIL:
+                outcome = Outcome.REVIEW
+
+        # Save annotated image if enabled
+        img_rel_path = None
+        if line_runtime.config.save_images and annotated is not None:
+            import time
+            save_dir = Path("storage/captures/INJECTED")
+            save_dir.mkdir(parents=True, exist_ok=True)
+            ts_str = str(int(time.time()))
+            img_rel_path = f"storage/captures/INJECTED/{station_id}_{camera_name}_{ts_str}.jpg"
+            cv2.imwrite(img_rel_path, annotated)
+
+        # Record result in DB
+        res = StationInspectionResult(
+            seat_id=f"INJECT_{int(time.time())}",
+            station_id=station_id.upper(),
+            variant_id=variant_id,
+            outcome=outcome,
+            cycle_time_ms=150.0,
+            model_version=station_svc.config.model.version,
+            config_version=line_runtime.config.config_version,
+            raw_image_path=img_rel_path,
+            annotated_image_path=img_rel_path,
+            defects=defects,
+            measurements=measurements,
+        )
+        db_manager.record_station_result(res)
+
+        return {
+            "station_id": station_id.upper(),
+            "camera_name": camera_name,
+            "outcome": outcome.value,
+            "measurements": measurements,
+            "defect_count": len(defects),
+            "defects": [d.model_dump() for d in defects],
+            "annotated_image_url": f"/{img_rel_path}" if img_rel_path else None,
+        }
 
     @app.post("/api/v1/cameras/config")
     def update_camera_config(

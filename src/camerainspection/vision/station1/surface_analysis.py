@@ -61,7 +61,7 @@ class SurfaceAnalyzer:
 
     def __init__(
         self,
-        model_path: str | Path | None = _DEFAULT_MODEL_PATH,
+        model_path: str | Path | None = None,
         anomaly_threshold: float = 0.5,   # pred_score threshold for PASS/FAIL
         map_threshold: float = 0.4,        # normalised anomaly_map threshold for mask
         # heuristic fallback params
