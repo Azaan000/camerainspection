@@ -17,9 +17,11 @@ from camerainspection.line.controller import LineController
 
 logger = get_logger("app.main")
 
-# Background line runner thread handle
+# Background line runner thread handles
 _station_runner_thread: threading.Thread | None = None
+_image_cleanup_thread: threading.Thread | None = None
 _stop_runner_event = threading.Event()
+_stop_cleanup_event = threading.Event()
 
 
 def _station_worker_loop(controller: LineController, stop_event: threading.Event) -> None:
@@ -36,6 +38,23 @@ def _station_worker_loop(controller: LineController, stop_event: threading.Event
         except Exception as e:
             logger.error(f"Error in background station worker loop: {e}")
         time.sleep(3.0)
+
+
+def _image_cleanup_worker(stop_event: threading.Event, retention_days: int = 30) -> None:
+    """Periodic cleanup worker that deletes old image folders."""
+    logger.info(f"Image cleanup worker started (retention={retention_days} days).")
+    from camerainspection.tools.image_cleanup import cleanup_old_captures
+    while not stop_event.is_set():
+        try:
+            result = cleanup_old_captures(retention_days=retention_days, dry_run=False)
+            logger.info(f"Image cleanup: {result['deleted_folders']} folders deleted, {result['freed_mb']} MB freed")
+        except Exception as e:
+            logger.error(f"Error in image cleanup worker: {e}")
+        # Check every 24 hours
+        for _ in range(288):  # 288 * 5min = 24 hours
+            if stop_event.is_set():
+                break
+            time.sleep(300)
 
 
 def main() -> None:
@@ -82,11 +101,16 @@ def main() -> None:
     controller = LineController(runtime=line_runtime)
 
     # Build FastAPI app with dashboard and APIs
-    app = create_app(db_manager=line_runtime.db_manager, coordinator=line_runtime.coordinator)
+    app = create_app(
+        db_manager=line_runtime.db_manager,
+        coordinator=line_runtime.coordinator,
+        line_runtime=line_runtime,
+    )
 
     if args.run_worker:
-        global _station_runner_thread
+        global _station_runner_thread, _image_cleanup_thread
         _stop_runner_event.clear()
+        _stop_cleanup_event.clear()
         _station_runner_thread = threading.Thread(
             target=_station_worker_loop,
             args=(controller, _stop_runner_event),
@@ -94,11 +118,19 @@ def main() -> None:
             name="line-station-worker",
         )
         _station_runner_thread.start()
+        _image_cleanup_thread = threading.Thread(
+            target=_image_cleanup_worker,
+            args=(_stop_cleanup_event, sys_cfg.image_retention_days),
+            daemon=True,
+            name="image-cleanup-worker",
+        )
+        _image_cleanup_thread.start()
 
     @app.on_event("shutdown")
     def shutdown_event() -> None:
         logger.info("Server shutting down. Terminating worker and coordinator watchdog...")
         _stop_runner_event.set()
+        _stop_cleanup_event.set()
         line_runtime.coordinator.shutdown()
 
     print("\n" + "=" * 60)

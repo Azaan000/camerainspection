@@ -156,7 +156,21 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
         score_arr, label_arr, heatmap_arr, mask_arr = outputs
 
         # Use batch index 0
-        score: float = float(score_arr[0])
+        raw_score: float = float(score_arr[0])
+        # Guard against NaN/Inf from the ONNX model's internal normalisation
+        # (happens when both batch slots produce identical scores → division by zero)
+        import math
+        if math.isnan(raw_score) or math.isinf(raw_score):
+            # Fall back to heatmap-derived score: normalised max of anomaly map
+            heatmap_raw = heatmap_arr[0, 0]
+            hmap_max = float(heatmap_raw.max())
+            hmap_min = float(heatmap_raw.min())
+            denom = hmap_max - hmap_min
+            raw_score = (hmap_max - hmap_min) / (denom + 1e-8) if denom > 0 else 0.0
+            # Scale to [0,1] using a fixed reference max (empirically ~10-20 for WideResNet features)
+            raw_score = min(1.0, hmap_max / 20.0)
+            logger.debug("NaN score corrected via heatmap fallback: %.4f", raw_score)
+        score: float = raw_score
         is_anomalous: bool = bool(label_arr[0])
         heatmap: np.ndarray = heatmap_arr[0, 0]  # (256, 256) float32
         mask: np.ndarray = mask_arr[0, 0].astype(np.uint8) * 255  # (256, 256) uint8

@@ -227,6 +227,14 @@ class SystemConfig(BaseModel):
         return bool(self.system.get("shadow_mode", False))
 
     @property
+    def save_images(self) -> bool:
+        return bool(self.system.get("save_images", True))
+
+    @property
+    def image_retention_days(self) -> int:
+        return int(self.system.get("image_retention_days", 30))
+
+    @property
     def operating_mode(self) -> str:
         if "operating_mode" in self.system:
             return str(self.system["operating_mode"])

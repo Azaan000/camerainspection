@@ -70,6 +70,7 @@ class BaseStation(ABC):
         self.fixture = fixture
         self.lighting_controller = lighting_controller
         self.calibration_manager = calibration_manager
+        self.save_images: bool = True   # can be overridden by builder from system config
 
         # Hardware presence enforcement (A1 / #1)
         # When require_all_hardware is True, station fails safe if any fixture/lighting/calibration is missing
@@ -435,16 +436,17 @@ class BaseStation(ABC):
                     if not d.view:
                         d.view = cam_view
 
-                # Persist raw & annotated frames to disk
+                # Persist raw & annotated frames to disk (only when save_images is enabled)
                 safe_cam_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in cam_name)
                 raw_rel_path = f"storage/captures/{safe_seat_id}/{self.station_id}_{safe_cam_name}_raw.png"
-                try:
-                    cv2.imwrite(raw_rel_path, image)
-                except Exception as write_err:
-                    logger.warning(f"Failed to write raw capture to {raw_rel_path}: {write_err}")
+                if self.save_images:
+                    try:
+                        cv2.imwrite(raw_rel_path, image)
+                    except Exception as write_err:
+                        logger.warning(f"Failed to write raw capture to {raw_rel_path}: {write_err}")
 
                 annotated_rel_path = raw_rel_path
-                if cam_annotated is not None:
+                if self.save_images and cam_annotated is not None:
                     ann_rel_path = f"storage/captures/{safe_seat_id}/{self.station_id}_{safe_cam_name}_annotated.png"
                     try:
                         cv2.imwrite(ann_rel_path, cam_annotated)

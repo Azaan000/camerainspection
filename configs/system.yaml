@@ -2,6 +2,8 @@ system:
   environment: "development"
   shadow_mode: false # When true, logs inspection decisions without driving physical PLC pallet hold or label printer
   config_version: "v0.1.0"
+  save_images: true  # When false, no raw/annotated images are written to disk
+  image_retention_days: 30  # Images older than this are deleted by the cleanup routine
 
 database:
   url: "sqlite:///./data/inspection.db" # Default local developer SQLite database

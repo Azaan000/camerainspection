@@ -190,6 +190,14 @@ class ShadowDecisionPayload(BaseModel):
     notes: str = ""
 
 
+class SaveImagesPayload(BaseModel):
+    enabled: bool
+
+
+class ShadowModePayload(BaseModel):
+    enabled: bool
+
+
 class AuditDecisionPayload(BaseModel):
     auditor_id: str
     decision: str = Field(..., description="PASS or FAIL")
@@ -199,6 +207,7 @@ class AuditDecisionPayload(BaseModel):
 def create_app(
     db_manager: DatabaseManager,
     coordinator: InspectionCoordinator | None = None,
+    line_runtime: Any = None,
 ) -> FastAPI:
     """Create and configure FastAPI application."""
     # Ensure strong API key at startup
@@ -1261,5 +1270,87 @@ def create_app(
             "defects": defects,
             "mode": "onnx" if analyzer._session is not None else "heuristic",
         }
+
+    # ------------------------------------------------------------------
+    # System settings endpoints (shadow mode, save images, cleanup)
+    # ------------------------------------------------------------------
+
+    # In-memory runtime overrides (survive until app restart)
+    _runtime_settings: dict[str, Any] = {
+        "save_images": True,
+        "shadow_mode": False,
+    }
+
+    @app.get("/api/v1/system/settings")
+    def get_system_settings(
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Return current runtime system settings."""
+        from camerainspection.tools.image_cleanup import get_storage_stats  # noqa: PLC0415
+        stats = get_storage_stats()
+        return {
+            "save_images": _runtime_settings["save_images"],
+            "shadow_mode": coordinator.shadow_mode if coordinator else _runtime_settings["shadow_mode"],
+            "storage": stats,
+        }
+
+    class SaveImagesPayload(BaseModel):
+        enabled: bool
+
+    @app.post("/api/v1/system/save-images")
+    def set_save_images(
+        payload: SaveImagesPayload,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Toggle image saving on/off at runtime. Does not require app restart."""
+        _runtime_settings["save_images"] = payload.enabled
+        # Propagate to all stations if line is running
+        if line_runtime is not None:
+            for svc in line_runtime.stations.values():
+                svc.save_images = payload.enabled
+        db_manager.log_audit(
+            event_type="SYSTEM_SETTING_CHANGED",
+            details=f"save_images set to {payload.enabled} by {auth_user}",
+        )
+        return {"save_images": payload.enabled, "applied": True}
+
+    class ShadowModePayload(BaseModel):
+        enabled: bool
+
+    @app.post("/api/v1/system/shadow-mode")
+    def set_shadow_mode(
+        payload: ShadowModePayload,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Toggle shadow mode on/off at runtime."""
+        _runtime_settings["shadow_mode"] = payload.enabled
+        if coordinator is not None:
+            coordinator.shadow_mode = payload.enabled
+        if line_runtime is not None:
+            for svc in line_runtime.stations.values():
+                svc.shadow_mode = payload.enabled
+        db_manager.log_audit(
+            event_type="SYSTEM_SETTING_CHANGED",
+            details=f"shadow_mode set to {payload.enabled} by {auth_user}",
+        )
+        return {"shadow_mode": payload.enabled, "applied": True}
+
+    @app.post("/api/v1/system/cleanup-images")
+    def cleanup_images(
+        dry_run: bool = Query(False, description="If true, shows what would be deleted without deleting"),
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Delete seat capture folders older than the configured retention period (default 30 days)."""
+        from camerainspection.tools.image_cleanup import cleanup_old_captures  # noqa: PLC0415
+        result = cleanup_old_captures(retention_days=30, dry_run=dry_run)
+        if not dry_run:
+            db_manager.log_audit(
+                event_type="IMAGE_CLEANUP",
+                details=(
+                    f"Deleted {result['deleted_folders']} folders, "
+                    f"freed {result['freed_mb']} MB by {auth_user}"
+                ),
+            )
+        return result
 
     return app

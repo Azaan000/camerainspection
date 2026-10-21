@@ -79,11 +79,15 @@ lighting:
   diffuse_intensity_pct: 85
 
 model:
-  backend: "mock"
-  model_type: "yolo_plastic_crack"
+  backend: "onnx"
+  model_type: "yolo_presence"
   weights_path: "models/station_3/plastic_crack.onnx"
-  version: "v0.1.0"
+  version: "v1.0.0"
   threshold: 0.40
+  class_names:
+    - "part_correct"
+    - "part_missing"
+    - "part_wrong"
 
 trigger:
   timeout_s: 5.0

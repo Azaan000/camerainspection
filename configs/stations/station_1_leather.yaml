@@ -73,11 +73,13 @@ regions_of_interest:
     h: 1800
 
 model:
-  backend: "mock"
+  backend: "onnx"
   model_type: "anomalib_patchcore"
   weights_path: "models/station_1/patchcore.onnx"
-  version: "v0.1.0"
+  version: "v1.0.0"
   threshold: 0.45
+  pass_below: 0.40
+  fail_above: 0.60
 
 trigger:
   timeout_s: 5.0

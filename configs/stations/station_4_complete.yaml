@@ -63,11 +63,14 @@ lighting:
   ambient_intensity_pct: 100
 
 model:
-  backend: "mock"
+  backend: "onnx"
   model_type: "yolo_cosmetic_defects"
   weights_path: "models/station_4/cosmetics.onnx"
-  version: "v0.1.0"
+  version: "v1.0.0"
   threshold: 0.45
+  class_names:
+    - "wrinkle_puckering"
+    - "foam_showthrough"
 
 trigger:
   timeout_s: 12.0

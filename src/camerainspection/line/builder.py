@@ -227,6 +227,7 @@ def build_line(
             config_version=sys_cfg.config_version,
             require_all_hardware=sys_cfg.hardware.require_all,
         )
+        svc.save_images = sys_cfg.save_images
         built_stations[st_id] = svc
 
     return LineRuntime(

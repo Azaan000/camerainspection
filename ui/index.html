@@ -291,6 +291,24 @@
   <button id="mobile-menu-btn" class="lg:hidden btn-ghost px-3 py-2" onclick="toggleMobileMenu()">☰</button>
 
   <div class="hidden md:flex items-center gap-5">
+    <!-- Shadow Mode Toggle -->
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-zinc-400 font-medium">Shadow</span>
+      <button id="shadow-toggle-btn" onclick="toggleShadowMode()"
+        class="relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none bg-zinc-700"
+        title="Toggle Shadow Mode">
+        <span id="shadow-toggle-knob" class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200"></span>
+      </button>
+    </div>
+    <!-- Save Images Toggle -->
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-zinc-400 font-medium">Save Images</span>
+      <button id="save-images-toggle-btn" onclick="toggleSaveImages()"
+        class="relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none bg-primary-600"
+        title="Toggle Image Saving">
+        <span id="save-images-toggle-knob" class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 translate-x-5"></span>
+      </button>
+    </div>
     <div id="api-status" class="flex items-center gap-2 text-sm font-medium">
       <span class="w-2.5 h-2.5 rounded-full bg-zinc-600 pulse-dot" id="status-dot"></span>
       <span id="status-text" class="text-zinc-400">Connecting…</span>
@@ -1499,6 +1517,92 @@ function updateSettingsDisplay() {
 }
 function testConnection() { document.getElementById('settings-result').innerHTML = '<span class="text-success-400">✓ Connection simulated successfully</span>'; }
 
+// ── System Toggle Controls ────────────────────────────────────────────────────
+
+function applyToggleState(btnId, knobId, enabled) {
+  const btn  = document.getElementById(btnId);
+  const knob = document.getElementById(knobId);
+  if (!btn || !knob) return;
+  if (enabled) {
+    btn.classList.remove('bg-zinc-700');
+    btn.classList.add('bg-primary-600');
+    knob.style.transform = 'translateX(20px)';
+  } else {
+    btn.classList.remove('bg-primary-600');
+    btn.classList.add('bg-zinc-700');
+    knob.style.transform = 'translateX(0px)';
+  }
+}
+
+async function fetchSystemSettings() {
+  try {
+    const s = await api('/api/v1/system/settings');
+    applyToggleState('shadow-toggle-btn',      'shadow-toggle-knob',      s.shadow_mode);
+    applyToggleState('save-images-toggle-btn', 'save-images-toggle-knob', s.save_images);
+    // Populate storage stats if the storage info element exists
+    const storageEl = document.getElementById('storage-stats');
+    if (storageEl && s.storage) {
+      storageEl.textContent = `${s.storage.total_mb} MB · ${s.storage.total_folders} seats · oldest ${s.storage.oldest_days ?? 0}d`;
+    }
+  } catch (e) { /* backend may not be running yet */ }
+}
+
+async function toggleShadowMode() {
+  const btn = document.getElementById('shadow-toggle-btn');
+  const isOn = btn && btn.classList.contains('bg-primary-600');
+  try {
+    const res = await api('/api/v1/system/shadow-mode', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: !isOn }),
+    });
+    applyToggleState('shadow-toggle-btn', 'shadow-toggle-knob', res.shadow_mode);
+    showToast(`Shadow Mode ${res.shadow_mode ? 'ON — camera decisions logged only' : 'OFF — label printer armed'}`, res.shadow_mode ? 'info' : 'success');
+  } catch (e) {
+    showToast('Could not toggle Shadow Mode — backend offline?', 'error');
+  }
+}
+
+async function toggleSaveImages() {
+  const btn = document.getElementById('save-images-toggle-btn');
+  const isOn = btn && btn.classList.contains('bg-primary-600');
+  try {
+    const res = await api('/api/v1/system/save-images', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: !isOn }),
+    });
+    applyToggleState('save-images-toggle-btn', 'save-images-toggle-knob', res.save_images);
+    showToast(`Image saving ${res.save_images ? 'ON — captures written to disk' : 'OFF — DB records only'}`, res.save_images ? 'success' : 'info');
+  } catch (e) {
+    showToast('Could not toggle Image Saving — backend offline?', 'error');
+  }
+}
+
+async function runImageCleanup(dryRun = false) {
+  const btn = document.getElementById('cleanup-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Cleaning…'; }
+  try {
+    const res = await api(`/api/v1/system/cleanup-images?dry_run=${dryRun}`, { method: 'POST' });
+    const verb = dryRun ? 'Would delete' : 'Deleted';
+    showToast(`${verb} ${res.deleted_folders} folders · ${res.freed_mb} MB freed`, 'success');
+    const el = document.getElementById('cleanup-result');
+    if (el) {
+      el.innerHTML = `
+        <div class="mt-4 p-4 rounded-xl bg-surface-800 border border-surface-700 text-sm">
+          <div class="flex justify-between py-1 border-b border-surface-700"><span class="text-zinc-400">Cutoff date</span><span class="text-white font-mono">${escapeHtml(res.cutoff_date?.split('T')[0] ?? '—')}</span></div>
+          <div class="flex justify-between py-1 border-b border-surface-700"><span class="text-zinc-400">Folders ${dryRun ? 'to remove' : 'removed'}</span><span class="text-danger-400 font-bold">${res.deleted_folders}</span></div>
+          <div class="flex justify-between py-1 border-b border-surface-700"><span class="text-zinc-400">Space freed</span><span class="text-success-400 font-bold">${res.freed_mb} MB</span></div>
+          <div class="flex justify-between py-1 border-b border-surface-700"><span class="text-zinc-400">Skipped (recent)</span><span>${res.skipped}</span></div>
+          ${res.errors?.length ? `<div class="mt-2 text-danger-400 text-xs">${res.errors.map(escapeHtml).join('<br>')}</div>` : ''}
+        </div>`;
+    }
+    fetchSystemSettings();
+  } catch (e) {
+    showToast('Cleanup failed — backend offline?', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = dryRun ? 'Preview Cleanup' : 'Run Cleanup Now'; }
+  }
+}
+
 // Init
 let refreshTimer;
 function refreshCurrentSection() {
@@ -1510,6 +1614,7 @@ function refreshAll() { refreshCurrentSection(); }
 updateClock(); setInterval(updateClock, 60000);
 updateSettingsDisplay(); fetchLive();
 checkApiStatus(); setInterval(checkApiStatus, 15000);
+fetchSystemSettings();
 if(!cfg.apiKey) document.getElementById('no-key-banner').classList.remove('hidden');
 
 // Event Delegation for Modals

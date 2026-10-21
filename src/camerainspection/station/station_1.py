@@ -213,8 +213,14 @@ class Station1Service(BaseStation):
             return defects, measurements, annotated
 
         # Record overall anomaly score as a measurement
+        # Use the view-appropriate zone name so both cameras satisfy required measurements
+        view_zone_map = {
+            "front_cushion_backrest": "seating_face",
+            "rear_back_map_pocket":   "side_back",
+        }
+        zone_key = view_zone_map.get(view, view)
         score = raw_detections[0].anomaly_score if raw_detections else 0.0
-        measurements["seating_face.defect_count"] = float(len(raw_detections))
+        measurements[f"{zone_key}.defect_count"] = float(len(raw_detections))
         measurements["leather.anomaly_score"] = float(score or 0.0)
 
         if not raw_detections:
