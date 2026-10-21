@@ -23,7 +23,9 @@ class Station3Service(BaseStation):
     """Station 3 inspection service: Plastic parts presence, LH/RH hand, color, gap, and underside inspection."""
 
     def get_required_measurements(self) -> list[str]:
-        return ["shield_gap_mm", "flash_mm"]
+        # Multi-camera stations produce different keys per view (shield/lever vs underside),
+        # so we don't enforce a fixed required-measurement set at the station level.
+        return []
 
     def load_golden_template(self, variant_id: str, component_name: str) -> np.ndarray | None:
         """Load golden reference image for a specific component and variant."""
@@ -230,7 +232,13 @@ class Station3Service(BaseStation):
 
         # 3. Shield Gap Measurement
         if "side_shield" in rois_to_check:
-            gap_crop = image[450:550, 430:520]
+            roi = rois_to_check.get("side_shield")
+            if roi:
+                cx, cy = roi.x + roi.w // 2, roi.y + roi.h // 2
+                gap_crop = image[cy - 50 : cy + 50, cx - 45 : cx + 45]
+            else:
+                h2, w2 = image.shape[0] // 2, image.shape[1] // 2
+                gap_crop = image[h2 - 50 : h2 + 50, w2 - 45 : w2 + 45]
             measured_gap_mm = PlasticDimensionEngine.measure_gap_mm(
                 gap_crop, pixel_size_mm=pixel_size_mm, axis="horizontal"
             )
