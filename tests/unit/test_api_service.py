@@ -182,3 +182,79 @@ def test_live_companion_endpoint(api_client: TestClient) -> None:
     assert "golden_reference" in data
     assert "images" in data["golden_reference"]
 
+
+def test_station_rois_get_and_post(api_client: TestClient) -> None:
+    """Verify GET and POST /api/v1/stations/{station_id}/rois."""
+    # 1. GET ROIs
+    get_res = api_client.get("/api/v1/stations/STATION_1/rois", headers=_AUTH_HEADERS)
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert data["station_id"] == "STATION_1"
+    assert "regions_of_interest" in data
+    assert "rois" in data
+    assert isinstance(data["rois"], list)
+
+    # 2. POST update ROIs with rois list format
+    post_payload = {
+        "rois": [
+            {"name": "seating_face", "x": 180, "y": 140, "width": 2100, "height": 1550},
+            {"name": "bolster_lh", "x": 90, "y": 280, "width": 380, "height": 1150},
+        ]
+    }
+    post_res = api_client.post("/api/v1/stations/STATION_1/rois", json=post_payload, headers=_AUTH_HEADERS)
+    assert post_res.status_code == 200
+    post_data = post_res.json()
+    assert post_data["success"] is True
+    assert "seating_face" in post_data["rois"]
+
+
+def test_defect_feedback_endpoint(api_client: TestClient) -> None:
+    """Verify POST /api/v1/defects/{defect_id}/feedback records active learning corrections."""
+    feedback_payload = {
+        "is_false_positive": True,
+        "corrected_defect_type": "leather.scratch",
+        "notes": "Surface glare misclassified as cut",
+        "inspector_id": "INSP-TEST-99"
+    }
+    res = api_client.post("/api/v1/defects/42/feedback", json=feedback_payload, headers=_AUTH_HEADERS)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert data["defect_id"] == 42
+    assert data["feedback"]["is_false_positive"] is True
+    assert data["feedback"]["new_defect_type"] == "leather.scratch"
+
+
+def test_spc_measurements_endpoint(api_client: TestClient) -> None:
+    """Verify GET /api/v1/analytics/spc-measurements returns limits, capability indices, and run chart points."""
+    res = api_client.get("/api/v1/analytics/spc-measurements?metric=shield_gap_mm", headers=_AUTH_HEADERS)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["metric"] == "shield_gap_mm"
+    assert "nominal" in data
+    assert "usl" in data
+    assert "lsl" in data
+    assert "ucl" in data
+    assert "lcl" in data
+    assert "cpk" in data
+    assert "cp" in data
+    assert "mean" in data
+    assert "std_dev" in data
+    assert "measurements" in data
+    assert len(data["measurements"]) >= 15
+    assert all("seat_id" in m and "value" in m for m in data["measurements"])
+
+
+def test_golden_image_endpoint(api_client: TestClient) -> None:
+    """Verify GET /api/v1/variants/{variant_id}/golden-images/{component_name} serves template files."""
+    # Existing golden template
+    res = api_client.get("/api/v1/variants/FRONT_LH_BLACK/golden-images/side_shield", headers=_AUTH_HEADERS)
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("image/")
+
+    # Missing golden template returns 404
+    missing_res = api_client.get("/api/v1/variants/FRONT_LH_BLACK/golden-images/non_existent_part", headers=_AUTH_HEADERS)
+    assert missing_res.status_code == 404
+
+
+

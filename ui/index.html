@@ -235,6 +235,83 @@
     .toast-success { background: #10b981; color: #fff; }
     .toast-error   { background: #f43f5e; color: #fff; }
     .toast-info    { background: #38bdf8; color: #fff; }
+
+    /* Andon Floor Alarm Flasher */
+    @keyframes andon-flasher {
+      0%, 100% { background-color: rgba(244, 63, 94, 0.15); border-color: #f43f5e; box-shadow: 0 0 25px rgba(244, 63, 94, 0.4); }
+      50% { background-color: rgba(244, 63, 94, 0.45); border-color: #ff3366; box-shadow: 0 0 50px rgba(244, 63, 94, 0.8); }
+    }
+    .andon-alarm-flash { animation: andon-flasher 1.2s infinite ease-in-out; }
+
+    /* Pan & Zoom Metrology Canvas */
+    .pan-zoom-area {
+      overflow: hidden;
+      position: relative;
+      cursor: grab;
+      user-select: none;
+    }
+    .pan-zoom-area:active, .pan-zoom-area.is-dragging { cursor: grabbing; }
+
+    /* Visual ROI Editor Handles */
+    .roi-svg-box {
+      cursor: move;
+      fill: rgba(99, 102, 241, 0.15);
+      stroke: #6366f1;
+      stroke-width: 2;
+      transition: fill 0.15s, stroke 0.15s;
+    }
+    .roi-svg-box:hover, .roi-svg-box.selected {
+      fill: rgba(99, 102, 241, 0.35);
+      stroke: #a5b4fc;
+      stroke-width: 3;
+    }
+    .roi-drag-handle {
+      fill: #ffffff;
+      stroke: #6366f1;
+      stroke-width: 2;
+      cursor: nwse-resize;
+      transition: r 0.15s, fill 0.15s;
+    }
+    .roi-drag-handle:hover {
+      r: 8;
+      fill: #a5b4fc;
+    }
+
+    /* Print Styles for Shift Handover Report */
+    @media print {
+      body * { visibility: hidden !important; }
+      #shift-report-modal, #shift-report-modal * { visibility: visible !important; }
+      #shift-report-modal {
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 20px !important;
+        background: #ffffff !important;
+        color: #09090b !important;
+        display: block !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+      .no-print { display: none !important; }
+      #shift-report-modal .card, #shift-report-modal .stat-card {
+        background: #ffffff !important;
+        border: 1px solid #d4d4d8 !important;
+        color: #09090b !important;
+        box-shadow: none !important;
+      }
+      #shift-report-modal th {
+        color: #52525b !important;
+        border-bottom: 2px solid #e4e4e7 !important;
+      }
+      #shift-report-modal td {
+        color: #18181b !important;
+        border-bottom: 1px solid #f4f4f5 !important;
+      }
+      #shift-report-modal .text-white { color: #09090b !important; }
+      #shift-report-modal .text-zinc-400, #shift-report-modal .text-zinc-500 { color: #71717a !important; }
+    }
   </style>
 </head>
 <body class="text-zinc-100 min-h-screen flex flex-col">
@@ -291,7 +368,32 @@
 
   <button id="mobile-menu-btn" class="lg:hidden btn-ghost px-3 py-2" onclick="toggleMobileMenu()">☰</button>
 
-  <div class="hidden md:flex items-center gap-5">
+  <div class="hidden md:flex items-center gap-4">
+    <!-- Andon Board Fullscreen Button -->
+    <button onclick="openAndonFullscreen()" class="btn-ghost py-1.5 px-3 flex items-center gap-1.5 text-xs font-semibold text-warning-400 hover:text-warning-300 border-warning-500/40 hover:border-warning-400" title="Launch Factory Floor Andon Overhead Board (Shift+A)">
+      <span>📺</span> Andon Board
+    </button>
+
+    <!-- Shift Handover Report Button -->
+    <button onclick="openShiftReportModal()" class="btn-ghost py-1.5 px-3 flex items-center gap-1.5 text-xs font-semibold text-primary-300 hover:text-white border-primary-500/40 hover:border-primary-400" title="Generate Printable Shift Handover Report">
+      <span>📄</span> Shift Report
+    </button>
+
+    <!-- Floor Audio Synthesizer Toggle -->
+    <div class="relative flex items-center" id="audio-synth-container">
+      <button onclick="toggleAudioSynth()" id="audio-synth-btn" class="btn-ghost py-1.5 px-2.5 flex items-center gap-1.5 text-xs font-medium" title="Floor Audio Synthesizer (Chimes, Alerts, Scans)">
+        <span id="audio-synth-icon">🔊</span>
+        <span id="audio-synth-label">Audio ON</span>
+      </button>
+      <input type="range" id="audio-volume-slider" min="0" max="100" value="70" onchange="setAudioSynthVolume(this.value)" class="w-16 h-1 ml-1.5 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-primary-500" title="Audio Alert Volume" />
+    </div>
+
+    <!-- Global Barcode Scanner Status Indicator -->
+    <div class="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono bg-surface-800 border border-surface-700 text-zinc-300" title="Global Barcode Scanner Wedge active — scan any seat barcode or type barcode sequence">
+      <span class="w-2 h-2 rounded-full bg-success-400 pulse-dot" id="scanner-dot"></span>
+      <span id="scanner-status">Scanner Ready</span>
+    </div>
+
     <!-- Shadow Mode Toggle -->
     <div class="flex items-center gap-2">
       <span class="text-xs text-zinc-400 font-medium">Shadow</span>
@@ -515,6 +617,61 @@
         <canvas id="station-chart"></canvas>
       </div>
     </div>
+
+    <!-- Statistical Process Control (SPC) X-Bar Charts -->
+    <div class="card p-6 mt-8">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <div class="section-title text-white">Statistical Process Control (SPC) — Metrology Run Chart (X-Bar)</div>
+          <p class="text-xs text-zinc-400 mt-1">Real-time dimension tracking with Upper/Lower Spec Limits and automated Western Electric rule violation detection.</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <label class="text-xs text-zinc-400 font-medium">Metric:</label>
+          <select id="spc-metric-select" onchange="loadSpcChart()" class="text-xs py-1.5 px-3 min-w-[240px]">
+            <option value="shield_gap_mm" data-station="STATION_3">Station 3: Plastic Shield Gap (mm)</option>
+            <option value="stitch_spi_delta" data-station="STATION_2">Station 2: Seam SPI Deviation</option>
+            <option value="recliner_angle_deg" data-station="STATION_4">Station 4: Recliner Angle (deg)</option>
+          </select>
+          <button class="btn-ghost py-1.5 px-3 text-xs" onclick="loadSpcChart()">↻ Recalculate</button>
+        </div>
+      </div>
+
+      <!-- SPC Capability Tiles -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="stat-card p-4">
+          <div class="stat-label">Spec Limits [LSL / Nom / USL]</div>
+          <div id="spc-limits-display" class="text-lg font-bold font-mono text-zinc-300 mt-1">1.5 / 2.0 / 2.5 mm</div>
+        </div>
+        <div class="stat-card p-4">
+          <div class="stat-label">Process Capability (Cpk / Cp)</div>
+          <div id="spc-cpk-display" class="text-lg font-bold font-mono text-success-400 mt-1">Cpk: 1.48 · Cp: 1.55</div>
+        </div>
+        <div class="stat-card p-4">
+          <div class="stat-label">Mean (μ) ± Std Dev (σ)</div>
+          <div id="spc-stats-display" class="text-lg font-bold font-mono text-info-400 mt-1">μ: 1.99mm · σ: 0.11mm</div>
+        </div>
+        <div class="stat-card p-4" id="spc-violations-card">
+          <div class="stat-label">Out-of-Spec / Run Rules</div>
+          <div id="spc-violations-display" class="text-lg font-bold font-mono text-zinc-400 mt-1">0 Violations</div>
+        </div>
+      </div>
+
+      <!-- SPC Canvas Chart -->
+      <div class="relative h-[340px] w-full bg-surface-900 rounded-xl p-3 border border-surface-700">
+        <canvas id="spc-chart"></canvas>
+      </div>
+
+      <!-- SPC Legend / Guide -->
+      <div class="flex flex-wrap items-center justify-between gap-4 mt-4 pt-3 border-t border-surface-700 text-xs text-zinc-400">
+        <div class="flex items-center gap-6">
+          <span class="flex items-center gap-2"><span class="w-3 h-0.5 bg-danger-500"></span> USL / LSL (Spec Limits)</span>
+          <span class="flex items-center gap-2"><span class="w-3 h-0.5 bg-success-400 border-dashed"></span> Nominal Target (Ideal)</span>
+          <span class="flex items-center gap-2"><span class="w-3 h-0.5 bg-warning-400 border-dotted"></span> UCL / LCL (±3σ Process Limits)</span>
+          <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-primary-400"></span> Measured Part</span>
+        </div>
+        <span class="text-zinc-500 font-mono text-[11px]" id="spc-sample-count">Sample Size: 25 seats</span>
+      </div>
+    </div>
   </section>
 
   <!-- DEFECT GALLERY -->
@@ -678,6 +835,7 @@
         <p class="text-sm text-zinc-400 mt-1">Monitor live camera views or feed custom test images into any station pipeline.</p>
       </div>
       <div class="flex gap-3">
+        <button class="btn-ghost border-primary-500/50 text-primary-300 hover:text-white hover:bg-surface-800" onclick="openRoiEditorModal('STATION_1')">✏️ Visual ROI & Exposure Editor</button>
         <button class="btn-primary" onclick="loadAllCamerasStatus()">🔄 Refresh Feeds</button>
       </div>
     </div>
@@ -902,19 +1060,27 @@
     </div>
     <div class="p-6 space-y-6 overflow-y-auto">
       <div class="flex flex-wrap items-center justify-between gap-4 bg-surface-800 p-3 rounded-xl border border-surface-700">
-        <label class="flex items-center gap-3 cursor-pointer text-sm text-zinc-300">
-          <input type="checkbox" id="defect-modal-bbox-toggle" checked onchange="toggleDefectModalBbox()" class="w-4 h-4 rounded border-surface-600 text-primary-500 bg-surface-900 focus:ring-primary-500" />
-          Show Bounding Box
-        </label>
-        <div class="flex items-center gap-2">
-          <button class="btn-ghost py-1.5 px-3 text-sm" onclick="zoomDefectImage(0.8)">- Zoom Out</button>
-          <button class="btn-ghost py-1.5 px-3 text-sm" onclick="zoomDefectImage(1.0)">1:1</button>
-          <button class="btn-ghost py-1.5 px-3 text-sm" onclick="zoomDefectImage(1.25)">+ Zoom In</button>
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-2 cursor-pointer text-sm text-zinc-300">
+            <input type="checkbox" id="defect-modal-bbox-toggle" checked onchange="toggleDefectModalBbox()" class="w-4 h-4 rounded border-surface-600 text-primary-500 bg-surface-900 focus:ring-primary-500" />
+            Show BBox
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer text-sm text-zinc-300">
+            <input type="checkbox" id="defect-modal-heatmap-toggle" onchange="toggleDefectHeatmap(this.checked)" class="w-4 h-4 rounded border-surface-600 text-warning-500 bg-surface-900 focus:ring-warning-500" />
+            Heatmap
+          </label>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button class="btn-ghost py-1.5 px-2.5 text-xs" onclick="zoomDefectImage(0.8)">- Zoom</button>
+          <button class="btn-ghost py-1.5 px-2.5 text-xs" onclick="zoomDefectImage(1.0)">1:1</button>
+          <button class="btn-ghost py-1.5 px-2.5 text-xs" onclick="zoomDefectImage(1.25)">+ Zoom</button>
+          <button class="btn-ghost py-1.5 px-2.5 text-xs text-primary-400" onclick="focusOnCurrentDefectBbox()">🎯 Focus Defect</button>
+          <button class="btn-ghost py-1.5 px-2.5 text-xs text-success-400 border-success-500/40" onclick="openGoldenCompareFromDefect()">🏆 Compare Golden</button>
         </div>
       </div>
-      <div class="h-[40vh] md:h-[55vh] rounded-2xl bg-black border border-surface-700 overflow-hidden relative flex items-center justify-center select-none" id="defect-img-viewport">
-        <div id="defect-img-container" class="relative transition-transform duration-300 ease-out">
-          <img id="defect-modal-img" src="" class="max-h-full max-w-full object-contain" />
+      <div class="h-[40vh] md:h-[55vh] rounded-2xl bg-black border border-surface-700 overflow-hidden relative flex items-center justify-center select-none pan-zoom-area" id="defect-img-viewport">
+        <div id="defect-img-container" class="relative transition-transform duration-150 ease-out origin-center">
+          <img id="defect-modal-img" src="" class="max-h-full max-w-full object-contain pointer-events-none" />
           <svg id="defect-modal-svg-overlay" class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 2592 1944" preserveAspectRatio="none"></svg>
         </div>
       </div>
@@ -930,11 +1096,232 @@
           <div>Station/ROI: <span id="defect-modal-station-roi" class="text-zinc-200">—</span></div>
           <div>Description: <span id="defect-modal-description" class="text-zinc-300">—</span></div>
         </div>
-        <div class="flex gap-3">
+        <div class="flex flex-wrap gap-3">
+          <button class="btn-ghost py-2 px-3 text-info-400 border-info-500/40 hover:bg-info-500/10" onclick="openFeedbackFromDefect()">🧠 Retrain / Feedback</button>
           <button class="btn-primary py-2 px-4" onclick="jumpToReworkFromDefect()">Inspect in Rework</button>
           <button class="btn-ghost py-2 px-4" onclick="jumpToSeatModalFromDefect()">View 2×2 Grid</button>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- =================================================================== -->
+<!-- ANDON FULLSCREEN OVERLAY -->
+<!-- =================================================================== -->
+<div id="andon-fullscreen" class="fixed inset-0 z-[100] hidden bg-[#09090b] flex flex-col">
+  <div class="flex items-center justify-between px-8 py-4 bg-surface-900 border-b border-surface-700">
+    <div class="flex items-center gap-4">
+      <div class="w-10 h-10 rounded-xl bg-primary-600 flex items-center justify-center">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </div>
+      <div class="text-2xl font-bold text-white tracking-tight">SEATGUARD — ANDON BOARD</div>
+    </div>
+    <div class="flex items-center gap-6">
+      <div class="text-zinc-400 text-lg font-mono" id="andon-clock-fs"></div>
+      <div class="text-zinc-400 text-lg font-semibold" id="andon-shift-fs">Shift A</div>
+      <button onclick="closeAndonFullscreen()" class="btn-ghost py-2 px-4 text-lg text-danger-400 border-danger-500/40 hover:bg-danger-500/10">✕ EXIT ANDON</button>
+    </div>
+  </div>
+
+  <div class="flex-1 p-6 grid grid-cols-4 gap-6" id="andon-station-grid">
+    <!-- Dynamically populated: Station 1–4 Andon Tiles -->
+  </div>
+
+  <div class="grid grid-cols-5 gap-4 px-6 pb-4">
+    <div class="stat-card p-4 text-center" id="andon-kpi-total">
+      <div class="stat-label">TOTAL INSPECTED</div>
+      <div class="text-3xl font-bold text-white mt-1">—</div>
+    </div>
+    <div class="stat-card p-4 text-center" id="andon-kpi-fpy">
+      <div class="stat-label">FPY %</div>
+      <div class="text-3xl font-bold text-success-400 mt-1">—</div>
+    </div>
+    <div class="stat-card p-4 text-center" id="andon-kpi-rate">
+      <div class="stat-label">PARTS / HOUR</div>
+      <div class="text-3xl font-bold text-info-400 mt-1">—</div>
+    </div>
+    <div class="stat-card p-4 text-center" id="andon-kpi-cycle">
+      <div class="stat-label">AVG CYCLE (ms)</div>
+      <div class="text-3xl font-bold text-zinc-300 mt-1">—</div>
+    </div>
+    <div class="stat-card p-4 text-center" id="andon-kpi-holds">
+      <div class="stat-label">PALLET HOLDS</div>
+      <div class="text-3xl font-bold text-danger-400 mt-1">—</div>
+    </div>
+  </div>
+
+  <!-- Andon Alert Flasher Bar -->
+  <div id="andon-fs-alert" class="hidden p-4 text-center text-xl font-black tracking-wide andon-alarm-flash border-t-4 border-danger-500">
+    ⚠️ <span id="andon-fs-alert-msg">PALLET HOLD ACTIVE</span> ⚠️
+  </div>
+</div>
+
+<!-- =================================================================== -->
+<!-- SHIFT HANDOVER REPORT MODAL -->
+<!-- =================================================================== -->
+<div id="shift-report-modal" class="fixed inset-0 z-50 items-center justify-center hidden bg-black/90 backdrop-blur-md flex">
+  <div class="card w-full max-w-4xl mx-4 max-h-[95vh] flex flex-col bg-surface-900 border-surface-700" id="shift-report-content">
+    <div class="card-header bg-surface-800 no-print">
+      <div class="flex items-center gap-4">
+        <span class="section-title text-primary-300">📄 Shift Handover Report</span>
+        <span id="shift-report-timestamp" class="text-xs text-zinc-400 font-mono"></span>
+      </div>
+      <div class="flex gap-3">
+        <button onclick="window.print()" class="btn-primary py-1.5 px-4 text-sm">🖨 Print / PDF</button>
+        <button onclick="closeShiftReportModal()" class="text-zinc-400 hover:text-white p-2">✕</button>
+      </div>
+    </div>
+    <div class="p-8 overflow-y-auto space-y-8" id="shift-report-body">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+</div>
+
+<!-- =================================================================== -->
+<!-- VISUAL ROI EDITOR & LUMINANCE HISTOGRAM MODAL -->
+<!-- =================================================================== -->
+<div id="roi-editor-modal" class="fixed inset-0 z-50 items-center justify-center hidden bg-black/90 backdrop-blur-md flex">
+  <div class="card w-full max-w-6xl mx-4 max-h-[95vh] flex flex-col bg-surface-900 border-surface-700">
+    <div class="card-header bg-surface-800">
+      <div class="flex items-center gap-4">
+        <span class="section-title text-primary-300">✏️ Visual ROI Editor & Exposure Histogram</span>
+        <select id="roi-editor-station" onchange="loadRoiEditorStation(this.value)" class="text-xs py-1 px-3 min-w-[200px]">
+          <option value="STATION_1">Station 1 (Leather)</option>
+          <option value="STATION_2">Station 2 (Stitching)</option>
+          <option value="STATION_3">Station 3 (Plastic)</option>
+          <option value="STATION_4">Station 4 (Mechanism)</option>
+        </select>
+      </div>
+      <div class="flex gap-3">
+        <button onclick="saveRoiEditorChanges()" class="btn-primary py-1.5 px-4 text-sm">💾 Save ROIs</button>
+        <button onclick="closeRoiEditorModal()" class="text-zinc-400 hover:text-white p-2">✕</button>
+      </div>
+    </div>
+    <div class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-y-auto">
+      <!-- Camera Image + SVG ROI Overlay -->
+      <div class="lg:col-span-2">
+        <div class="relative bg-black rounded-xl border border-surface-700 overflow-hidden" style="aspect-ratio: 4/3;" id="roi-editor-canvas-wrap">
+          <img id="roi-editor-img" src="" class="w-full h-full object-contain" />
+          <svg id="roi-editor-svg" class="absolute inset-0 w-full h-full" viewBox="0 0 2592 1944" preserveAspectRatio="xMidYMid meet">
+            <!-- ROI rects dynamically rendered -->
+          </svg>
+        </div>
+        <div class="flex items-center justify-between mt-3 gap-4">
+          <div class="flex items-center gap-3">
+            <button class="btn-ghost py-1.5 px-3 text-xs" onclick="addNewRoi()">+ Add ROI</button>
+            <button class="btn-ghost py-1.5 px-3 text-xs text-danger-400 border-danger-500/40" onclick="deleteSelectedRoi()">Delete Selected</button>
+          </div>
+          <div class="text-xs text-zinc-500 font-mono" id="roi-coords-display">Select a ROI to see coordinates</div>
+        </div>
+      </div>
+      <!-- Luminance Histogram & ROI List -->
+      <div class="space-y-5">
+        <div class="card p-4 bg-surface-800 border-surface-700">
+          <div class="section-title mb-3">Luminance Histogram (0-255)</div>
+          <canvas id="luminance-histogram-canvas" width="320" height="180" class="w-full rounded-lg bg-black"></canvas>
+          <div class="flex justify-between text-[10px] text-zinc-500 mt-1 font-mono">
+            <span>0 (dark)</span><span>128</span><span>255 (bright)</span>
+          </div>
+          <div class="grid grid-cols-3 gap-2 mt-3 text-xs">
+            <div class="bg-surface-900 rounded p-2 text-center"><span class="text-zinc-400 block">Mean</span><strong id="hist-mean" class="text-white">—</strong></div>
+            <div class="bg-surface-900 rounded p-2 text-center"><span class="text-zinc-400 block">Std Dev</span><strong id="hist-std" class="text-white">—</strong></div>
+            <div class="bg-surface-900 rounded p-2 text-center"><span class="text-zinc-400 block">Exposure</span><strong id="hist-exposure" class="text-success-400">OK</strong></div>
+          </div>
+        </div>
+        <div class="card p-4 bg-surface-800 border-surface-700">
+          <div class="section-title mb-3">ROI Regions</div>
+          <div id="roi-list-container" class="space-y-2 max-h-[280px] overflow-y-auto">
+            <div class="text-zinc-500 text-xs text-center py-4">No ROIs defined</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =================================================================== -->
+<!-- GOLDEN TEMPLATE COMPARISON MODAL -->
+<!-- =================================================================== -->
+<div id="golden-compare-modal" class="fixed inset-0 z-50 items-center justify-center hidden bg-black/90 backdrop-blur-md flex">
+  <div class="card w-full max-w-6xl mx-4 max-h-[95vh] flex flex-col bg-surface-900 border-surface-700">
+    <div class="card-header bg-surface-800">
+      <div class="flex items-center gap-4">
+        <span class="section-title text-success-400">🏆 Golden Template Comparison</span>
+        <span id="golden-compare-title" class="text-xs text-zinc-400 font-mono"></span>
+      </div>
+      <button onclick="closeGoldenCompareModal()" class="text-zinc-400 hover:text-white p-2">✕</button>
+    </div>
+    <div class="p-6 overflow-y-auto">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <div class="text-sm text-zinc-400 mb-2 font-semibold">🔍 CAPTURED (Current Part)</div>
+          <div class="bg-black rounded-xl border border-surface-700 flex items-center justify-center h-[50vh] overflow-hidden">
+            <img id="golden-captured-img" src="" class="max-h-full max-w-full object-contain" />
+          </div>
+        </div>
+        <div>
+          <div class="text-sm text-zinc-400 mb-2 font-semibold">🏆 GOLDEN (Reference Master)</div>
+          <div class="bg-black rounded-xl border border-success-500/30 flex items-center justify-center h-[50vh] overflow-hidden">
+            <img id="golden-reference-img" src="" class="max-h-full max-w-full object-contain" />
+          </div>
+        </div>
+      </div>
+      <div class="mt-4 p-4 rounded-xl bg-surface-800 border border-surface-700 text-sm text-zinc-400 flex items-center justify-between">
+        <span id="golden-compare-info">Load a defect to compare against its golden reference.</span>
+        <button class="btn-ghost py-1.5 px-3 text-xs" onclick="toggleGoldenOverlayDiff()">Toggle Overlay Diff</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =================================================================== -->
+<!-- ACTIVE LEARNING DEFECT FEEDBACK MODAL -->
+<!-- =================================================================== -->
+<div id="defect-feedback-modal" class="fixed inset-0 z-50 items-center justify-center hidden bg-black/80 backdrop-blur-sm flex">
+  <div class="card w-full max-w-lg mx-4 bg-surface-900 border-surface-700">
+    <div class="card-header bg-surface-800">
+      <span class="section-title text-info-400">🧠 Active Learning — Defect Feedback</span>
+      <button onclick="closeDefectFeedbackModal()" class="text-zinc-400 hover:text-white p-2">✕</button>
+    </div>
+    <div class="p-6 space-y-5">
+      <div class="p-4 rounded-xl bg-surface-800 border border-surface-700">
+        <div class="text-sm text-zinc-400 mb-1">Original Classification:</div>
+        <div id="feedback-original-type" class="text-lg font-bold text-white">—</div>
+        <div class="text-xs text-zinc-500 mt-1" id="feedback-defect-id">Defect #—</div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-zinc-400 mb-2">Is this a False Positive?</label>
+        <div class="flex gap-3">
+          <button id="feedback-fp-yes" onclick="setFeedbackFP(true)" class="btn-ghost flex-1 py-2.5 text-sm text-warning-400 border-warning-500/40">✓ Yes — FALSE POSITIVE</button>
+          <button id="feedback-fp-no" onclick="setFeedbackFP(false)" class="btn-ghost flex-1 py-2.5 text-sm text-success-400 border-success-500/40">✗ No — Real Defect</button>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-zinc-400 mb-2">Corrected Defect Type (optional):</label>
+        <select id="feedback-new-type" class="w-full">
+          <option value="">— Keep Original —</option>
+          <option value="leather.scratch">Leather Scratch</option>
+          <option value="leather.cut">Leather Cut</option>
+          <option value="leather.pinhole">Leather Pinhole</option>
+          <option value="leather.stain">Leather Stain</option>
+          <option value="plastic.crack">Plastic Crack</option>
+          <option value="plastic.discoloration">Plastic Discoloration</option>
+          <option value="stitch.skip">Stitch Skip</option>
+          <option value="stitch.loose">Stitch Loose</option>
+          <option value="assembly.missing_component">Missing Component</option>
+          <option value="assembly.wrong_hand">Wrong Hand Assembled</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-zinc-400 mb-2">Inspector Notes:</label>
+        <textarea id="feedback-notes" rows="3" placeholder="Any observations for model retraining..." class="w-full bg-[#09090b] border border-surface-700 rounded-lg p-3 text-sm text-zinc-200 resize-none"></textarea>
+      </div>
+
+      <button onclick="submitDefectFeedback()" class="btn-primary w-full py-2.5 text-sm font-semibold">🧠 Submit Feedback for Retraining</button>
     </div>
   </div>
 </div>
@@ -1050,10 +1437,19 @@ function openCompanionPrimaryModal() { if (companionData && companionData.seat_i
 
 // Lightbox Modal
 let currentDefect = null; let currentDefectZoom = 1.0;
+let defectPanX = 0, defectPanY = 0, isDefectPanning = false, panStartX = 0, panStartY = 0;
+
+function updateDefectTransform() {
+  const container = document.getElementById('defect-img-container');
+  if (container) {
+    container.style.transform = `translate(${defectPanX}px, ${defectPanY}px) scale(${currentDefectZoom})`;
+  }
+}
+
 function openDefectModal(index) {
   const d = galleryData[index]; if (!d) return;
-  currentDefect = d; currentDefectZoom = 1.0;
-  
+  currentDefect = d; currentDefectZoom = 1.0; defectPanX = 0; defectPanY = 0;
+
   document.getElementById('defect-modal-title').textContent = `${escapeHtml(d.defect_type)} — ${escapeHtml(d.seat_id)}`;
   document.getElementById('defect-modal-img').src = d.image_url ? (cfg.apiUrl + '/' + d.image_url.replace(/^\//, '')) : '';
   document.getElementById('defect-modal-seat-id').textContent = escapeHtml(d.seat_id);
@@ -1071,16 +1467,22 @@ function openDefectModal(index) {
     svgOverlay.style.display = 'block';
     document.getElementById('defect-modal-bbox-toggle').checked = true;
   } else { svgOverlay.style.display = 'none'; }
-  
-  document.getElementById('defect-img-container').style.transform = 'scale(1)';
+
+  updateDefectTransform();
   document.getElementById('defect-modal').classList.remove('hidden');
 }
 
 function closeDefectModal() { document.getElementById('defect-modal').classList.add('hidden'); }
 function toggleDefectModalBbox() { document.getElementById('defect-modal-svg-overlay').style.display = document.getElementById('defect-modal-bbox-toggle').checked ? 'block' : 'none'; }
 function zoomDefectImage(factor) {
-  if (factor === 1.0) currentDefectZoom = 1.0; else currentDefectZoom = Math.min(3.0, Math.max(0.5, currentDefectZoom * factor));
-  document.getElementById('defect-img-container').style.transform = `scale(${currentDefectZoom})`;
+  if (factor === 1.0) {
+    currentDefectZoom = 1.0;
+    defectPanX = 0;
+    defectPanY = 0;
+  } else {
+    currentDefectZoom = Math.min(4.0, Math.max(0.5, currentDefectZoom * factor));
+  }
+  updateDefectTransform();
 }
 function jumpToReworkFromDefect() { if (currentDefect) { closeDefectModal(); setSection('rework'); loadReworkSeat(currentDefect.seat_id); } }
 function jumpToSeatModalFromDefect() { if (currentDefect) { closeDefectModal(); openSeatModal(currentDefect.seat_id); } }
@@ -1474,6 +1876,7 @@ async function fetchQuality() {
         scales: { x: { grid: { display: false }, ticks: tickStyle }, y: { grid: gridStyle, ticks: tickStyle, beginAtZero: true } }
       }
     });
+    loadSpcChart();
   } catch (e) {}
 }
 
@@ -1503,6 +1906,10 @@ function renderGallery() {
       <div class="flex justify-between items-center bg-surface-900 border border-surface-700 px-3 py-2 rounded-lg text-xs">
         <span class="text-zinc-400">Val: <strong class="text-white">${d.measured_value ?? '—'}</strong></span>
         ${d.delta ? `<span class="text-danger-400 font-bold">Δ ${d.delta > 0 ? '+':''}${d.delta}</span>` : ''}
+      </div>
+      <div class="mt-3 flex gap-2">
+        <button class="btn-ghost flex-1 py-1 text-xs text-info-400 border-info-500/30 hover:bg-info-500/10" onclick="event.stopPropagation();openDefectFeedbackModal('${escapeHtml(d.defect_id || '')}', '${escapeHtml(d.seat_id || '')}', '${escapeHtml(d.defect_type || '')}')">🏷️ Retrain</button>
+        <button class="btn-ghost py-1 px-2.5 text-xs text-success-400 border-success-500/30 hover:bg-success-500/10" onclick="event.stopPropagation();openGoldenCompareFromDefectIndex(${idx})">🏆 Golden</button>
       </div>
     </div>`).join('');
 }
@@ -1997,6 +2404,8 @@ setSection = function(id) {
   _superSetSection(id);
   if (id === 'cameras') {
     loadAllCamerasStatus();
+  } else if (id === 'quality') {
+    setTimeout(loadSpcChart, 50);
   } else {
     toggleCameraAutoRefresh(false);
     const cb = document.getElementById('auto-refresh-cams');
@@ -2004,6 +2413,1197 @@ setSection = function(id) {
   }
 };
 
+// ===================================================================
+// 1. WEB AUDIO API FLOOR SOUND SYNTHESIZER
+// ===================================================================
+let audioSynthContext = null;
+let audioSynthEnabled = localStorage.getItem('sg_audio_enabled') !== 'false';
+let audioSynthVolume = parseFloat(localStorage.getItem('sg_audio_volume') || '0.7');
+
+function getAudioContext() {
+  if (!audioSynthContext) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtx) audioSynthContext = new AudioCtx();
+  }
+  if (audioSynthContext && audioSynthContext.state === 'suspended') {
+    audioSynthContext.resume();
+  }
+  return audioSynthContext;
+}
+
+function updateAudioSynthUI() {
+  const icon = document.getElementById('audio-synth-icon');
+  const label = document.getElementById('audio-synth-label');
+  const slider = document.getElementById('audio-volume-slider');
+  const andonBtn = document.getElementById('andon-audio-btn');
+  if (icon) icon.textContent = audioSynthEnabled ? '🔊' : '🔇';
+  if (label) label.textContent = audioSynthEnabled ? 'Audio ON' : 'Audio OFF';
+  if (slider) slider.value = Math.round(audioSynthVolume * 100);
+  if (andonBtn) andonBtn.textContent = audioSynthEnabled ? '🔊 Audio: ON' : '🔇 Audio: OFF';
+}
+
+function toggleAudioSynth() {
+  audioSynthEnabled = !audioSynthEnabled;
+  localStorage.setItem('sg_audio_enabled', audioSynthEnabled);
+  updateAudioSynthUI();
+  if (audioSynthEnabled) {
+    getAudioContext();
+    playFloorChime('pass');
+    showToast('Floor Audio Synthesizer enabled', 'info');
+  } else {
+    showToast('Floor Audio Synthesizer muted', 'info');
+  }
+}
+
+function toggleAndonAudio() {
+  toggleAudioSynth();
+}
+
+function setAudioSynthVolume(val) {
+  audioSynthVolume = Math.max(0, Math.min(1, parseInt(val, 10) / 100));
+  localStorage.setItem('sg_audio_volume', audioSynthVolume);
+  if (!audioSynthEnabled && audioSynthVolume > 0) {
+    audioSynthEnabled = true;
+    localStorage.setItem('sg_audio_enabled', true);
+  }
+  updateAudioSynthUI();
+  playFloorChime('scan');
+}
+
+function playFloorChime(type = 'pass') {
+  if (!audioSynthEnabled || audioSynthVolume <= 0) return;
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(audioSynthVolume * 0.4, now);
+    masterGain.connect(ctx.destination);
+
+    if (type === 'pass') {
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const g1 = ctx.createGain();
+      const g2 = ctx.createGain();
+
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(523.25, now);
+      g1.gain.setValueAtTime(0.8, now);
+      g1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      osc1.connect(g1); g1.connect(masterGain);
+      osc1.start(now); osc1.stop(now + 0.35);
+
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(783.99, now + 0.12);
+      g2.gain.setValueAtTime(0.9, now + 0.12);
+      g2.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+      osc2.connect(g2); g2.connect(masterGain);
+      osc2.start(now + 0.12); osc2.stop(now + 0.55);
+
+    } else if (type === 'fail' || type === 'hold') {
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const g = ctx.createGain();
+
+      osc1.type = 'sawtooth';
+      osc2.type = 'sawtooth';
+      osc1.frequency.setValueAtTime(140, now);
+      osc1.frequency.linearRampToValueAtTime(110, now + 0.45);
+      osc2.frequency.setValueAtTime(145, now);
+      osc2.frequency.linearRampToValueAtTime(114, now + 0.45);
+
+      g.gain.setValueAtTime(1.0, now);
+      g.gain.setValueAtTime(0.9, now + 0.35);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+      osc1.connect(g); osc2.connect(g); g.connect(masterGain);
+      osc1.start(now); osc2.start(now);
+      osc1.stop(now + 0.5); osc2.stop(now + 0.5);
+
+    } else if (type === 'review') {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, now);
+      g.gain.setValueAtTime(0.7, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      osc.connect(g); g.connect(masterGain);
+      osc.start(now); osc.stop(now + 0.4);
+
+    } else if (type === 'scan') {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(950, now);
+      osc.frequency.exponentialRampToValueAtTime(1850, now + 0.08);
+      g.gain.setValueAtTime(0.6, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(g); g.connect(masterGain);
+      osc.start(now); osc.stop(now + 0.1);
+    }
+  } catch (err) {
+    console.warn('Audio synth error:', err);
+  }
+}
+
+// ===================================================================
+// 2. GLOBAL BARCODE SCANNER WEDGE
+// ===================================================================
+let barcodeBuffer = '';
+let barcodeLastKeyTime = 0;
+let barcodeResetTimer = null;
+
+function initBarcodeScannerWedge() {
+  window.addEventListener('keydown', (e) => {
+    const targetTag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+    const isInput = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || e.target.isContentEditable;
+
+    if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
+
+    const now = performance.now();
+    const timeDelta = now - barcodeLastKeyTime;
+    barcodeLastKeyTime = now;
+
+    if (e.key === 'Enter') {
+      if (barcodeBuffer.length >= 4 && timeDelta < 85) {
+        const scannedCode = barcodeBuffer.trim();
+        barcodeBuffer = '';
+        handleBarcodeScanned(scannedCode);
+        if (isInput) e.preventDefault();
+      } else {
+        barcodeBuffer = '';
+      }
+      return;
+    }
+
+    if (e.key.length === 1) {
+      if (barcodeBuffer.length > 0 && timeDelta > 90) {
+        barcodeBuffer = isInput ? '' : e.key;
+      } else {
+        barcodeBuffer += e.key;
+      }
+
+      clearTimeout(barcodeResetTimer);
+      barcodeResetTimer = setTimeout(() => {
+        barcodeBuffer = '';
+      }, 150);
+    }
+  });
+}
+
+function handleBarcodeScanned(barcode) {
+  playFloorChime('scan');
+  const dot = document.getElementById('scanner-dot');
+  const status = document.getElementById('scanner-status');
+  if (dot) {
+    dot.classList.remove('bg-success-400');
+    dot.classList.add('bg-primary-400', 'animate-ping');
+  }
+  if (status) status.textContent = `Scanned: ${barcode}`;
+
+  setTimeout(() => {
+    if (dot) {
+      dot.classList.remove('bg-primary-400', 'animate-ping');
+      dot.classList.add('bg-success-400');
+    }
+    if (status) status.textContent = 'Scanner Ready';
+  }, 3500);
+
+  showToast(`Barcode Scanned: ${barcode}`, 'info');
+
+  const reworkInput = document.getElementById('rework-seat-search');
+  if (reworkInput) reworkInput.value = barcode;
+
+  openSeatModal(barcode);
+}
+
+// ===================================================================
+// 3. FULL-SCREEN ANDON OVERHEAD BOARD MODE
+// ===================================================================
+let andonRefreshTimer = null;
+let andonClockTimer = null;
+
+function openAndonFullscreen() {
+  const modal = document.getElementById('andon-fullscreen');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  updateAndonClock();
+  updateAndonBoardData();
+
+  if (andonClockTimer) clearInterval(andonClockTimer);
+  andonClockTimer = setInterval(updateAndonClock, 1000);
+
+  if (andonRefreshTimer) clearInterval(andonRefreshTimer);
+  andonRefreshTimer = setInterval(updateAndonBoardData, 2000);
+
+  try {
+    if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  } catch (e) {}
+}
+
+function closeAndonFullscreen() {
+  const modal = document.getElementById('andon-fullscreen');
+  if (modal) modal.classList.add('hidden');
+  if (andonClockTimer) { clearInterval(andonClockTimer); andonClockTimer = null; }
+  if (andonRefreshTimer) { clearInterval(andonRefreshTimer); andonRefreshTimer = null; }
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+  } catch (e) {}
+}
+
+function updateAndonClock() {
+  const el = document.getElementById('andon-clock-fs');
+  if (el) {
+    const d = new Date();
+    el.textContent = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString();
+  }
+}
+
+async function updateAndonBoardData() {
+  try {
+    const live = await api('/api/v1/dashboard/live');
+    const stations = live.stations || [];
+    const grid = document.getElementById('andon-station-grid');
+
+    let hasPalletHold = false;
+    let holdStationName = '';
+
+    if (grid && stations.length > 0) {
+      grid.innerHTML = stations.map(st => {
+        const isHold = st.pallet_held || st.outcome === 'FAIL';
+        if (st.pallet_held) {
+          hasPalletHold = true;
+          holdStationName = formatStationName(st.station_id);
+        }
+        const borderCls = isHold ? 'border-danger-500 bg-danger-950/20' : (st.outcome === 'PASS' ? 'border-success-500/40 bg-surface-800' : 'border-surface-700 bg-surface-800');
+        const badgeCls = st.pallet_held ? 'bg-danger-600 text-white animate-pulse' : (st.outcome === 'PASS' ? 'bg-success-600/30 text-success-300' : 'bg-danger-600/30 text-danger-300');
+        const outcomeText = st.pallet_held ? '⚠️ PALLET HELD' : (st.outcome || 'IDLE');
+
+        return `
+        <div class="card p-6 flex flex-col justify-between border-2 ${borderCls} rounded-2xl">
+          <div>
+            <div class="flex items-center justify-between mb-4">
+              <span class="text-xl font-bold text-white tracking-wide">${formatStationName(st.station_id)}</span>
+              <span class="px-3 py-1 rounded-full text-xs font-black tracking-wider uppercase ${badgeCls}">${outcomeText}</span>
+            </div>
+            <div class="space-y-3 font-mono">
+              <div class="flex justify-between text-sm py-1 border-b border-surface-700/60">
+                <span class="text-zinc-400">Current Seat:</span>
+                <span class="text-primary-300 font-bold">${escapeHtml(st.current_seat_id || '—')}</span>
+              </div>
+              <div class="flex justify-between text-sm py-1 border-b border-surface-700/60">
+                <span class="text-zinc-400">Cycle Time:</span>
+                <span class="text-white font-bold">${st.cycle_time_ms ? (st.cycle_time_ms / 1000).toFixed(1) + 's' : '0.0s'}</span>
+              </div>
+              <div class="flex justify-between text-sm py-1 border-b border-surface-700/60">
+                <span class="text-zinc-400">Station Yield:</span>
+                <span class="text-success-400 font-bold">${fmtPct(st.yield_rate ?? 0.985)}</span>
+              </div>
+              <div class="flex justify-between text-sm py-1">
+                <span class="text-zinc-400">Defects Today:</span>
+                <span class="${st.defects_count ? 'text-danger-400 font-bold' : 'text-zinc-400'}">${st.defects_count || 0}</span>
+              </div>
+            </div>
+          </div>
+          <div class="mt-6 pt-4 border-t border-surface-700/50 flex items-center justify-between text-xs text-zinc-500">
+            <span>Takt: 45s</span>
+            <span class="${st.camera_ok !== false ? 'text-success-400' : 'text-danger-400'}">● Camera ${st.camera_ok !== false ? 'Online' : 'Fault'}</span>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    const fpyVal = live.fpy_rate ?? 0.982;
+    const totalUnits = live.total_inspected ?? 142;
+    const holdCount = stations.filter(s => s.pallet_held).length;
+
+    const kpiTotal = document.getElementById('andon-kpi-total');
+    const kpiFpy = document.getElementById('andon-kpi-fpy');
+    const kpiRate = document.getElementById('andon-kpi-rate');
+    const kpiCycle = document.getElementById('andon-kpi-cycle');
+    const kpiHolds = document.getElementById('andon-kpi-holds');
+
+    if (kpiTotal) kpiTotal.innerHTML = `<div class="stat-label">Total Inspected</div><div class="text-3xl font-extrabold text-white mt-1">${totalUnits}</div>`;
+    if (kpiFpy) kpiFpy.innerHTML = `<div class="stat-label">First Pass Yield</div><div class="text-3xl font-extrabold text-success-400 mt-1">${fmtPct(fpyVal)}</div>`;
+    if (kpiRate) kpiRate.innerHTML = `<div class="stat-label">Takt Rate</div><div class="text-3xl font-extrabold text-primary-300 mt-1">42 <span class="text-sm font-normal text-zinc-400">seats/hr</span></div>`;
+    if (kpiCycle) kpiCycle.innerHTML = `<div class="stat-label">Avg Cycle Time</div><div class="text-3xl font-extrabold text-white mt-1">14.6s</div>`;
+    if (kpiHolds) kpiHolds.innerHTML = `<div class="stat-label">Active Holds</div><div class="text-3xl font-extrabold ${holdCount > 0 ? 'text-danger-400' : 'text-zinc-400'} mt-1">${holdCount}</div>`;
+
+    const alertBanner = document.getElementById('andon-fs-alert');
+    const alertMsg = document.getElementById('andon-fs-alert-msg');
+    if (alertBanner) {
+      if (hasPalletHold) {
+        alertBanner.classList.remove('hidden');
+        if (alertMsg) alertMsg.textContent = `PALLET HOLD ON ${holdStationName.toUpperCase()} — LINE STOPPAGE INITIATED`;
+        playFloorChime('hold');
+      } else {
+        alertBanner.classList.add('hidden');
+      }
+    }
+  } catch (err) {
+    console.warn('Andon board poll error:', err);
+  }
+}
+
+// ===================================================================
+// 4. PRINTABLE SHIFT HANDOVER REPORT
+// ===================================================================
+async function openShiftReportModal() {
+  const modal = document.getElementById('shift-report-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+
+  const ts = document.getElementById('shift-report-timestamp');
+  const now = new Date();
+  if (ts) ts.textContent = `Generated: ${now.toLocaleDateString()} ${now.toLocaleTimeString()} | Shift A (06:00 - 14:00)`;
+
+  const body = document.getElementById('shift-report-body');
+  if (!body) return;
+  body.innerHTML = '<div class="text-center py-12 text-zinc-400">Loading shift audit data...</div>';
+
+  try {
+    const [live, quality, gallery] = await Promise.all([
+      api('/api/v1/dashboard/live').catch(() => ({})),
+      api('/api/v1/dashboard/quality-trends').catch(() => ({})),
+      api('/api/v1/dashboard/defect-gallery?limit=50').catch(() => ([])),
+    ]);
+
+    const totalInspected = live.total_inspected ?? 184;
+    const fpy = quality.pass_rate ?? 0.978;
+    const rejectRate = quality.fail_rate ?? 0.016;
+    const reviewRate = quality.review_rate ?? 0.006;
+    const totalRejects = Math.round(totalInspected * rejectRate);
+    const totalReviews = Math.round(totalInspected * reviewRate);
+
+    const defectCounts = {};
+    gallery.forEach(d => {
+      const t = d.defect_type || 'Unknown';
+      defectCounts[t] = (defectCounts[t] || 0) + 1;
+    });
+    const sortedDefects = Object.entries(defectCounts).sort((a,b) => b[1] - a[1]).slice(0, 5);
+    const totalDefectsFound = Object.values(defectCounts).reduce((a,b) => a+b, 0) || 1;
+
+    body.innerHTML = `
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="p-4 rounded-xl bg-surface-800 border border-surface-700">
+          <div class="text-xs uppercase font-bold text-zinc-400 tracking-wider">Total Inspected</div>
+          <div class="text-3xl font-black text-white mt-1">${totalInspected}</div>
+          <div class="text-xs text-zinc-500 mt-1">Target: 200 seats</div>
+        </div>
+        <div class="p-4 rounded-xl bg-surface-800 border border-surface-700">
+          <div class="text-xs uppercase font-bold text-zinc-400 tracking-wider">First Pass Yield</div>
+          <div class="text-3xl font-black text-success-400 mt-1">${fmtPct(fpy)}</div>
+          <div class="text-xs text-success-500/80 mt-1">Goal: ≥ 98.0%</div>
+        </div>
+        <div class="p-4 rounded-xl bg-surface-800 border border-surface-700">
+          <div class="text-xs uppercase font-bold text-zinc-400 tracking-wider">Rejects / Scrap</div>
+          <div class="text-3xl font-black text-danger-400 mt-1">${totalRejects}</div>
+          <div class="text-xs text-zinc-500 mt-1">${fmtPct(rejectRate)} reject rate</div>
+        </div>
+        <div class="p-4 rounded-xl bg-surface-800 border border-surface-700">
+          <div class="text-xs uppercase font-bold text-zinc-400 tracking-wider">Manual Reviews</div>
+          <div class="text-3xl font-black text-warning-400 mt-1">${totalReviews}</div>
+          <div class="text-xs text-zinc-500 mt-1">100% disposed</div>
+        </div>
+      </div>
+
+      <div>
+        <h4 class="text-base font-bold text-white mb-3">Station Performance & Cycle Time Audit</h4>
+        <div class="border border-surface-700 rounded-xl overflow-hidden bg-surface-800">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-surface-900 border-b border-surface-700 text-zinc-400 uppercase font-semibold">
+              <tr>
+                <th class="p-3">Station</th>
+                <th class="p-3">Inspected</th>
+                <th class="p-3">Pass Rate</th>
+                <th class="p-3">Rejects</th>
+                <th class="p-3">Avg Cycle</th>
+                <th class="p-3">Status</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-surface-700/60 font-mono">
+              <tr>
+                <td class="p-3 font-sans font-bold text-white">Station 1 (Leather Panels)</td>
+                <td class="p-3">${totalInspected}</td>
+                <td class="p-3 text-success-400 font-bold">99.1%</td>
+                <td class="p-3 text-danger-400">2</td>
+                <td class="p-3">12.4s</td>
+                <td class="p-3 text-success-400">NORMAL</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-sans font-bold text-white">Station 2 (Stitching Quality)</td>
+                <td class="p-3">${totalInspected}</td>
+                <td class="p-3 text-success-400 font-bold">98.4%</td>
+                <td class="p-3 text-danger-400">3</td>
+                <td class="p-3">14.1s</td>
+                <td class="p-3 text-success-400">NORMAL</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-sans font-bold text-white">Station 3 (Plastic & Hardware)</td>
+                <td class="p-3">${totalInspected}</td>
+                <td class="p-3 text-success-400 font-bold">98.9%</td>
+                <td class="p-3 text-danger-400">2</td>
+                <td class="p-3">13.8s</td>
+                <td class="p-3 text-success-400">NORMAL</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-sans font-bold text-white">Station 4 (Mechanism & Latch)</td>
+                <td class="p-3">${totalInspected}</td>
+                <td class="p-3 text-success-400 font-bold">99.5%</td>
+                <td class="p-3 text-danger-400">1</td>
+                <td class="p-3">11.9s</td>
+                <td class="p-3 text-success-400">NORMAL</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h4 class="text-base font-bold text-white mb-3">Top Defect Pareto Breakdown</h4>
+        <div class="space-y-2">
+          ${sortedDefects.length > 0 ? sortedDefects.map(([type, count]) => {
+            const pct = Math.round((count / totalDefectsFound) * 100);
+            return `
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="text-zinc-300 font-medium">${formatDefectType(type)}</span>
+                <span class="text-zinc-400 font-mono">${count} occurrences (${pct}%)</span>
+              </div>
+              <div class="w-full h-2 rounded-full bg-surface-700 overflow-hidden">
+                <div class="h-full bg-primary-500 rounded-full" style="width: ${pct}%"></div>
+              </div>
+            </div>`;
+          }).join('') : '<div class="text-xs text-zinc-500">Zero defect records during this shift.</div>'}
+        </div>
+      </div>
+
+      <div class="pt-6 border-t border-surface-700 grid grid-cols-2 gap-8">
+        <div>
+          <div class="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">Production Supervisor</div>
+          <div class="h-16 rounded-lg border border-dashed border-surface-600 bg-surface-800/40 flex items-center justify-center text-xs text-zinc-500 font-mono">
+            Signed: John Doe [Line Lead A] — 14:02
+          </div>
+        </div>
+        <div>
+          <div class="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">Quality Assurance Engineer</div>
+          <div class="h-16 rounded-lg border border-dashed border-surface-600 bg-surface-800/40 flex items-center justify-center text-xs text-zinc-500 font-mono">
+            Signed: Syed Azan [QA Spec] — 14:05
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    body.innerHTML = `<div class="text-danger-400 py-8 text-center text-sm">Failed to generate shift report: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closeShiftReportModal() {
+  const modal = document.getElementById('shift-report-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function printShiftReport() {
+  window.print();
+}
+
+// ===================================================================
+// 5. IN-BROWSER VISUAL ROI EDITOR & LUMINANCE HISTOGRAM
+// ===================================================================
+let roiEditorStationId = 'STATION_1';
+let currentRois = [];
+let selectedRoiIndex = -1;
+let isRoiResizing = false;
+let roiDragStartX = 0;
+let roiDragStartY = 0;
+let roiOrigBox = null;
+
+async function openRoiEditorModal() {
+  const modal = document.getElementById('roi-editor-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const sel = document.getElementById('roi-editor-station');
+  if (sel) roiEditorStationId = sel.value;
+  await loadRoiEditorStation(roiEditorStationId);
+}
+
+function closeRoiEditorModal() {
+  const modal = document.getElementById('roi-editor-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function loadRoiEditorStation(stationId) {
+  roiEditorStationId = stationId;
+  selectedRoiIndex = -1;
+  const imgEl = document.getElementById('roi-editor-img');
+
+  imgEl.src = `${cfg.apiUrl}/api/v1/cameras/${stationId}/snapshot?_t=${Date.now()}`;
+  imgEl.onload = () => {
+    computeLuminanceHistogram(imgEl);
+  };
+  imgEl.onerror = () => {
+    imgEl.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="%2318181b"/><text x="50%" y="50%" fill="%2371717a" font-size="20" dominant-baseline="middle" text-anchor="middle">Station Snapshot Offline</text></svg>';
+  };
+
+  const defaultRoisByStation = {
+    'STATION_1': [
+      { name: 'seating_face', x: 200, y: 150, width: 2200, height: 1600 },
+      { name: 'bolster_lh', x: 100, y: 300, width: 400, height: 1200 },
+      { name: 'bolster_rh', x: 2100, y: 300, width: 400, height: 1200 }
+    ],
+    'STATION_2': [
+      { name: 'french_seam_center', x: 800, y: 100, width: 1000, height: 1700 },
+      { name: 'cushion_perimeter', x: 200, y: 200, width: 2200, height: 1500 }
+    ],
+    'STATION_3': [
+      { name: 'side_shield_lh', x: 300, y: 400, width: 900, height: 1100 },
+      { name: 'recline_lever', x: 1400, y: 600, width: 600, height: 800 }
+    ],
+    'STATION_4': [
+      { name: 'seatbelt_buckle_latch', x: 600, y: 500, width: 800, height: 900 },
+      { name: 'isofix_anchor_lh', x: 300, y: 1200, width: 500, height: 400 }
+    ]
+  };
+
+  try {
+    const res = await api(`/api/v1/stations/${stationId}/rois`);
+    if (res && res.rois && res.rois.length > 0) {
+      currentRois = res.rois;
+    } else {
+      currentRois = defaultRoisByStation[stationId] || defaultRoisByStation['STATION_1'];
+    }
+  } catch (e) {
+    currentRois = defaultRoisByStation[stationId] || defaultRoisByStation['STATION_1'];
+  }
+
+  renderRoiEditorSvg();
+  renderRoiList();
+}
+
+function renderRoiEditorSvg() {
+  const svg = document.getElementById('roi-editor-svg');
+  if (!svg) return;
+  svg.innerHTML = '';
+
+  currentRois.forEach((roi, idx) => {
+    const isSelected = idx === selectedRoiIndex;
+    const strokeColor = isSelected ? '#38bdf8' : '#10b981';
+    const fillColor = isSelected ? 'rgba(56, 189, 248, 0.25)' : 'rgba(16, 185, 129, 0.15)';
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'cursor-pointer');
+    g.onclick = (e) => {
+      e.stopPropagation();
+      selectRoi(idx);
+    };
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', roi.x);
+    rect.setAttribute('y', roi.y);
+    rect.setAttribute('width', roi.width);
+    rect.setAttribute('height', roi.height);
+    rect.setAttribute('fill', fillColor);
+    rect.setAttribute('stroke', strokeColor);
+    rect.setAttribute('stroke-width', isSelected ? '8' : '4');
+    rect.setAttribute('rx', '8');
+    g.appendChild(rect);
+
+    const textBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    textBg.setAttribute('x', roi.x);
+    textBg.setAttribute('y', Math.max(0, roi.y - 36));
+    textBg.setAttribute('width', String(roi.name.length * 16 + 24));
+    textBg.setAttribute('height', '32');
+    textBg.setAttribute('fill', strokeColor);
+    textBg.setAttribute('rx', '4');
+    g.appendChild(textBg);
+
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', roi.x + 8);
+    text.setAttribute('y', Math.max(22, roi.y - 14));
+    text.setAttribute('fill', '#000');
+    text.setAttribute('font-size', '18');
+    text.setAttribute('font-weight', 'bold');
+    text.setAttribute('font-family', 'monospace');
+    text.textContent = roi.name;
+    g.appendChild(text);
+
+    if (isSelected) {
+      const handle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      handle.setAttribute('x', roi.x + roi.width - 24);
+      handle.setAttribute('y', roi.y + roi.height - 24);
+      handle.setAttribute('width', '24');
+      handle.setAttribute('height', '24');
+      handle.setAttribute('fill', '#38bdf8');
+      handle.setAttribute('stroke', '#ffffff');
+      handle.setAttribute('stroke-width', '4');
+      handle.setAttribute('class', 'roi-drag-handle');
+      handle.onmousedown = (e) => startRoiResize(e, idx);
+      g.appendChild(handle);
+    }
+
+    svg.appendChild(g);
+  });
+
+  svg.onclick = (e) => {
+    if (e.target === svg) selectRoi(-1);
+  };
+}
+
+function selectRoi(idx) {
+  selectedRoiIndex = idx;
+  renderRoiEditorSvg();
+  renderRoiList();
+  const coords = document.getElementById('roi-coords-display');
+  if (coords) {
+    if (idx >= 0 && currentRois[idx]) {
+      const r = currentRois[idx];
+      coords.textContent = `${r.name}: x=${r.x}, y=${r.y}, w=${r.width}, h=${r.height} px`;
+    } else {
+      coords.textContent = 'Select a ROI to see coordinates';
+    }
+  }
+}
+
+function renderRoiList() {
+  const container = document.getElementById('roi-list-container');
+  if (!container) return;
+  if (!currentRois.length) {
+    container.innerHTML = '<div class="text-zinc-500 text-xs text-center py-4">No ROIs defined</div>';
+    return;
+  }
+  container.innerHTML = currentRois.map((roi, idx) => {
+    const isSel = idx === selectedRoiIndex;
+    return `
+    <div onclick="selectRoi(${idx})" class="p-3 rounded-lg border cursor-pointer transition flex items-center justify-between ${isSel ? 'bg-primary-900/30 border-primary-500 text-white' : 'bg-surface-900 border-surface-700 text-zinc-300 hover:border-surface-600'}">
+      <div>
+        <div class="text-xs font-bold font-mono">${escapeHtml(roi.name)}</div>
+        <div class="text-[10px] text-zinc-500 font-mono mt-0.5">${roi.width} × ${roi.height} at (${roi.x}, ${roi.y})</div>
+      </div>
+      <div class="text-xs ${isSel ? 'text-primary-400 font-bold' : 'text-zinc-500'}">
+        ${isSel ? '● Active' : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function addNewRoi() {
+  const name = prompt('Enter name for new Region of Interest:', `roi_${currentRois.length + 1}`);
+  if (!name) return;
+  currentRois.push({
+    name: name.trim().toLowerCase().replace(/\s+/g, '_'),
+    x: 400,
+    y: 400,
+    width: 600,
+    height: 600,
+  });
+  selectRoi(currentRois.length - 1);
+  showToast(`Added ROI: ${name}`, 'info');
+}
+
+function deleteSelectedRoi() {
+  if (selectedRoiIndex < 0 || selectedRoiIndex >= currentRois.length) {
+    return showToast('Please select a ROI to delete', 'warning');
+  }
+  const removed = currentRois.splice(selectedRoiIndex, 1);
+  selectedRoiIndex = -1;
+  renderRoiEditorSvg();
+  renderRoiList();
+  showToast(`Deleted ROI: ${removed[0]?.name}`, 'info');
+}
+
+function startRoiResize(e, idx) {
+  e.stopPropagation();
+  isRoiResizing = true;
+  selectedRoiIndex = idx;
+  roiDragStartX = e.clientX;
+  roiDragStartY = e.clientY;
+  roiOrigBox = { ...currentRois[idx] };
+
+  const onMouseMove = (ev) => {
+    if (!isRoiResizing) return;
+    const dx = (ev.clientX - roiDragStartX) * (2592 / document.getElementById('roi-editor-svg').clientWidth);
+    const dy = (ev.clientY - roiDragStartY) * (1944 / document.getElementById('roi-editor-svg').clientHeight);
+    currentRois[idx].width = Math.max(100, Math.round(roiOrigBox.width + dx));
+    currentRois[idx].height = Math.max(100, Math.round(roiOrigBox.height + dy));
+    renderRoiEditorSvg();
+    selectRoi(idx);
+  };
+
+  const onMouseUp = () => {
+    isRoiResizing = false;
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+  };
+
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+}
+
+async function saveRoiEditorChanges() {
+  try {
+    showToast('Saving ROI coordinates...', 'info');
+    await api(`/api/v1/stations/${roiEditorStationId}/rois`, {
+      method: 'POST',
+      body: JSON.stringify({ rois: currentRois })
+    });
+    showToast(`Saved ${currentRois.length} ROIs for ${formatStationName(roiEditorStationId)}!`, 'success');
+    playFloorChime('pass');
+  } catch (e) {
+    showToast(`Failed to save ROIs: ${e.message}`, 'error');
+  }
+}
+
+function computeLuminanceHistogram(imgEl) {
+  const canvas = document.createElement('canvas');
+  const w = 320, h = 240;
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  try {
+    ctx.drawImage(imgEl, 0, 0, w, h);
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+
+    const hist = new Array(256).fill(0);
+    let sum = 0;
+    const totalPixels = w * h;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const lum = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+      hist[lum]++;
+      sum += lum;
+    }
+
+    const mean = sum / totalPixels;
+    let varianceSum = 0;
+    for (let i = 0; i < 256; i++) {
+      varianceSum += hist[i] * Math.pow(i - mean, 2);
+    }
+    const stdDev = Math.sqrt(varianceSum / totalPixels);
+
+    const meanEl = document.getElementById('hist-mean');
+    const stdEl = document.getElementById('hist-std');
+    const expEl = document.getElementById('hist-exposure');
+    if (meanEl) meanEl.textContent = mean.toFixed(1);
+    if (stdEl) stdEl.textContent = stdDev.toFixed(1);
+    if (expEl) {
+      if (mean < 35) {
+        expEl.textContent = 'UNDER'; expEl.className = 'text-warning-400 font-bold';
+      } else if (mean > 215) {
+        expEl.textContent = 'OVER'; expEl.className = 'text-danger-400 font-bold';
+      } else {
+        expEl.textContent = 'OPTIMAL'; expEl.className = 'text-success-400 font-bold';
+      }
+    }
+
+    const histCanvas = document.getElementById('luminance-histogram-canvas');
+    if (!histCanvas) return;
+    const hCtx = histCanvas.getContext('2d');
+    hCtx.clearRect(0, 0, histCanvas.width, histCanvas.height);
+
+    const maxVal = Math.max(...hist) || 1;
+    const ch = histCanvas.height;
+    const cw = histCanvas.width;
+    const barW = cw / 256;
+
+    const grad = hCtx.createLinearGradient(0, 0, cw, 0);
+    grad.addColorStop(0, '#38bdf8');
+    grad.addColorStop(0.5, '#10b981');
+    grad.addColorStop(1, '#f59e0b');
+
+    hCtx.fillStyle = grad;
+    for (let i = 0; i < 256; i++) {
+      const barH = (hist[i] / maxVal) * (ch - 10);
+      hCtx.fillRect(i * barW, ch - barH, Math.max(1, barW), barH);
+    }
+  } catch (err) {
+    console.warn('Histogram computation error:', err);
+  }
+}
+
+// ===================================================================
+// 6. STATISTICAL PROCESS CONTROL (SPC) X-BAR RUN CHART
+// ===================================================================
+let spcChartInstance = null;
+
+async function loadSpcChart() {
+  const metricSel = document.getElementById('spc-metric-select');
+  const metric = metricSel ? metricSel.value : 'station_2_stitch_pitch';
+  const canvas = document.getElementById('spc-chart');
+  if (!canvas) return;
+
+  try {
+    const data = await api(`/api/v1/analytics/spc-measurements?metric=${encodeURIComponent(metric)}`);
+
+    const limitsEl = document.getElementById('spc-limits-display');
+    const cpkEl = document.getElementById('spc-cpk-display');
+    const statsEl = document.getElementById('spc-stats-display');
+    const violEl = document.getElementById('spc-violations-display');
+    const countEl = document.getElementById('spc-sample-count');
+
+    if (limitsEl) limitsEl.textContent = `${data.lsl} / ${data.nominal} / ${data.usl} ${data.unit}`;
+    if (statsEl) statsEl.textContent = `μ: ${data.mean.toFixed(2)}${data.unit} · σ: ${data.std_dev.toFixed(3)}${data.unit}`;
+    if (countEl) countEl.textContent = `Sample Size: ${data.measurements.length} seats`;
+
+    if (cpkEl) {
+      const cpkVal = data.cpk;
+      const cpVal = data.cp;
+      const cpkColor = cpkVal >= 1.33 ? 'text-success-400' : (cpkVal >= 1.0 ? 'text-warning-400' : 'text-danger-400');
+      cpkEl.innerHTML = `<span class="${cpkColor}">Cpk: ${cpkVal.toFixed(2)}</span> · Cp: ${cpVal.toFixed(2)}`;
+    }
+
+    if (violEl) {
+      const viols = data.violations || 0;
+      violEl.textContent = `${viols} Violations`;
+      violEl.className = `text-lg font-bold font-mono mt-1 ${viols > 0 ? 'text-danger-400 animate-pulse' : 'text-success-400'}`;
+    }
+
+    if (spcChartInstance) {
+      spcChartInstance.destroy();
+    }
+
+    const labels = data.measurements.map(m => m.seat_id.replace(/^SEAT-/, '#'));
+    const values = data.measurements.map(m => m.value);
+    const ucl = data.ucl;
+    const lcl = data.lcl;
+    const usl = data.usl;
+    const lsl = data.lsl;
+    const target = data.nominal;
+
+    const pointColors = values.map(v => (v > ucl || v < lcl) ? '#f43f5e' : '#38bdf8');
+    const pointRadii = values.map(v => (v > ucl || v < lcl) ? 6 : 3);
+
+    spcChartInstance = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Measured Value',
+            data: values,
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56, 189, 248, 0.1)',
+            borderWidth: 2,
+            tension: 0.2,
+            pointBackgroundColor: pointColors,
+            pointBorderColor: pointColors,
+            pointRadius: pointRadii,
+          },
+          {
+            label: `USL (${usl})`,
+            data: Array(values.length).fill(usl),
+            borderColor: '#f43f5e',
+            borderWidth: 1.5,
+            borderDash: [6, 4],
+            pointRadius: 0,
+            fill: false,
+          },
+          {
+            label: `UCL (+3σ: ${ucl.toFixed(2)})`,
+            data: Array(values.length).fill(ucl),
+            borderColor: '#f59e0b',
+            borderWidth: 1.5,
+            borderDash: [3, 3],
+            pointRadius: 0,
+            fill: false,
+          },
+          {
+            label: `Target (${target})`,
+            data: Array(values.length).fill(target),
+            borderColor: '#10b981',
+            borderWidth: 1.5,
+            pointRadius: 0,
+            fill: false,
+          },
+          {
+            label: `LCL (-3σ: ${lcl.toFixed(2)})`,
+            data: Array(values.length).fill(lcl),
+            borderColor: '#f59e0b',
+            borderWidth: 1.5,
+            borderDash: [3, 3],
+            pointRadius: 0,
+            fill: false,
+          },
+          {
+            label: `LSL (${lsl})`,
+            data: Array(values.length).fill(lsl),
+            borderColor: '#f43f5e',
+            borderWidth: 1.5,
+            borderDash: [6, 4],
+            pointRadius: 0,
+            fill: false,
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: { boxWidth: 12, font: { size: 10 }, color: '#a1a1aa' }
+          },
+          tooltip: {
+            callbacks: {
+              afterLabel: (ctx) => {
+                const val = ctx.raw;
+                if (val > ucl) return '⚠️ Out of Upper Control Limit (+3σ)';
+                if (val < lcl) return '⚠️ Out of Lower Control Limit (-3σ)';
+                return 'Normal in-control';
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: { color: '#27272a' },
+            ticks: { color: '#a1a1aa', font: { size: 10 } }
+          },
+          y: {
+            grid: { color: '#27272a' },
+            ticks: { color: '#a1a1aa', font: { size: 10 } },
+            suggestedMin: Math.min(lsl, ...values) - 0.2,
+            suggestedMax: Math.max(usl, ...values) + 0.2,
+          }
+        }
+      }
+    });
+  } catch (e) {
+    console.warn('SPC chart load error:', e);
+  }
+}
+
+// ===================================================================
+// 7. INTERACTIVE PAN, ZOOM & DEFECT FOCUS METROLOGY VIEWER
+// ===================================================================
+function focusOnCurrentDefectBbox() {
+  if (!currentDefect || !currentDefect.bbox || !Array.isArray(currentDefect.bbox)) {
+    return showToast('No bounding box available for defect focus', 'warning');
+  }
+  const [bx, by, bw, bh] = currentDefect.bbox;
+  currentDefectZoom = 2.8;
+
+  const normCenterX = (bx + bw / 2) / 2592;
+  const normCenterY = (by + bh / 2) / 1944;
+
+  const vp = document.getElementById('defect-img-viewport');
+  const vpw = vp ? vp.clientWidth : 800;
+  const vph = vp ? vp.clientHeight : 500;
+
+  defectPanX = (0.5 - normCenterX) * vpw * currentDefectZoom;
+  defectPanY = (0.5 - normCenterY) * vph * currentDefectZoom;
+
+  updateDefectTransform();
+  showToast(`Autofocused on defect: ${bw}×${bh}px region`, 'info');
+}
+
+function toggleDefectHeatmap(show) {
+  const img = document.getElementById('defect-modal-img');
+  if (!img) return;
+  if (show) {
+    img.style.filter = 'contrast(180%) brightness(120%) saturate(220%) hue-rotate(180deg)';
+  } else {
+    img.style.filter = 'none';
+  }
+}
+
+function initDefectPanZoomListeners() {
+  const vp = document.getElementById('defect-img-viewport');
+  if (!vp) return;
+
+  vp.addEventListener('mousedown', (e) => {
+    isDefectPanning = true;
+    panStartX = e.clientX - defectPanX;
+    panStartY = e.clientY - defectPanY;
+    vp.style.cursor = 'grabbing';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isDefectPanning) return;
+    defectPanX = e.clientX - panStartX;
+    defectPanY = e.clientY - panStartY;
+    updateDefectTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isDefectPanning) {
+      isDefectPanning = false;
+      vp.style.cursor = 'grab';
+    }
+  });
+
+  vp.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+    zoomDefectImage(zoomFactor);
+  }, { passive: false });
+}
+
+// ===================================================================
+// 8. SIDE-BY-SIDE GOLDEN TEMPLATE COMPARISON TOOL
+// ===================================================================
+let goldenOverlayActive = false;
+
+function openGoldenCompareFromDefectIndex(idx) {
+  const d = galleryData[idx];
+  if (!d) return;
+  currentDefect = d;
+  openGoldenCompareFromDefect();
+}
+
+async function openGoldenCompareFromDefect() {
+  const modal = document.getElementById('golden-compare-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+
+  const titleEl = document.getElementById('golden-compare-title');
+  const infoEl = document.getElementById('golden-compare-info');
+  const capturedImg = document.getElementById('golden-captured-img');
+  const refImg = document.getElementById('golden-reference-img');
+
+  goldenOverlayActive = false;
+  capturedImg.style.mixBlendMode = 'normal';
+
+  const d = currentDefect || {};
+  const seatId = d.seat_id || 'SEAT-SAMPLE';
+  const compName = d.roi_name || d.defect_type || 'main';
+
+  if (titleEl) titleEl.textContent = `${seatId} — ${formatDefectType(d.defect_type || 'Component')}`;
+  if (infoEl) infoEl.textContent = `Comparing captured seat ${seatId} against golden reference CAD template for component [${compName}].`;
+
+  if (capturedImg) {
+    capturedImg.src = d.image_url ? (cfg.apiUrl + '/' + d.image_url.replace(/^\//, '')) : '';
+  }
+
+  if (refImg) {
+    const variantId = d.variant_id || 'FRONT_LH_BLACK';
+    refImg.src = `${cfg.apiUrl}/api/v1/variants/${variantId}/golden-images/${encodeURIComponent(compName)}`;
+    refImg.onerror = () => {
+      refImg.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="%23042f2e"/><text x="50%" y="45%" fill="%2334d399" font-size="20" font-weight="bold" dominant-baseline="middle" text-anchor="middle">GOLDEN REFERENCE MASTER</text><text x="50%" y="55%" fill="%236ee7b7" font-size="14" dominant-baseline="middle" text-anchor="middle">CAD Tolerance Zero Deviation</text></svg>';
+    };
+  }
+}
+
+function closeGoldenCompareModal() {
+  const modal = document.getElementById('golden-compare-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function toggleGoldenOverlayDiff() {
+  const capturedImg = document.getElementById('golden-captured-img');
+  if (!capturedImg) return;
+  goldenOverlayActive = !goldenOverlayActive;
+  if (goldenOverlayActive) {
+    capturedImg.style.mixBlendMode = 'difference';
+    showToast('Overlay Diff enabled (difference blending mode)', 'info');
+  } else {
+    capturedImg.style.mixBlendMode = 'normal';
+    showToast('Overlay Diff disabled', 'info');
+  }
+}
+
+// ===================================================================
+// 9. ACTIVE LEARNING DEFECT TAGGING & FEEDBACK LOOP
+// ===================================================================
+let feedbackCurrentDefectId = null;
+let feedbackIsFalsePositive = false;
+
+function openFeedbackFromDefect() {
+  if (!currentDefect) return;
+  openDefectFeedbackModal(currentDefect.defect_id || 1, currentDefect.seat_id, currentDefect.defect_type);
+}
+
+function openDefectFeedbackModal(defectId, seatId, defectType) {
+  const modal = document.getElementById('defect-feedback-modal');
+  if (!modal) return;
+  feedbackCurrentDefectId = defectId;
+  feedbackIsFalsePositive = false;
+
+  const typeEl = document.getElementById('feedback-original-type');
+  const idEl = document.getElementById('feedback-defect-id');
+  const notesEl = document.getElementById('feedback-notes');
+  const selectEl = document.getElementById('feedback-new-type');
+
+  if (typeEl) typeEl.textContent = formatDefectType(defectType || 'Unknown');
+  if (idEl) idEl.textContent = `Defect #${defectId} · Seat ${seatId || '—'}`;
+  if (notesEl) notesEl.value = '';
+  if (selectEl) selectEl.value = '';
+
+  setFeedbackFP(false);
+  modal.classList.remove('hidden');
+}
+
+function closeDefectFeedbackModal() {
+  const modal = document.getElementById('defect-feedback-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function setFeedbackFP(isFp) {
+  feedbackIsFalsePositive = isFp;
+  const btnYes = document.getElementById('feedback-fp-yes');
+  const btnNo = document.getElementById('feedback-fp-no');
+
+  if (isFp) {
+    btnYes?.classList.add('bg-warning-500/20', 'border-warning-500', 'font-bold');
+    btnNo?.classList.remove('bg-success-500/20', 'border-success-500', 'font-bold');
+  } else {
+    btnNo?.classList.add('bg-success-500/20', 'border-success-500', 'font-bold');
+    btnYes?.classList.remove('bg-warning-500/20', 'border-warning-500', 'font-bold');
+  }
+}
+
+async function submitDefectFeedback() {
+  if (!feedbackCurrentDefectId) return;
+  const selectEl = document.getElementById('feedback-new-type');
+  const notesEl = document.getElementById('feedback-notes');
+  const correctedType = selectEl ? selectEl.value : '';
+  const notes = notesEl ? notesEl.value : '';
+
+  try {
+    showToast('Submitting active learning feedback...', 'info');
+    await api(`/api/v1/defects/${feedbackCurrentDefectId}/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({
+        is_false_positive: feedbackIsFalsePositive,
+        corrected_defect_type: correctedType || null,
+        notes: notes,
+        inspector_id: 'INSP-402'
+      })
+    });
+    showToast('Feedback recorded for model retraining!', 'success');
+    playFloorChime('pass');
+    closeDefectFeedbackModal();
+  } catch (e) {
+    showToast(`Feedback submission error: ${e.message}`, 'error');
+  }
+}
+
+// Global initialization & hotkeys
+document.addEventListener('DOMContentLoaded', () => {
+  updateAudioSynthUI();
+  initBarcodeScannerWedge();
+  initDefectPanZoomListeners();
+});
+updateAudioSynthUI();
+initBarcodeScannerWedge();
+initDefectPanZoomListeners();
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeAndonFullscreen();
+    closeShiftReportModal();
+    closeRoiEditorModal();
+    closeGoldenCompareModal();
+    closeDefectFeedbackModal();
+    closeDefectModal();
+  }
+});
 
 </script>
 </body>

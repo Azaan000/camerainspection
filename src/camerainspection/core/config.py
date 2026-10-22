@@ -52,8 +52,22 @@ class BooleanRule(BaseModel):
 class ROIConfig(BaseModel):
     x: int
     y: int
-    w: int
-    h: int
+    w: int = 0
+    h: int = 0
+    width: int = 0
+    height: int = 0
+
+    @model_validator(mode="after")
+    def populate_dimensions(self) -> ROIConfig:
+        if self.w == 0 and self.width > 0:
+            self.w = self.width
+        if self.h == 0 and self.height > 0:
+            self.h = self.height
+        if self.width == 0 and self.w > 0:
+            self.width = self.w
+        if self.height == 0 and self.h > 0:
+            self.height = self.h
+        return self
 
 
 class CameraConfig(BaseModel):
