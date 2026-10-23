@@ -1,1 +1,0 @@
-- [Visual Inspection & Defect Gallery](memory/visual-inspection-and-defect-gallery.md) — project

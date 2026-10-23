@@ -147,6 +147,9 @@ The single-page web UI (`ui/index.html`) provides dark-mode monitoring and rewor
 -	python -m camerainspection.main
 python -m camerainspection.main --run-worker
 
+cd frontend && npm run dev
+python -m camerainspection.main --host 127.0.0.1 --port 8000
+
 1. Running the Tests
 
 # Run the complete test suite (all 169 unit & integration tests)
