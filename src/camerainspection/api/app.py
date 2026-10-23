@@ -45,7 +45,9 @@ FORBIDDEN_DEFAULT_KEY = "inspector_secret_token_123"
 # 8000 = API serving its own UI, 5500 = VS Code Live Server.
 DEFAULT_CORS_ORIGINS = (
     "http://127.0.0.1:8000,http://localhost:8000,"
-    "http://127.0.0.1:5500,http://localhost:5500"
+    "http://127.0.0.1:5500,http://localhost:5500,"
+    "http://127.0.0.1:5173,http://localhost:5173,"
+    "http://127.0.0.1:3000,http://localhost:3000"
 )
 
 
@@ -75,12 +77,12 @@ class DefectFeedbackPayload(BaseModel):
 
 
 def get_ui_index_path() -> Path:
-    """Locate ui/index.html (override with UI_INDEX_PATH)."""
+    """Locate frontend/dist/index.html (Vite build output)."""
     override = os.getenv("UI_INDEX_PATH")
     if override:
         return Path(override).resolve()
     # app.py -> api -> camerainspection -> src -> <repo root>
-    return Path(__file__).resolve().parents[3] / "ui" / "index.html"
+    return Path(__file__).resolve().parents[3] / "frontend" / "dist" / "index.html"
 
 
 def get_expected_api_key() -> str:
@@ -280,6 +282,11 @@ def create_app(
     if configs_dir.is_dir():
         app.mount("/configs", StaticFiles(directory=str(configs_dir)), name="configs")
 
+    # Mount frontend static assets (Vite build output)
+    frontend_dist = repo_root / "frontend" / "dist"
+    if frontend_dist.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="frontend_assets")
+
     @app.get("/", include_in_schema=False)
     def ui_index() -> FileResponse:
         """Serve the SeatGuard dashboard from the same origin as the API (no CORS needed)."""
@@ -287,7 +294,7 @@ def create_app(
         if not index_path.is_file():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"UI not found at {index_path}. Set UI_INDEX_PATH to override.",
+                detail=f"UI not found at {index_path}. Run 'npm run build' in frontend/ first.",
             )
         return FileResponse(index_path, media_type="text/html")
 

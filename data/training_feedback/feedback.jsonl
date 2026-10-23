@@ -8,3 +8,7 @@
 {"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-22T15:50:43.911498+00:00"}
 {"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-22T15:51:28.947605+00:00"}
 {"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-22T16:09:14.266160+00:00"}
+{"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-23T16:42:26.377901+00:00"}
+{"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-23T16:48:09.831759+00:00"}
+{"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-23T16:54:40.456422+00:00"}
+{"defect_id": 7260, "new_defect_type": null, "is_false_positive": false, "inspector_notes": "", "inspector_id": "AUDITOR_01", "timestamp": "2026-10-23T17:36:22.162844+00:00"}

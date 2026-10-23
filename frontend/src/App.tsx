@@ -1,121 +1,48 @@
 import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import Header from './components/Header'
+import LiveLine from './components/LiveLine'
+import DefectGallery from './components/DefectGallery'
+import QualityTrends from './components/QualityTrends'
+import SystemHealth from './components/SystemHealth'
+import ReviewQueue from './components/ReviewQueue'
+import Settings from './components/Settings'
+import AuditLog from './components/AuditLog'
+import SPCCharts from './components/SPCCharts'
+import ShiftReport from './components/ShiftReport'
+import StationTester from './components/StationTester'
+import LiveCameraStreams from './components/LiveCameraStreams'
+import ROIEditor from './components/ROIEditor'
+import QualityAuditor from './components/QualityAuditor'
+import PLCSimulator from './components/PLCSimulator'
+import MESIntegration from './components/MESIntegration'
+import DefectTaxonomy from './components/DefectTaxonomy'
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [currentSection, setCurrentSection] = useState('live')
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="min-h-screen flex flex-col bg-surface-900">
+      <Header currentSection={currentSection} onSectionChange={setCurrentSection} />
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      <main className="px-6 md:px-10 py-10 max-w-screen-2xl mx-auto w-full space-y-10">
+        {currentSection === 'live' && <LiveLine />}
+        {currentSection === 'camerastreams' && <LiveCameraStreams />}
+        {currentSection === 'plc' && <PLCSimulator />}
+        {currentSection === 'mes' && <MESIntegration />}
+        {currentSection === 'taxonomy' && <DefectTaxonomy />}
+        {currentSection === 'roi' && <ROIEditor />}
+        {currentSection === 'qualityauditor' && <QualityAuditor />}
+        {currentSection === 'quality' && <QualityTrends />}
+        {currentSection === 'gallery' && <DefectGallery />}
+        {currentSection === 'health' && <SystemHealth />}
+        {currentSection === 'review' && <ReviewQueue />}
+        {currentSection === 'spc' && <SPCCharts />}
+        {currentSection === 'audit' && <AuditLog />}
+        {currentSection === 'report' && <ShiftReport />}
+        {currentSection === 'tester' && <StationTester />}
+        {currentSection === 'settings' && <Settings />}
+      </main>
+    </div>
   )
 }
 
