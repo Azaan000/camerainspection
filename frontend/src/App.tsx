@@ -16,21 +16,44 @@ import QualityAuditor from './components/QualityAuditor'
 import PLCSimulator from './components/PLCSimulator'
 import MESIntegration from './components/MESIntegration'
 import DefectTaxonomy from './components/DefectTaxonomy'
+import AndonBoard from './components/AndonBoard'
+import CameraCalibration from './components/CameraCalibration'
+import GoldenSampleComparator from './components/GoldenSampleComparator'
+import ReworkBench from './components/ReworkBench'
 
 function App() {
   const [currentSection, setCurrentSection] = useState('live')
+  const [scannedSeatId, setScannedSeatId] = useState<string | null>(null)
+
+  const handleBarcodeScan = (seatId: string) => {
+    setScannedSeatId(seatId)
+    setCurrentSection('rework')
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-surface-900">
-      <Header currentSection={currentSection} onSectionChange={setCurrentSection} />
+      <Header
+        currentSection={currentSection}
+        onSectionChange={setCurrentSection}
+        onBarcodeScan={handleBarcodeScan}
+      />
 
-      <main className="px-6 md:px-10 py-10 max-w-screen-2xl mx-auto w-full space-y-10">
+      <main className={`w-full mx-auto space-y-10 ${
+        currentSection === 'andon'
+          ? 'px-4 md:px-8 py-6 max-w-[1920px]'
+          : 'px-6 md:px-10 py-10 max-w-screen-2xl'
+      }`}>
         {currentSection === 'live' && <LiveLine />}
+        {currentSection === 'andon' && <AndonBoard />}
         {currentSection === 'camerastreams' && <LiveCameraStreams />}
+        {currentSection === 'rework' && <ReworkBench initialSeatId={scannedSeatId} />}
+        {currentSection === 'tester' && <StationTester />}
+        {currentSection === 'golden' && <GoldenSampleComparator />}
+        {currentSection === 'calibration' && <CameraCalibration />}
+        {currentSection === 'roi' && <ROIEditor />}
         {currentSection === 'plc' && <PLCSimulator />}
         {currentSection === 'mes' && <MESIntegration />}
         {currentSection === 'taxonomy' && <DefectTaxonomy />}
-        {currentSection === 'roi' && <ROIEditor />}
         {currentSection === 'qualityauditor' && <QualityAuditor />}
         {currentSection === 'quality' && <QualityTrends />}
         {currentSection === 'gallery' && <DefectGallery />}
@@ -39,7 +62,6 @@ function App() {
         {currentSection === 'spc' && <SPCCharts />}
         {currentSection === 'audit' && <AuditLog />}
         {currentSection === 'report' && <ShiftReport />}
-        {currentSection === 'tester' && <StationTester />}
         {currentSection === 'settings' && <Settings />}
       </main>
     </div>

@@ -1213,31 +1213,46 @@ def create_app(
     @app.get("/api/v1/camera/snapshot")
     def camera_snapshot(
         device_index: int = Query(0),
+        camera_url: str = Query("", description="Optional IP / RTSP / HTTP camera stream URL"),
         auth_user: str = Depends(verify_api_key),
     ) -> Response:
-        """Capture a JPEG frame from the camera device and return it as an image."""
+        """Capture a JPEG frame from the camera device or stream URL and return it as an image."""
         import cv2
 
         frame = None
-        for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
+        if camera_url and camera_url.strip():
             try:
-                cap = cv2.VideoCapture(device_index, backend)
+                cap = cv2.VideoCapture(camera_url.strip())
                 if cap.isOpened():
-                    # Read a few frames to let camera warm up
-                    for _ in range(3):
+                    for _ in range(2):
                         cap.read()
                     ret, frame = cap.read()
                     cap.release()
-                    if ret and frame is not None:
-                        break
-                    frame = None
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to capture from camera_url '{camera_url}': {e}")
                 frame = None
 
         if frame is None:
+            for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
+                try:
+                    cap = cv2.VideoCapture(device_index, backend)
+                    if cap.isOpened():
+                        # Read a few frames to let camera warm up
+                        for _ in range(3):
+                            cap.read()
+                        ret, frame = cap.read()
+                        cap.release()
+                        if ret and frame is not None:
+                            break
+                        frame = None
+                except Exception:
+                    frame = None
+
+        if frame is None:
+            source_desc = f"camera URL '{camera_url}'" if camera_url else f"camera device {device_index}"
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Could not capture from camera device {device_index}. Make sure DroidCam PC client is connected.",
+                detail=f"Could not capture from {source_desc}. Ensure device is connected or DroidCam/IP Webcam is streaming.",
             )
 
         _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -1245,36 +1260,56 @@ def create_app(
 
     @app.get("/api/v1/live-inspect-proxy")
     def live_inspect_proxy(
-        camera_url: str = Query("", description="Unused — kept for compatibility"),
+        camera_url: str = Query("", description="Optional IP / RTSP stream URL"),
         device_index: int = Query(0, description="Camera device index"),
         threshold: float = Query(0.55, ge=0.0, le=1.0),
         auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
-        """Capture a frame from camera device, run Station 1 surface analysis, return defects."""
+        """Capture a frame from camera device/stream, run Station 1 surface analysis, return defects and telemetry."""
         import cv2
+        import numpy as np
 
         from camerainspection.vision.station1 import SurfaceAnalyzer
 
         frame = None
-        for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
+        if camera_url and camera_url.strip():
             try:
-                cap = cv2.VideoCapture(device_index, backend)
+                cap = cv2.VideoCapture(camera_url.strip())
                 if cap.isOpened():
-                    for _ in range(3):
+                    for _ in range(2):
                         cap.read()
                     ret, frame = cap.read()
                     cap.release()
-                    if ret and frame is not None:
-                        break
-                    frame = None
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to read live inspect stream from URL '{camera_url}': {e}")
                 frame = None
 
         if frame is None:
+            for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
+                try:
+                    cap = cv2.VideoCapture(device_index, backend)
+                    if cap.isOpened():
+                        for _ in range(3):
+                            cap.read()
+                        ret, frame = cap.read()
+                        cap.release()
+                        if ret and frame is not None:
+                            break
+                        frame = None
+                except Exception:
+                    frame = None
+
+        if frame is None:
+            source_desc = f"camera URL '{camera_url}'" if camera_url else f"camera device {device_index}"
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Could not capture from camera device {device_index}. Connect DroidCam PC client first.",
+                detail=f"Could not capture from {source_desc}. Connect DroidCam or check device index.",
             )
+
+        # Image quality telemetry (focus sharpness & exposure brightness)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        brightness = float(np.mean(gray))
 
         analyzer = SurfaceAnalyzer(anomaly_threshold=threshold)
         regions = analyzer.analyze(frame)
@@ -1302,6 +1337,12 @@ def create_app(
             "frame_size": [frame.shape[1], frame.shape[0]],
             "defects": defects,
             "mode": "onnx" if analyzer._session is not None else "heuristic",
+            "metrics": {
+                "sharpness": round(sharpness, 1),
+                "brightness": round(brightness, 1),
+                "focus_status": "sharp" if sharpness >= 100 else ("fair" if sharpness >= 40 else "blurry"),
+                "exposure_status": "good" if 60 <= brightness <= 200 else ("underexposed" if brightness < 60 else "overexposed"),
+            },
         }
 
     # ------------------------------------------------------------------
@@ -1558,6 +1599,155 @@ def create_app(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown adapter: {adapter}",
         )
+
+    # ------------------------------------------------------------------
+    # Camera Calibration Endpoints
+    # ------------------------------------------------------------------
+
+    @app.get("/api/v1/cameras/calibrations")
+    def get_camera_calibrations(
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """List all saved camera calibration records and resolution targets."""
+        import json
+        from camerainspection.vision.calibration.manager import DEFAULT_CALIBRATION_DIR, RESOLUTION_TARGETS
+
+        records: list[dict[str, Any]] = []
+        if DEFAULT_CALIBRATION_DIR.exists():
+            for cal_file in sorted(DEFAULT_CALIBRATION_DIR.glob("*.json")):
+                try:
+                    with open(cal_file, encoding="utf-8") as f:
+                        data = json.load(f)
+                    records.append(data)
+                except Exception as e:
+                    logger.warning(f"Could not load calibration file {cal_file}: {e}")
+
+        return {
+            "calibrations": records,
+            "count": len(records),
+            "resolution_targets": {k: list(v) for k, v in RESOLUTION_TARGETS.items()},
+        }
+
+    @app.post("/api/v1/cameras/calibrate")
+    async def calibrate_camera_endpoint(
+        request: Request,
+        camera_name: str = Query("main"),
+        category: str = Query("leather"),
+        pattern_type: str = Query("checkerboard"),
+        square_size_mm: float = Query(10.0),
+        inner_cols: int = Query(7),
+        inner_rows: int = Query(5),
+        operator_id: str = Query("OPERATOR_01"),
+        device_index: int = Query(0),
+        camera_url: str = Query(""),
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Run checkerboard or fiducial calibration on an uploaded frame or live camera stream."""
+        import cv2
+        import numpy as np
+        from camerainspection.tools.calibrate_camera import (
+            compute_pixel_size_from_checkerboard,
+            compute_pixel_size_from_two_marks,
+        )
+        from camerainspection.vision.calibration.manager import (
+            CalibrationManager,
+            CalibrationRecord,
+            RESOLUTION_TARGETS,
+        )
+
+        body = await request.body()
+        frame = None
+
+        if body and len(body) > 100:
+            np_arr = np.frombuffer(body, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        if frame is None:
+            if camera_url and camera_url.strip():
+                try:
+                    cap = cv2.VideoCapture(camera_url.strip())
+                    if cap.isOpened():
+                        for _ in range(2):
+                            cap.read()
+                        ret, frame = cap.read()
+                        cap.release()
+                except Exception:
+                    frame = None
+
+        if frame is None:
+            for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
+                try:
+                    cap = cv2.VideoCapture(device_index, backend)
+                    if cap.isOpened():
+                        for _ in range(3):
+                            cap.read()
+                        ret, frame = cap.read()
+                        cap.release()
+                        if ret and frame is not None:
+                            break
+                        frame = None
+                except Exception:
+                    frame = None
+
+        if frame is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Could not acquire image from request body or camera device.",
+            )
+
+        try:
+            if pattern_type == "checkerboard":
+                pixel_size_mm = compute_pixel_size_from_checkerboard(
+                    frame,
+                    inner_corners=(inner_cols, inner_rows),
+                    square_size_mm=square_size_mm,
+                )
+            else:
+                pixel_size_mm = compute_pixel_size_from_two_marks(
+                    frame,
+                    known_distance_mm=square_size_mm,
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Calibration detection failed: {e}. Ensure target is fully visible, well-lit, and in focus.",
+            )
+
+        # Build and save record
+        record = CalibrationRecord(
+            camera_name=camera_name,
+            pixel_size_mm=pixel_size_mm,
+            operator_id=operator_id,
+            pattern_type=pattern_type,
+            target_dimension_mm=square_size_mm,
+            category=category,
+            metadata={
+                "resolution": [frame.shape[1], frame.shape[0]],
+                "inner_corners": [inner_cols, inner_rows],
+            },
+        )
+
+        cal_mgr = CalibrationManager()
+        saved_path = cal_mgr.save_calibration(record)
+
+        target_range = RESOLUTION_TARGETS.get(category, (0.08, 0.25))
+        in_target = target_range[0] <= pixel_size_mm <= target_range[1]
+
+        db_manager.log_audit(
+            event_type="CAMERA_CALIBRATED",
+            details=f"Camera {camera_name}: {pixel_size_mm:.4f} mm/px (target: {target_range}) by {operator_id}",
+        )
+
+        return {
+            "success": True,
+            "camera_name": camera_name,
+            "pixel_size_mm": round(pixel_size_mm, 5),
+            "category": category,
+            "target_range_mm": list(target_range),
+            "in_target_range": in_target,
+            "saved_file": str(saved_path),
+            "frame_size": [frame.shape[1], frame.shape[0]],
+        }
 
     @app.get("/api/v1/cameras/config")
     def get_camera_configs(
