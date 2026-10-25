@@ -388,16 +388,26 @@ class BaseStation(ABC):
                     all_defects.append(cap_defect)
                     continue
 
-                # Run vision inspection for this camera view
-                cam_defects, cam_measurements, cam_annotated = self.inspect_camera_view(
-                    camera_name=cam_name,
-                    view=cam_view,
-                    image=image,
-                    variant_id=variant_id,
-                    evaluator=evaluator,
-                    variant_nominals=variant_cfg.nominals,
-                    camera_config=cam_cfg,
-                )
+                # Check image quality guard first (contrast, blank/flat image check)
+                from camerainspection.vision.quality_guard import ImageQualityGuard
+                quality_defect = ImageQualityGuard.evaluate_image(image)
+                if quality_defect is not None:
+                    quality_defect.camera_name = cam_name
+                    quality_defect.view = cam_view
+                    cam_defects = [quality_defect]
+                    cam_measurements = {}
+                    cam_annotated = image.copy()
+                else:
+                    # Run vision inspection for this camera view
+                    cam_defects, cam_measurements, cam_annotated = self.inspect_camera_view(
+                        camera_name=cam_name,
+                        view=cam_view,
+                        image=image,
+                        variant_id=variant_id,
+                        evaluator=evaluator,
+                        variant_nominals=variant_cfg.nominals,
+                        camera_config=cam_cfg,
+                    )
 
                 # Enforce physical calibration on dimensional checks (Phase 5 / A4)
                 has_mm_check = any(k.endswith(("_mm", "_mm2", "_deg")) for k in cam_measurements)

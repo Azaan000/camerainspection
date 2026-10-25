@@ -62,13 +62,16 @@ class SurfaceAnalyzer:
     def __init__(
         self,
         model_path: str | Path | None = None,
-        anomaly_threshold: float = 0.5,   # pred_score threshold for PASS/FAIL
+        anomaly_threshold: float = 0.45,   # pred_score threshold for PASS/FAIL
         map_threshold: float = 0.4,        # normalised anomaly_map threshold for mask
         # heuristic fallback params
-        blur_ksize: int = 51,
-        diff_threshold: int = 14,
+        blur_ksize: int = 101,             # increased for texture suppression
+        diff_threshold: int = 25,          # increased for minimum contrast
         min_area_px: int = 4,
         max_area_px: int = 200_000,
+        min_contrast: float = 25.0,
+        min_area_mm2: float = 0.02,        # minimum area in mm² using pixel size
+        max_defects_per_roi: int = 10,     # cap reported defects per ROI
     ) -> None:
         self.anomaly_threshold = anomaly_threshold
         self.map_threshold = map_threshold
@@ -76,6 +79,9 @@ class SurfaceAnalyzer:
         self.diff_threshold = diff_threshold
         self.min_area_px = min_area_px
         self.max_area_px = max_area_px
+        self.min_contrast = min_contrast
+        self.min_area_mm2 = min_area_mm2
+        self.max_defects_per_roi = max_defects_per_roi
 
         self._session = None
         self._input_name: str = "input"
@@ -99,14 +105,14 @@ class SurfaceAnalyzer:
     # Public API
     # ------------------------------------------------------------------
 
-    def analyze(self, roi_bgr: np.ndarray) -> list[LeatherDefectRegion]:
+    def analyze(self, roi_bgr: np.ndarray, pixel_size_mm: float = 0.18) -> list[LeatherDefectRegion]:
         """Run detection-classification pipeline on a single ROI image."""
         if roi_bgr is None or roi_bgr.size == 0:
             return []
 
         if self._session is not None:
             return self._analyze_onnx(roi_bgr)
-        return self._analyze_heuristic(roi_bgr)
+        return self._analyze_heuristic(roi_bgr, pixel_size_mm=pixel_size_mm)
 
     # ------------------------------------------------------------------
     # ONNX inference path
@@ -175,7 +181,7 @@ class SurfaceAnalyzer:
     # Heuristic fallback path (original algorithm)
     # ------------------------------------------------------------------
 
-    def _analyze_heuristic(self, roi_bgr: np.ndarray) -> list[LeatherDefectRegion]:
+    def _analyze_heuristic(self, roi_bgr: np.ndarray, pixel_size_mm: float = 0.18) -> list[LeatherDefectRegion]:
         gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY) if len(roi_bgr.shape) == 3 else roi_bgr.copy()
         h, w = gray.shape[:2]
 
@@ -189,39 +195,43 @@ class SurfaceAnalyzer:
             col_range = float(np.max(col_means) - np.min(col_means))
             row_range = float(np.max(row_means) - np.min(row_means))
 
-            if col_range > 15.0:
+            if col_range > 25.0:
                 mid = float(np.min(col_means) + 0.5 * col_range)
                 band_cols = np.where(col_means > mid)[0]
                 if len(band_cols) >= max(3, int(down_w * 0.15)):
                     x_min = int(band_cols[0] * w / down_w)
                     x_max = int((band_cols[-1] + 1) * w / down_w)
                     bw = max(1, x_max - x_min)
-                    shade_regions.append(LeatherDefectRegion(
-                        defect_type=LeatherDefectType.SHADE_BAND,
-                        bbox_px=(x_min, 0, bw, h),
-                        area_px=float(bw * h),
-                        length_px=float(max(bw, h)),
-                        aspect_ratio=float(max(bw, h)) / max(float(min(bw, h)), 1.0),
-                        anomaly_score=min(1.0, col_range / 60.0),
-                    ))
-            elif row_range > 15.0:
+                    score = min(1.0, col_range / 60.0)
+                    if score >= self.anomaly_threshold:
+                        shade_regions.append(LeatherDefectRegion(
+                            defect_type=LeatherDefectType.SHADE_BAND,
+                            bbox_px=(x_min, 0, bw, h),
+                            area_px=float(bw * h),
+                            length_px=float(max(bw, h)),
+                            aspect_ratio=float(max(bw, h)) / max(float(min(bw, h)), 1.0),
+                            anomaly_score=score,
+                        ))
+            elif row_range > 25.0:
                 mid = float(np.min(row_means) + 0.5 * row_range)
                 band_rows = np.where(row_means > mid)[0]
                 if len(band_rows) >= max(3, int(down_h * 0.15)):
                     y_min = int(band_rows[0] * h / down_h)
                     y_max = int((band_rows[-1] + 1) * h / down_h)
                     bh = max(1, y_max - y_min)
-                    shade_regions.append(LeatherDefectRegion(
-                        defect_type=LeatherDefectType.SHADE_BAND,
-                        bbox_px=(0, y_min, w, bh),
-                        area_px=float(w * bh),
-                        length_px=float(max(w, bh)),
-                        aspect_ratio=float(max(w, bh)) / max(float(min(w, bh)), 1.0),
-                        anomaly_score=min(1.0, row_range / 60.0),
-                    ))
+                    score = min(1.0, row_range / 60.0)
+                    if score >= self.anomaly_threshold:
+                        shade_regions.append(LeatherDefectRegion(
+                            defect_type=LeatherDefectType.SHADE_BAND,
+                            bbox_px=(0, y_min, w, bh),
+                            area_px=float(w * bh),
+                            length_px=float(max(w, bh)),
+                            aspect_ratio=float(max(w, bh)) / max(float(min(w, bh)), 1.0),
+                            anomaly_score=score,
+                        ))
 
-        # 2. Local anomaly detection via Gaussian background subtraction
-        bg = cv2.GaussianBlur(gray.astype(np.float32), (self.blur_ksize, self.blur_ksize), 0)
+        # 2. Local anomaly detection via box filter background estimation
+        bg = cv2.blur(gray.astype(np.float32), (self.blur_ksize, self.blur_ksize))
 
         # Signed diff (raw, for sign classification)
         signed_diff = gray.astype(np.float32) - bg
@@ -236,34 +246,48 @@ class SurfaceAnalyzer:
         candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_OPEN, k3)
         candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_CLOSE, k5)
 
-        local_regions = self._extract_regions(candidate_mask, signed_diff)
-        return shade_regions + local_regions
+        local_regions = self._extract_regions(candidate_mask, signed_diff, pixel_size_mm)
+        all_regs = shade_regions + local_regions
+
+        # Sort by anomaly score descending and cap at max_defects_per_roi
+        all_regs.sort(key=lambda r: r.anomaly_score, reverse=True)
+        if len(all_regs) > self.max_defects_per_roi:
+            all_regs = all_regs[:self.max_defects_per_roi]
+
+        return all_regs
 
     def _extract_regions(
-        self, mask: np.ndarray, signed_diff: np.ndarray
+        self, mask: np.ndarray, signed_diff: np.ndarray, pixel_size_mm: float = 0.18
     ) -> list[LeatherDefectRegion]:
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
         regions: list[LeatherDefectRegion] = []
 
         for i in range(1, num_labels):
-            x, y, w, h, area = (
+            x, y, w, h, area_px = (
                 int(stats[i, cv2.CC_STAT_LEFT]),
                 int(stats[i, cv2.CC_STAT_TOP]),
                 int(stats[i, cv2.CC_STAT_WIDTH]),
                 int(stats[i, cv2.CC_STAT_HEIGHT]),
                 int(stats[i, cv2.CC_STAT_AREA]),
             )
-            if area < self.min_area_px or area > self.max_area_px:
+            area_mm2 = area_px * (pixel_size_mm ** 2)
+            if area_mm2 < self.min_area_mm2 or area_px > self.max_area_px:
                 continue
 
             mean_dev = float(signed_diff[labels == i].mean())
+            if abs(mean_dev) < self.min_contrast:
+                continue
+
             anomaly_score = min(1.0, abs(mean_dev) / 60.0)
-            defect_type = self._classify(w, h, area, mean_dev)
+            if anomaly_score < self.anomaly_threshold:
+                continue
+
+            defect_type = self._classify(w, h, area_px, mean_dev, pixel_size_mm)
 
             regions.append(LeatherDefectRegion(
                 defect_type=defect_type,
                 bbox_px=(x, y, w, h),
-                area_px=float(area),
+                area_px=float(area_px),
                 length_px=float(max(w, h)),
                 aspect_ratio=float(max(w, h)) / max(float(min(w, h)), 1.0),
                 anomaly_score=anomaly_score,
@@ -271,18 +295,19 @@ class SurfaceAnalyzer:
         return regions
 
     @staticmethod
-    def _classify(w: int, h: int, area: float, mean_dev: float) -> LeatherDefectType:
+    def _classify(w: int, h: int, area: float, mean_dev: float, pixel_size_mm: float = 0.18) -> LeatherDefectType:
         """Classify by sign + shape, strict priority order."""
         aspect = float(max(w, h)) / max(float(min(w, h)), 1.0)
         is_dark = mean_dev < 0   # negative signed diff → darker than background
         max_dim = max(w, h)
+        area_mm2 = area * (pixel_size_mm ** 2)
 
-        # 1. Pinhole: tiny dark spot (radius ≤ ~5px → area ≤ 80)
-        if is_dark and area < 80 and aspect < 2.5:
+        # 1. Pinhole: tiny dark spot (area_mm2 <= 1.5 mm², aspect < 2.5)
+        if is_dark and area_mm2 <= 1.5 and aspect < 2.5:
             return LeatherDefectType.PINHOLE
 
         # 2. Large area (shade band - wide region from step-edge or material variation)
-        if area > 10_000 or (max_dim > 200 and area > 3_000):
+        if area > 15_000 or (max_dim > 250 and area > 5_000):
             return LeatherDefectType.SHADE_BAND
 
         # 3. Cut: dark + elongated (aspect ≥ 2.5, not too long for streak)
@@ -298,7 +323,7 @@ class SurfaceAnalyzer:
             return LeatherDefectType.SCRATCH
 
         # 6. Stain: dark blob (non-pinhole, non-elongated)
-        if is_dark and area >= 80:
+        if is_dark and area_mm2 > 0.3:
             return LeatherDefectType.STAIN
 
         return LeatherDefectType.UNKNOWN

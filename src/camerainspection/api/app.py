@@ -1161,6 +1161,43 @@ def create_app(
             },
         }
 
+    @app.get("/api/v1/system/settings")
+    def get_system_settings(auth_user: str = Depends(verify_api_key)) -> dict[str, Any]:
+        """Return current system runtime settings (save_images, shadow_mode, storage stats)."""
+        shadow = coordinator.shadow_mode if coordinator else getattr(app.state, "shadow_mode", False)
+        save_img = getattr(app.state, "save_images", True)
+        from camerainspection.tools.image_cleanup import get_storage_stats
+        storage_stats = get_storage_stats()
+        used_mb = storage_stats.get("total_mb", 0.0)
+        total_mb = 10000.0
+        free_mb = max(0.0, total_mb - used_mb)
+        return {
+            "save_images": save_img,
+            "shadow_mode": shadow,
+            "storage": {
+                "total_mb": total_mb,
+                "used_mb": used_mb,
+                "free_mb": free_mb,
+            },
+        }
+
+    @app.post("/api/v1/system/save-images", dependencies=[Depends(rate_limit_writes)])
+    def set_save_images(payload: SaveImagesPayload, auth_user: str = Depends(verify_api_key)) -> dict[str, Any]:
+        app.state.save_images = payload.enabled
+        return {"save_images": payload.enabled}
+
+    @app.post("/api/v1/system/shadow-mode", dependencies=[Depends(rate_limit_writes)])
+    def set_shadow_mode_endpoint(payload: ShadowModePayload, auth_user: str = Depends(verify_api_key)) -> dict[str, Any]:
+        if coordinator:
+            coordinator.shadow_mode = payload.enabled
+        app.state.shadow_mode = payload.enabled
+        return {"shadow_mode": payload.enabled}
+
+    @app.post("/api/v1/system/cleanup-images", dependencies=[Depends(rate_limit_writes)])
+    def cleanup_images_endpoint(dry_run: bool = Query(False), auth_user: str = Depends(verify_api_key)) -> dict[str, Any]:
+        from camerainspection.tools.image_cleanup import cleanup_old_captures
+        return cleanup_old_captures(retention_days=30, dry_run=dry_run)
+
     @app.post("/api/v1/live-inspect-frame")
     async def live_inspect_frame(
         request: Request,
@@ -1831,7 +1868,14 @@ def create_app(
         arr = np.frombuffer(body, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if frame is None:
-            raise HTTPException(status_code=422, detail="Could not decode image data.")
+            try:
+                from PIL import Image
+                import io
+                pil_img = Image.open(io.BytesIO(body)).convert("RGB")
+                frame = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            except Exception as pil_err:
+                logger.error(f"Image decode failed via cv2 and PIL: {pil_err}")
+                raise HTTPException(status_code=422, detail=f"Could not decode image data: {pil_err}")
 
         station_svc = line_runtime.stations[station_id.upper()]
 

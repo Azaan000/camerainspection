@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 from camerainspection.vision.station3.color import ColorMatchEngine
@@ -37,6 +38,8 @@ class ThreadColorEngine:
 
         h, w = seam_roi.shape[:2]
         patches: list[np.ndarray] = []
+        target_h = 2 * sample_radius
+        target_w = 2 * sample_radius
         for cx, cy in stitch_centers[:max_samples]:
             x1 = max(0, int(cx) - sample_radius)
             x2 = min(w, int(cx) + sample_radius)
@@ -44,6 +47,8 @@ class ThreadColorEngine:
             y2 = min(h, int(cy) + sample_radius)
             patch = seam_roi[y1:y2, x1:x2]
             if patch.size > 0:
+                if patch.shape[0] != target_h or patch.shape[1] != target_w:
+                    patch = cv2.resize(patch, (target_w, target_h))
                 patches.append(patch)
 
         if not patches:

@@ -150,7 +150,7 @@ def generate_station1_replay_frames(output_dir: Path) -> None:
     # Frame 2: scratch at 80px inside seating_face (80 * 0.08mm = 6.4mm → FAIL > fail_at=2mm)
     cv2.imwrite(
         str(output_dir / "02_fail_scratch.png"),
-        make_leather_with_scratch(w, h, x0=sf_x, y0=sf_y, length_px=80, brightness_add=60),
+        make_leather_with_scratch(w, h, x0=sf_x, y0=sf_y, length_px=80, brightness_add=80),
     )
 
     # Frame 3: cut inside seating_face
@@ -168,6 +168,6 @@ def generate_station1_replay_frames(output_dir: Path) -> None:
     # Frame 5: stain inside seating_face
     cv2.imwrite(
         str(output_dir / "05_review_stain.png"),
-        make_leather_with_stain(w, h, cx=sf_x + 200, cy=sf_y, rx=30, ry=20),
+        make_leather_with_stain(w, h, cx=sf_x + 200, cy=sf_y, rx=30, ry=20, darkness=50),
     )
 

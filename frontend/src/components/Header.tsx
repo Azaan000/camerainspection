@@ -26,6 +26,7 @@ import {
   ChevronDown,
 } from 'lucide-react'
 import { audioAlerts } from '../lib/audioAlerts'
+import { apiClient } from '../lib/api'
 
 interface HeaderProps {
   currentSection: string
@@ -36,6 +37,7 @@ interface HeaderProps {
 export default function Header({ currentSection, onSectionChange, onBarcodeScan }: HeaderProps) {
   const [time, setTime] = useState(new Date())
   const [apiStatus, setApiStatus] = useState<'online' | 'offline'>('offline')
+  const [systemSettings, setSystemSettings] = useState<{ save_images: boolean; shadow_mode: boolean } | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [moreDropdownOpen, setMoreDropdownOpen] = useState(false)
   const [isMuted, setIsMuted] = useState(() => audioAlerts.isMuted())
@@ -61,8 +63,20 @@ export default function Header({ currentSection, onSectionChange, onBarcodeScan 
         setApiStatus('offline')
       }
     }
+    const fetchSettings = async () => {
+      try {
+        const res = await apiClient.getSystemSettings()
+        setSystemSettings(res as any)
+      } catch (err) {
+        // ignore
+      }
+    }
     checkHealth()
-    const interval = setInterval(checkHealth, 5000)
+    fetchSettings()
+    const interval = setInterval(() => {
+      checkHealth()
+      fetchSettings()
+    }, 5000)
     return () => clearInterval(interval)
   }, [])
 
@@ -266,6 +280,28 @@ export default function Header({ currentSection, onSectionChange, onBarcodeScan 
             {apiStatus === 'online' ? 'Online' : 'Offline'}
           </span>
         </div>
+
+        {/* System Status Badges: Shadow Mode & Save Images */}
+        {systemSettings && (
+          <div className="hidden xl:flex items-center gap-1.5">
+            <div className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg border font-medium ${
+              systemSettings.shadow_mode
+                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                : 'bg-surface-800 text-zinc-400 border-surface-700'
+            }`} title="Shadow Mode: Runs inspection without blocking line on failure">
+              <span className={`w-1.5 h-1.5 rounded-full ${systemSettings.shadow_mode ? 'bg-amber-400 animate-pulse' : 'bg-zinc-500'}`} />
+              Shadow: {systemSettings.shadow_mode ? 'ON' : 'OFF'}
+            </div>
+            <div className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg border font-medium ${
+              systemSettings.save_images
+                ? 'bg-primary-500/10 text-primary-400 border-primary-500/30'
+                : 'bg-surface-800 text-zinc-400 border-surface-700'
+            }`} title="Save Images: Persists raw and annotated capture frames">
+              <span className={`w-1.5 h-1.5 rounded-full ${systemSettings.save_images ? 'bg-primary-400' : 'bg-zinc-500'}`} />
+              Images: {systemSettings.save_images ? 'ON' : 'OFF'}
+            </div>
+          </div>
+        )}
 
         {/* Clock */}
         <div className="hidden sm:block text-xs text-zinc-400 font-mono bg-surface-800 px-3 py-1.5 rounded-lg border border-surface-700">

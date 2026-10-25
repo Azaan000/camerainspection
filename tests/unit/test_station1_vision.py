@@ -21,10 +21,12 @@ from camerainspection.vision.station1.surface_analysis import (
 W, H = 640, 480
 
 ANALYZER = SurfaceAnalyzer(
+    anomaly_threshold=0.15,
     blur_ksize=51,
-    diff_threshold=14,
+    diff_threshold=10,
     min_area_px=4,
     max_area_px=200_000,
+    min_contrast=10.0,
 )
 
 

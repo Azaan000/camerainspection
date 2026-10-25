@@ -16,6 +16,7 @@ Views supported:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -43,13 +44,31 @@ class Station1Service(BaseStation):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        backend = getattr(self.config.model, "backend", "onnx")
+        model_path = getattr(self.config.model, "weights_path", "models/station_1/model.onnx")
+        mp = Path(model_path)
+        if not mp.exists():
+            if Path("models/station_1/model.onnx").exists():
+                model_path = "models/station_1/model.onnx"
+            elif Path("models/station_1/patchcore.onnx").exists():
+                model_path = "models/station_1/patchcore.onnx"
+
+        if backend != "classical" and Path(model_path).exists():
+            self.config.model.backend = "onnx"
+            self.config.model.weights_path = str(model_path)
+        else:
+            self.config.model.backend = "classical"
+
         analyzer_model_path = self.config.model.weights_path if getattr(self.config.model, "backend", "classical") == "onnx" else None
+        threshold = getattr(self.config.model, "threshold", 0.45)
         self._analyzer = SurfaceAnalyzer(
             model_path=analyzer_model_path,
-            blur_ksize=51,
-            diff_threshold=14,
+            anomaly_threshold=threshold,
+            blur_ksize=101,
+            diff_threshold=12,
             min_area_px=4,
             max_area_px=200_000,
+            min_contrast=10.0,
         )
         # Use the engine injected by the builder when available; lazy-load only as fallback.
         # _onnx_loaded tracks whether we have already attempted a lazy load (avoid retrying).
@@ -323,23 +342,36 @@ class Station1Service(BaseStation):
 
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (200, 200, 0), 2)
 
-            regions = self._analyzer.analyze(zone_roi)
+            regions = self._analyzer.analyze(zone_roi, pixel_size_mm=pixel_size_mm)
             measurements[f"{zone_name}.defect_count"] = float(len(regions))
+            measurements[f"{zone_name}.anomaly_threshold"] = float(self._analyzer.anomaly_threshold)
 
+            from collections import defaultdict
+            grouped_regions: dict[LeatherDefectType, list] = defaultdict(list)
             for region in regions:
-                rx, ry, rw, rh = region.bbox_px
+                grouped_regions[region.defect_type].append(region)
+
+            for dtype, group_regs in grouped_regions.items():
+                count = len(group_regs)
+                max_score = max(r.anomaly_score for r in group_regs)
+                best_region = max(group_regs, key=lambda r: r.anomaly_score)
+                rx, ry, rw, rh = best_region.bbox_px
                 gx, gy = x1 + rx, y1 + ry
                 bbox = BoundingBox(x=gx, y=gy, w=rw, h=rh)
 
+                dtype_str = dtype.value
+                display_name = " ".join(word.capitalize() for word in dtype_str.split("_"))
+                summary_desc = f"{display_name} x {count}, highest score {max_score:.2f}"
+
                 box_color = (
                     (0, 0, 255)
-                    if region.defect_type in _CUT_OR_PINHOLE_TYPES
+                    if dtype in _CUT_OR_PINHOLE_TYPES
                     else (0, 165, 255)
                 )
                 cv2.rectangle(annotated, (gx, gy), (gx + rw, gy + rh), box_color, 2)
                 cv2.putText(
                     annotated,
-                    region.defect_type.value,
+                    f"{display_name} ({count})",
                     (gx, max(0, gy - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.45,
@@ -348,22 +380,19 @@ class Station1Service(BaseStation):
                 )
 
                 # 1. Cut or pinhole → fail_on_any regardless of zone
-                if region.defect_type in _CUT_OR_PINHOLE_TYPES:
+                if dtype in _CUT_OR_PINHOLE_TYPES:
                     cut_d = evaluator.evaluate_check("leather", "cut_or_pinhole", True)
-                    cut_d.defect_type = f"leather.{region.defect_type.value}"
+                    cut_d.defect_type = f"leather.{dtype.value}"
                     cut_d.bounding_box = bbox
                     cut_d.roi_name = zone_name
-                    cut_d.confidence = region.anomaly_score
-                    cut_d.measured_value = region.length_px * pixel_size_mm
-                    cut_d.description = (
-                        f"{region.defect_type.value} in zone '{zone_name}', "
-                        f"length {region.length_px * pixel_size_mm:.2f}mm"
-                    )
+                    cut_d.confidence = max_score
+                    cut_d.measured_value = best_region.length_px * pixel_size_mm
+                    cut_d.description = summary_desc
                     defects.append(cut_d)
 
                 # 2. Scratch — zone-specific limit via sub_category
-                elif region.defect_type == LeatherDefectType.SCRATCH:
-                    scratch_mm = region.length_px * pixel_size_mm
+                elif dtype == LeatherDefectType.SCRATCH:
+                    scratch_mm = max(r.length_px * pixel_size_mm for r in group_regs)
                     key = f"{zone_name}.scratch_length_mm"
                     measurements[key] = max(measurements.get(key, 0.0), scratch_mm)
 
@@ -376,13 +405,14 @@ class Station1Service(BaseStation):
                     scratch_d.defect_type = "leather.scratch"
                     scratch_d.roi_name = zone_name
                     scratch_d.bounding_box = bbox
-                    scratch_d.confidence = region.anomaly_score
+                    scratch_d.confidence = max_score
+                    scratch_d.description = summary_desc
                     if scratch_d.outcome != Outcome.PASS:
                         defects.append(scratch_d)
 
                 # 3. Stain — zone-specific limit (seating_face / side_back)
-                elif region.defect_type == LeatherDefectType.STAIN:
-                    stain_mm2 = region.area_px * (pixel_size_mm**2)
+                elif dtype == LeatherDefectType.STAIN:
+                    stain_mm2 = sum(r.area_px * (pixel_size_mm**2) for r in group_regs)
                     key = f"{zone_name}.stain_area_mm2"
                     measurements[key] = measurements.get(key, 0.0) + stain_mm2
 
@@ -395,26 +425,24 @@ class Station1Service(BaseStation):
                     stain_d.defect_type = "leather.stain"
                     stain_d.roi_name = zone_name
                     stain_d.bounding_box = bbox
-                    stain_d.confidence = region.anomaly_score
+                    stain_d.confidence = max_score
+                    stain_d.description = summary_desc
                     if stain_d.outcome != Outcome.PASS:
                         defects.append(stain_d)
 
                 # 4. Shade band / coating streak → REVIEW
-                elif region.defect_type in (
+                elif dtype in (
                     LeatherDefectType.SHADE_BAND,
                     LeatherDefectType.COATING_STREAK,
                 ):
                     defects.append(
                         DefectDetail(
-                            defect_type=f"leather.{region.defect_type.value}",
+                            defect_type=f"leather.{dtype.value}",
                             outcome=Outcome.REVIEW,
                             roi_name=zone_name,
                             bounding_box=bbox,
-                            confidence=region.anomaly_score,
-                            description=(
-                                f"{region.defect_type.value} in zone '{zone_name}' "
-                                f"(area {region.area_px:.0f}px²). Flagged for human review."
-                            ),
+                            confidence=max_score,
+                            description=summary_desc,
                         )
                     )
 
