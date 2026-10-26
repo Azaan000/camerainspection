@@ -23,9 +23,9 @@ class Station3Service(BaseStation):
     """Station 3 inspection service: Plastic parts presence, LH/RH hand, color, gap, and underside inspection."""
 
     def get_required_measurements(self) -> list[str]:
-        # Multi-camera stations produce different keys per view (shield/lever vs underside),
-        # so we don't enforce a fixed required-measurement set at the station level.
-        return []
+        # Require at least presence confirmation for key components
+        # Multi-camera stations check different views, so keep this minimal
+        return ["sanity_check_passed"]  # At minimum, image must pass sanity check
 
     def load_golden_template(self, variant_id: str, component_name: str) -> np.ndarray | None:
         """Load golden reference image for a specific component and variant."""
@@ -126,7 +126,28 @@ class Station3Service(BaseStation):
         measurements: dict[str, float] = {}
         annotated_img = image.copy()
 
+        # Sanity check BEFORE component checks
+        from camerainspection.vision.station3.sanity_check import check_image_sanity
+
+        expected_color = variant_id.split("_")[-1].lower() if "_" in variant_id else "black"
         rois_to_check = rois_override or self.config.regions_of_interest
+        is_sane, reason = check_image_sanity(
+            image,
+            expected_component_count=len(rois_to_check),
+            expected_color_family=expected_color,
+        )
+        if not is_sane:
+            defects.append(
+                DefectDetail(
+                    defect_type="station.invalid_image",
+                    outcome=Outcome.FAIL,
+                    description=f"Image sanity check failed: {reason}",
+                )
+            )
+            measurements["sanity_check_passed"] = 0.0
+            return defects, measurements, annotated_img
+
+        measurements["sanity_check_passed"] = 1.0
 
         # Determine opposing variant for hand discrimination
         opp_variant_id = None
@@ -159,6 +180,21 @@ class Station3Service(BaseStation):
             )
 
             expected_hand = "LH" if "LH" in variant_id else ("RH" if "RH" in variant_id else None)
+
+            # SAFETY: Golden template is REQUIRED for presence check
+            if golden_template is None:
+                defects.append(
+                    DefectDetail(
+                        defect_type="station.missing_golden_template",
+                        outcome=Outcome.FAIL,
+                        roi_name=roi_name,
+                        description=(
+                            f"Golden template missing for '{roi_name}' variant '{variant_id}'. "
+                            f"Cannot verify component presence/hand."
+                        ),
+                    )
+                )
+                continue  # Skip this ROI, don't PASS it
 
             if golden_template is not None:
                 match_res = GoldenTemplateMatcher.match_component(
@@ -230,7 +266,7 @@ class Station3Service(BaseStation):
                     if color_defect.outcome != Outcome.PASS:
                         defects.append(color_defect)
 
-        # 3. Shield Gap Measurement
+        # 3. Shield Gap Measurement (ONLY if camera calibrated)
         if "side_shield" in rois_to_check:
             roi = rois_to_check.get("side_shield")
             if roi:
@@ -243,18 +279,36 @@ class Station3Service(BaseStation):
             measured_gap_mm = PlasticDimensionEngine.measure_gap_mm(
                 gap_crop, pixel_size_mm=pixel_size_mm, axis="horizontal"
             )
-            measurements["shield_gap_mm"] = measured_gap_mm
 
-            nominal_gap = variant_nominals.get("plastic", {}).get("shield_gap_mm", 2.5)
-            gap_defect = evaluator.evaluate_check(
-                "plastic",
-                "shield_gap_mm",
-                value=measured_gap_mm,
-                nominal=nominal_gap,
-            )
-            gap_defect.roi_name = "side_shield"
-            if gap_defect.outcome != Outcome.PASS:
-                defects.append(gap_defect)
+            # Check if camera is calibrated (default uncalibrated value is 0.18)
+            if abs(pixel_size_mm - 0.18) < 0.001:
+                # Camera uncalibrated - store pixels instead
+                measurements["shield_gap_px"] = measured_gap_mm / pixel_size_mm
+                defects.append(
+                    DefectDetail(
+                        defect_type="camera.uncalibrated",
+                        outcome=Outcome.REVIEW,
+                        roi_name="side_shield",
+                        description=(
+                            f"Shield gap measured {measured_gap_mm / pixel_size_mm:.0f} pixels "
+                            f"but camera is uncalibrated. Cannot verify mm tolerance."
+                        ),
+                    )
+                )
+            else:
+                # Camera calibrated - store mm value
+                measurements["shield_gap_mm"] = measured_gap_mm
+
+                nominal_gap = variant_nominals.get("plastic", {}).get("shield_gap_mm", 2.5)
+                gap_defect = evaluator.evaluate_check(
+                    "plastic",
+                    "shield_gap_mm",
+                    value=measured_gap_mm,
+                    nominal=nominal_gap,
+                )
+                gap_defect.roi_name = "side_shield"
+                if gap_defect.outcome != Outcome.PASS:
+                    defects.append(gap_defect)
 
         # 4. Flash (burr) Protrusion Check
         if "lever_handle" in rois_to_check:
@@ -269,11 +323,28 @@ class Station3Service(BaseStation):
                 pixel_size_mm=pixel_size_mm,
                 direction="bottom",
             )
-            measurements["flash_mm"] = measured_flash_mm
-            flash_defect = evaluator.evaluate_check("plastic", "flash_mm", value=measured_flash_mm)
-            flash_defect.roi_name = "lever_handle"
-            if flash_defect.outcome != Outcome.PASS:
-                defects.append(flash_defect)
+
+            # Check if camera is calibrated
+            if abs(pixel_size_mm - 0.18) < 0.001:
+                # Camera uncalibrated
+                measurements["flash_px"] = measured_flash_mm / pixel_size_mm
+                defects.append(
+                    DefectDetail(
+                        defect_type="camera.uncalibrated",
+                        outcome=Outcome.REVIEW,
+                        roi_name="lever_handle",
+                        description=(
+                            f"Flash measured {measured_flash_mm / pixel_size_mm:.0f} pixels "
+                            f"but camera is uncalibrated. Cannot verify mm tolerance."
+                        ),
+                    )
+                )
+            else:
+                measurements["flash_mm"] = measured_flash_mm
+                flash_defect = evaluator.evaluate_check("plastic", "flash_mm", value=measured_flash_mm)
+                flash_defect.roi_name = "lever_handle"
+                if flash_defect.outcome != Outcome.PASS:
+                    defects.append(flash_defect)
 
         # 5. AI Defect Classifier (Cracks, Short Shot, Sink Marks)
         if self.inference_engine is not None:

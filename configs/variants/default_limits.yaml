@@ -71,6 +71,8 @@ limits:
       fail_tol: 2.0
     lock_sensor_confirmed:
       required: true
+      expected_value: 1.0  # Must be exactly 1.0 (confirmed)
+      fail_if_not_exact: true  # 0.0 is FAIL, not REVIEW
 
   model:
     defect_confidence:

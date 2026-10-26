@@ -58,16 +58,17 @@ def classify_leather_color(image: np.ndarray, roi_mask: np.ndarray | None = None
     b_med = float(np.median(lab_pixels[:, 2]))  # Blue-Yellow -128 to 127
 
     # Coarse classification rules (empirical thresholds for automotive leather)
-    # Black/Dark: Low lightness (L < 60)
-    if L_med < 60:
+    # Black/Dark: Low lightness (L < 80) - relaxed from 60 to handle black leather variations
+    # Note: Black leather can range from L=20 (pure black) to L=75 (dark charcoal)
+    if L_med < 80:
         return LeatherColorClass.BLACK_DARK
 
     # Cream/Light: High lightness (L > 180) with low chroma
     if L_med > 180 and abs(a_med - 128) < 20 and abs(b_med - 128) < 20:
         return LeatherColorClass.CREAM_LIGHT
 
-    # Brown/Tan: Medium lightness (60-180) with positive a (red) and b (yellow)
-    if 60 <= L_med <= 180:
+    # Brown/Tan: Medium lightness (80-180) with positive a (red) and b (yellow)
+    if 80 <= L_med <= 180:
         # Brown has red and yellow components
         if (a_med > 128 + 10) and (b_med > 128 + 10):
             return LeatherColorClass.BROWN_TAN
@@ -92,6 +93,9 @@ def check_variant_color_match(
     Example: Brown seat tested as FRONT_LH_BLACK → mismatch detected
              Dark grey vs black → no mismatch (both in BLACK_DARK category)
 
+    Supports multiple acceptable colors per variant (e.g., BLACK can accept
+    BLACK_DARK and GREY_MEDIUM for charcoal/dark grey variants).
+
     Parameters
     ----------
     image : np.ndarray
@@ -113,26 +117,30 @@ def check_variant_color_match(
     variant_upper = variant_id.upper()
 
     expected_colors = []
+    # BLACK variants accept BLACK_DARK and GREY_MEDIUM (for charcoal/dark grey)
     if "BLACK" in variant_upper or "DARK" in variant_upper:
-        expected_colors = [LeatherColorClass.BLACK_DARK]
+        expected_colors = [LeatherColorClass.BLACK_DARK, LeatherColorClass.GREY_MEDIUM]
+    # BROWN variants accept BROWN_TAN and sometimes GREY_MEDIUM (for taupe/greige)
     elif "BROWN" in variant_upper or "TAN" in variant_upper:
-        expected_colors = [LeatherColorClass.BROWN_TAN]
+        expected_colors = [LeatherColorClass.BROWN_TAN, LeatherColorClass.GREY_MEDIUM]
+    # CREAM/LIGHT variants
     elif "CREAM" in variant_upper or "LIGHT" in variant_upper or "BEIGE" in variant_upper:
         expected_colors = [LeatherColorClass.CREAM_LIGHT]
+    # GREY variants accept GREY_MEDIUM and BLACK_DARK (for dark grey)
     elif "GREY" in variant_upper or "GRAY" in variant_upper:
         expected_colors = [LeatherColorClass.GREY_MEDIUM, LeatherColorClass.BLACK_DARK]
     else:
-        # Unknown variant color - cannot validate
+        # Unknown variant color - cannot validate, pass through
         return (True, f"Variant {variant_id} has no color keyword - skipping validation")
 
     if observed_color == LeatherColorClass.UNKNOWN:
-        # Could not classify - do not block (avoid false rejects)
+        # Could not classify - do not block (avoid false rejects on edge lighting)
         return (True, f"Observed color could not be classified - skipping validation")
 
     if observed_color in expected_colors:
-        return (True, f"Color match: observed {observed_color.value} matches expected {expected_colors}")
+        return (True, f"Color match: observed {observed_color.value} matches expected {[c.value for c in expected_colors]}")
 
-    # Mismatch detected
+    # Mismatch detected - this is likely a wrong barcode or variant selection
     reason = (
         f"Color mismatch: variant '{variant_id}' expects {[c.value for c in expected_colors]}, "
         f"but observed {observed_color.value}. Possible wrong barcode or variant selection."

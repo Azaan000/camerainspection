@@ -49,27 +49,53 @@ class Station1Service(BaseStation):
         model_path = getattr(self.config.model, "weights_path", "models/station_1/model.onnx")
         mp = Path(model_path)
         if not mp.exists():
-            if Path("models/station_1/model.onnx").exists():
-                model_path = "models/station_1/model.onnx"
-            elif Path("models/station_1/patchcore.onnx").exists():
-                model_path = "models/station_1/patchcore.onnx"
+            if not model_path or model_path == "models/station_1/model.onnx":
+                if Path("models/station_1/model.onnx").exists():
+                    model_path = "models/station_1/model.onnx"
+                elif Path("models/station_1/patchcore.onnx").exists():
+                    model_path = "models/station_1/patchcore.onnx"
 
         if backend != "classical" and Path(model_path).exists():
             self.config.model.backend = "onnx"
             self.config.model.weights_path = str(model_path)
         else:
-            self.config.model.backend = "classical"
+            if backend == "onnx" and model_path and not Path(model_path).exists():
+                self.config.model.backend = "onnx"
+                self.config.model.weights_path = str(model_path)
+            else:
+                self.config.model.backend = "classical"
+                self.config.model.weights_path = str(model_path)
 
+        # CRITICAL FIX: Unify threshold handling
+        # When config has 'threshold' (e.g., from slider), use it to derive pass_below/fail_above
+        # with a fixed margin. Otherwise use explicit pass_below/fail_above from config.
+        threshold = getattr(self.config.model, "threshold", None)
+        if threshold is not None:
+            # Slider/single-threshold mode: derive PASS/REVIEW/FAIL bands
+            # PASS: score < threshold - 0.05
+            # REVIEW: threshold - 0.05 <= score < threshold + 0.15
+            # FAIL: score >= threshold + 0.15
+            self.config.model.pass_below = max(0.0, threshold - 0.05)
+            self.config.model.fail_above = threshold + 0.15
+            logger.info(
+                "Station 1: threshold=%.2f → pass_below=%.2f fail_above=%.2f",
+                threshold, self.config.model.pass_below, self.config.model.fail_above,
+            )
+        else:
+            # Explicit dual-threshold mode from config
+            self.config.model.pass_below = getattr(self.config.model, "pass_below", 0.4)
+            self.config.model.fail_above = getattr(self.config.model, "fail_above", 0.6)
+
+        # Classical analyzer (used only when backend == "classical")
         analyzer_model_path = self.config.model.weights_path if getattr(self.config.model, "backend", "classical") == "onnx" else None
-        threshold = getattr(self.config.model, "threshold", 0.45)
         self._analyzer = SurfaceAnalyzer(
             model_path=analyzer_model_path,
-            anomaly_threshold=threshold,
+            anomaly_threshold=self.config.model.pass_below,  # Use pass_below for consistency
             blur_ksize=101,
-            diff_threshold=12,
-            min_area_px=4,
+            diff_threshold=25,      # INCREASED from 12 for minimum contrast
+            min_area_px=16,         # INCREASED from 4 to reduce noise
             max_area_px=200_000,
-            min_contrast=10.0,
+            min_contrast=25.0,      # INCREASED from 10.0 for grain suppression
         )
         # Use the engine injected by the builder when available; lazy-load only as fallback.
         # _onnx_loaded tracks whether we have already attempted a lazy load (avoid retrying).
@@ -209,6 +235,7 @@ class Station1Service(BaseStation):
 
         PRIMARY PASS/FAIL GATE: ONNX pred_label and pred_score determine outcome.
         ANY model error (engine unavailable, inference exception) → FAIL safe.
+        SAFETY RULE: If defects > 0 from ANY source, outcome cannot be PASS.
 
         Also performs variant color validation as a process error check.
         """
@@ -220,26 +247,26 @@ class Station1Service(BaseStation):
         view_zone_map = {
             "front_cushion_backrest": "seating_face",
             "rear_back_map_pocket":   "side_back",
+            "main": "seating_face",  # Legacy single-image path
         }
-        zone_key = view_zone_map.get(view, view)
+        zone_key = view_zone_map.get(view, "seating_face")  # Default to seating_face
 
         # PROCESS ERROR CHECK: Variant color validation (catches wrong barcode/variant)
-        # This is a GROSS mismatch check (e.g., brown seat tested as BLACK variant)
-        # Uses REVIEW outcome to flag for human verification, not auto-FAIL
+        # Upgraded to FAIL for gross mismatches (e.g., brown seat as BLACK variant)
         color_matches, color_reason = check_variant_color_match(image, variant_id, roi_mask=None)
         if not color_matches:
             logger.warning("Variant color mismatch detected: %s", color_reason)
+            # UPGRADED: FAIL for obvious mismatches, with high confidence threshold
             defects.append(DefectDetail(
                 defect_type="station.variant_color_mismatch",
-                outcome=Outcome.REVIEW,  # Changed from FAIL - needs human verification
+                outcome=Outcome.FAIL,
                 camera_name=camera_name,
                 view=view,
                 roi_name=zone_key,
-                confidence=0.8,  # Moderate confidence - color can vary with lighting
-                description=f"COLOR MISMATCH WARNING: {color_reason}",
+                confidence=0.95,  # High confidence for gross mismatch
+                description=f"VARIANT COLOR MISMATCH: {color_reason}",
             ))
             measurements["leather.color_mismatch"] = 1.0
-            # Don't increment defect_count for color mismatch alone - it's a warning
         else:
             measurements["leather.color_mismatch"] = 0.0
 
@@ -253,14 +280,9 @@ class Station1Service(BaseStation):
                 view=view,
                 description="ONNX PatchCore engine is unavailable. Failing safe.",
             ))
-            # Record non-zero defect count so no other rule can override to PASS
-            view_zone_map = {
-                "front_cushion_backrest": "seating_face",
-                "rear_back_map_pocket":   "side_back",
-            }
-            zone_key = view_zone_map.get(view, view)
-            measurements[f"{zone_key}.defect_count"] = 1.0  # Changed from 0.0
+            measurements[f"{zone_key}.defect_count"] = 1.0
             measurements["leather.anomaly_score"] = 1.0
+            measurements[f"{zone_key}.anomaly_threshold"] = self.config.model.fail_above
             return defects, measurements, annotated
 
         try:
@@ -275,35 +297,40 @@ class Station1Service(BaseStation):
                 view=view,
                 description=f"Inference exception: {exc}",
             ))
-            view_zone_map = {
-                "front_cushion_backrest": "seating_face",
-                "rear_back_map_pocket":   "side_back",
-            }
-            zone_key = view_zone_map.get(view, view)
-            measurements[f"{zone_key}.defect_count"] = 1.0  # Changed from 0.0
+            measurements[f"{zone_key}.defect_count"] = 1.0
             measurements["leather.anomaly_score"] = 1.0
+            measurements[f"{zone_key}.anomaly_threshold"] = self.config.model.fail_above
             return defects, measurements, annotated
-
-        # Use the view-appropriate zone name so both cameras satisfy required measurements
-        view_zone_map = {
-            "front_cushion_backrest": "seating_face",
-            "rear_back_map_pocket":   "side_back",
-        }
-        zone_key = view_zone_map.get(view, view)
 
         # Primary PASS/FAIL gate: anomaly score from first detection (or 0 if clean)
         score = raw_detections[0].anomaly_score if raw_detections else 0.0
+        raw_score = raw_detections[0].metadata.get("raw_score", score) if raw_detections else 0.0
+        heatmap_max = raw_detections[0].metadata.get("heatmap_max", 0.0) if raw_detections else 0.0
+
+        # Store UNCLAMPED raw score for diagnostics
         measurements["leather.anomaly_score"] = float(score)
+        measurements["leather.raw_anomaly_score"] = float(raw_score)  # Unclamped
+        measurements["leather.heatmap_max"] = float(heatmap_max)
+
+        # CRITICAL FIX: Record the ACTUAL threshold that was applied (from slider/config)
+        # Use pass_below as the primary threshold (slider value)
+        measurements[f"{zone_key}.anomaly_threshold"] = self.config.model.pass_below
+        measurements[f"{zone_key}.anomaly_threshold_fail"] = self.config.model.fail_above
 
         # CRITICAL: defect_count MUST match len(raw_detections) so measurements align with "Detected defects"
+        # This unifies the defect list and measurement sources
         measurements[f"{zone_key}.defect_count"] = float(len(raw_detections))
 
         if not raw_detections:
             # Clean PASS — annotate with a green border
             h, w = image.shape[:2]
             cv2.rectangle(annotated, (2, 2), (w - 2, h - 2), (0, 200, 0), 2)
-            cv2.putText(annotated, "PASS", (10, 28),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 0), 2)
+            cv2.putText(
+                annotated,
+                f"PASS (score {score:.3f} < {self.config.model.pass_below:.2f})",
+                (10, 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 0), 2,
+            )
             return defects, measurements, annotated
 
         # PRIMARY GATE: Convert each ModelDetection to a DefectDetail.
@@ -312,10 +339,50 @@ class Station1Service(BaseStation):
         hint = raw_detections[0].metadata.get("outcome_hint", "FAIL")
         outcome = Outcome.FAIL if hint == "FAIL" else Outcome.REVIEW
 
+        # Check for domain warning (out-of-distribution image)
+        domain_warning = raw_detections[0].metadata.get("domain_warning")
+        if domain_warning:
+            # Add domain warning as a separate defect
+            defects.append(DefectDetail(
+                defect_type="station.domain_warning",
+                outcome=Outcome.REVIEW,
+                camera_name=camera_name,
+                view=view,
+                roi_name=zone_key,
+                description=domain_warning,
+            ))
+
         for det in raw_detections:
             bbox = det.bounding_box
 
-            # Draw annotation
+            # Classify the defect type using classical analysis on the detected region
+            defect_type_name = "LEATHER_ANOMALY"
+            defect_description = "Unclassified anomaly"
+
+            if bbox is not None:
+                # Extract the detected region for classification
+                roi = image[bbox.y:bbox.y_max, bbox.x:bbox.x_max]
+                if roi.size > 0:
+                    # Run classical analyzer on just this region to identify defect type
+                    regions = self._analyzer.analyze(roi, pixel_size_mm=pixel_size_mm)
+                    if regions:
+                        # Use the defect type from classical analysis
+                        primary_region = max(regions, key=lambda r: r.anomaly_score)
+                        dtype = primary_region.defect_type
+                        defect_type_name = dtype.value
+
+                        # Build readable description
+                        display_name = " ".join(word.capitalize() for word in dtype.value.split("_"))
+                        if dtype == LeatherDefectType.SCRATCH:
+                            length_mm = primary_region.length_px * pixel_size_mm
+                            defect_description = f"{display_name} ({length_mm:.1f}mm)"
+                        elif dtype == LeatherDefectType.STAIN:
+                            area_mm2 = primary_region.area_px * (pixel_size_mm ** 2)
+                            defect_description = f"{display_name} ({area_mm2:.1f}mm²)"
+                        else:
+                            defect_description = display_name
+
+            # Draw annotation with specific defect type
             box_colour = (0, 0, 255) if outcome == Outcome.FAIL else (0, 165, 255)
             if bbox is not None:
                 cv2.rectangle(
@@ -325,24 +392,30 @@ class Station1Service(BaseStation):
                 )
                 cv2.putText(
                     annotated,
-                    f"{det.class_name} {det.confidence:.2f}",
+                    f"{defect_description} {det.confidence:.2f}",
                     (bbox.x, max(0, bbox.y - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, box_colour, 1,
                 )
 
-            # PRIMARY DEFECT RECORD: Each detection becomes a defect with outcome from model
+            # PRIMARY DEFECT RECORD: Each detection becomes a defect with classified type
+            # Show ACTUAL threshold values from config (slider values)
+            raw_score_val = det.metadata.get("raw_score", det.confidence)
+            hmap_max_val = det.metadata.get("heatmap_max", 0.0)
+
             defects.append(DefectDetail(
-                defect_type=det.class_name,
+                defect_type=f"leather.{defect_type_name}",
                 outcome=outcome,
                 confidence=det.confidence,
                 bounding_box=bbox,
                 camera_name=camera_name,
                 view=view,
-                roi_name=zone_key,  # Changed from hardcoded "seating_face"
+                roi_name=zone_key,
                 description=(
-                    f"PatchCore anomaly score={det.confidence:.4f} "
+                    f"{defect_description}: PatchCore raw_score={raw_score_val:.4f} "
+                    f"(threshold: pass<{self.config.model.pass_below:.2f} "
+                    f"fail>={self.config.model.fail_above:.2f}) "
                     f"pred_label={det.metadata.get('pred_label')} "
-                    f"heatmap_max={det.metadata.get('heatmap_max', 0):.4f}"
+                    f"heatmap_max={hmap_max_val:.4f}"
                 ),
             ))
 

@@ -160,7 +160,7 @@ class TestStation1PatchCoreRegression:
 
             defects, measurements, _ = station1_onnx.inspect_image(
                 image=image,
-                variant_id="FRONT_LH_BLACK",
+                variant_id="FRONT_LH_BROWN",
                 evaluator=limits_evaluator,
                 variant_nominals={},
             )
@@ -192,7 +192,7 @@ class TestStation1PatchCoreRegression:
 
             defects, measurements, _ = station1_onnx.inspect_image(
                 image=image,
-                variant_id="FRONT_LH_BLACK",
+                variant_id="FRONT_LH_BROWN",
                 evaluator=limits_evaluator,
                 variant_nominals={},
             )

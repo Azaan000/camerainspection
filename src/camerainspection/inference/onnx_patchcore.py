@@ -156,27 +156,38 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
         score_arr, label_arr, heatmap_arr, mask_arr = outputs
 
         # Use batch index 0
-        raw_score: float = float(score_arr[0])
+        raw_score_unclamped: float = float(score_arr[0])
+
         # Guard against NaN/Inf from the ONNX model's internal normalisation
         # (happens when both batch slots produce identical scores → division by zero)
         import math
-        if math.isnan(raw_score) or math.isinf(raw_score):
+        if math.isnan(raw_score_unclamped) or math.isinf(raw_score_unclamped):
             # Fall back to heatmap-derived score: normalised max of anomaly map
             heatmap_raw = heatmap_arr[0, 0]
             hmap_max = float(heatmap_raw.max())
             hmap_min = float(heatmap_raw.min())
             denom = hmap_max - hmap_min
-            raw_score = (hmap_max - hmap_min) / (denom + 1e-8) if denom > 0 else 0.0
+            raw_score_unclamped = (hmap_max - hmap_min) / (denom + 1e-8) if denom > 0 else 0.0
             # Scale to [0,1] using a fixed reference max (empirically ~10-20 for WideResNet features)
-            raw_score = min(1.0, hmap_max / 20.0)
-            logger.debug("NaN score corrected via heatmap fallback: %.4f", raw_score)
-        score: float = raw_score
+            raw_score_unclamped = min(1.0, hmap_max / 20.0)
+            logger.debug("NaN score corrected via heatmap fallback: %.4f", raw_score_unclamped)
+
+        # CRITICAL: Store UNCLAMPED raw score for diagnostics
+        # Clamping at 1.0 loses information about how out-of-distribution the image is
+        score: float = raw_score_unclamped  # Keep raw value, don't clamp
+
         is_anomalous: bool = bool(label_arr[0])
         heatmap: np.ndarray = heatmap_arr[0, 0]  # (256, 256) float32
         mask: np.ndarray = mask_arr[0, 0].astype(np.uint8) * 255  # (256, 256) uint8
 
+        # Compute heatmap statistics for domain warning detection
+        hmap_max = float(heatmap.max())
+        hmap_mean = float(heatmap.mean())
+        hmap_std = float(heatmap.std())
+
         logger.debug(
-            "PatchCore result: score=%.4f  pred_label=%s", score, is_anomalous
+            "PatchCore result: raw_score=%.4f  pred_label=%s  hmap_max=%.4f",
+            score, is_anomalous, hmap_max
         )
 
         # If PASS by both criteria, return nothing
@@ -188,7 +199,7 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
 
         if not contours:
             # Score is elevated but mask is empty — create a full-image detection
-            detections = [self._make_detection(score, is_anomalous, heatmap, None)]
+            detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
         else:
             detections = []
             for cnt in contours:
@@ -196,11 +207,11 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
                 if area < _MIN_CONTOUR_AREA_PX:
                     continue
                 detections.append(
-                    self._make_detection(score, is_anomalous, heatmap, cnt)
+                    self._make_detection(score, is_anomalous, heatmap, cnt, image.shape)
                 )
             if not detections:
                 # All contours were below noise threshold — still flag if score says so
-                detections = [self._make_detection(score, is_anomalous, heatmap, None)]
+                detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
 
         return detections
 
@@ -230,12 +241,32 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
         is_anomalous: bool,
         heatmap: np.ndarray,
         contour: np.ndarray | None,
+        original_shape: tuple[int, int, int] = (1024, 1024, 3),
     ) -> ModelDetection:
-        """Build a ModelDetection from one contour (or full-image if contour is None)."""
+        """Build a ModelDetection from one contour (or full-image if contour is None).
+
+        Args:
+            score: Raw unclamped anomaly score
+            is_anomalous: pred_label from model
+            heatmap: Anomaly heatmap (256x256)
+            contour: Detected contour in 256x256 space (or None)
+            original_shape: Original image shape (H, W, C) for bbox scaling
+        """
         bbox: BoundingBox | None = None
         if contour is not None:
             x, y, w, h = cv2.boundingRect(contour)
-            bbox = BoundingBox(x=x, y=y, w=w, h=h)
+
+            # Scale bbox from 256x256 back to original image dimensions
+            h_orig, w_orig = original_shape[:2]
+            scale_x = w_orig / _INPUT_SIZE
+            scale_y = h_orig / _INPUT_SIZE
+
+            bbox = BoundingBox(
+                x=int(x * scale_x),
+                y=int(y * scale_y),
+                w=int(w * scale_x),
+                h=int(h * scale_y),
+            )
 
         # Determine outcome hint once, so callers don't need to re-implement the rules.
         # FAIL: pred_label True OR score >= fail_above
@@ -243,15 +274,33 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
         # PASS: score < pass_below and pred_label False  (not reached here — predict() returns [])
         outcome_hint = "FAIL" if is_anomalous or score >= self.fail_above else "REVIEW"
 
+        # Compute heatmap statistics for domain warning
+        hmap_max = float(heatmap.max())
+        hmap_mean = float(heatmap.mean())
+        hmap_std = float(heatmap.std())
+
+        # Domain warning: detect out-of-distribution images
+        # High score (>1.5) or very high heatmap max (>20) indicates OOD
+        domain_warning = None
+        if score > 1.5 or hmap_max > 20.0:
+            domain_warning = "Result unreliable: image differs from trained leather"
+        elif score > 1.2:
+            domain_warning = "Result uncertain: score saturated above normal range"
+
         return ModelDetection(
             class_name="LEATHER_ANOMALY",
-            confidence=score,
+            confidence=min(score, 1.0),  # Clamp confidence display to [0,1]
             bounding_box=bbox,
-            anomaly_score=score,
+            anomaly_score=score,  # Keep unclamped for analysis
             metadata={
                 "pred_label": is_anomalous,
                 "outcome_hint": outcome_hint,
-                "heatmap_max": float(heatmap.max()),
-                "heatmap_mean": float(heatmap.mean()),
+                "heatmap_max": hmap_max,
+                "heatmap_mean": hmap_mean,
+                "heatmap_std": hmap_std,
+                "raw_score": score,  # Store unclamped raw score
+                "threshold_pass_below": self.pass_below,
+                "threshold_fail_above": self.fail_above,
+                "domain_warning": domain_warning,
             },
         )

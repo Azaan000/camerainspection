@@ -173,28 +173,56 @@ class Station4Service(BaseStation):
                 measured_pos = MechanismVisionEngine.measure_track_position_mm(
                     track_crop, pixel_size_mm=pixel_size_mm, reference_datum_x=0.0
                 )
-                measurements["track_end_position_mm"] = measured_pos
 
-                pos_d = evaluator.evaluate_check(
-                    "mechanism",
-                    "track_end_position_mm",
-                    measured_pos,
-                    nominal=nom_track_pos_mm,
-                )
-                pos_d.roi_name = "track_travel"
-                if pos_d.outcome != Outcome.PASS:
-                    defects.append(pos_d)
+                # Check if camera is calibrated (default uncalibrated value is 0.18)
+                if abs(pixel_size_mm - 0.18) < 0.001:
+                    # Camera uncalibrated
+                    measurements["track_end_position_px"] = measured_pos / pixel_size_mm
+                    defects.append(
+                        DefectDetail(
+                            defect_type="camera.uncalibrated",
+                            outcome=Outcome.REVIEW,
+                            roi_name="track_travel",
+                            description=(
+                                f"Track position measured {measured_pos / pixel_size_mm:.0f} pixels "
+                                f"but camera is uncalibrated. Cannot verify mm tolerance."
+                            ),
+                        )
+                    )
+                    cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), (255, 200, 0), 2)
+                    cv2.putText(
+                        annotated,
+                        f"Track: {measured_pos / pixel_size_mm:.0f} px (uncal)",
+                        (tx1, max(0, ty1 - 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 200, 0),
+                        2,
+                    )
+                else:
+                    # Camera calibrated
+                    measurements["track_end_position_mm"] = measured_pos
 
-                cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), (255, 200, 0), 2)
-                cv2.putText(
-                    annotated,
-                    f"Track: {measured_pos:.1f} mm",
-                    (tx1, max(0, ty1 - 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 200, 0),
-                    2,
-                )
+                    pos_d = evaluator.evaluate_check(
+                        "mechanism",
+                        "track_end_position_mm",
+                        measured_pos,
+                        nominal=nom_track_pos_mm,
+                    )
+                    pos_d.roi_name = "track_travel"
+                    if pos_d.outcome != Outcome.PASS:
+                        defects.append(pos_d)
+
+                    cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), (255, 200, 0), 2)
+                    cv2.putText(
+                        annotated,
+                        f"Track: {measured_pos:.1f} mm",
+                        (tx1, max(0, ty1 - 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 200, 0),
+                        2,
+                    )
         else:
             defects.append(
                 DefectDetail(
@@ -208,7 +236,24 @@ class Station4Service(BaseStation):
         # -------------------------------------------------------------
         # 2. Hardware Lock Sensor & Cycle Inputs (CRITICAL SAFETY RULE)
         # -------------------------------------------------------------
-        if self.plc is not None:
+        if self.plc is None:
+            # CRITICAL: Mechanism checks REQUIRE PLC hardware
+            defects.append(
+                DefectDetail(
+                    defect_type="hardware.plc_unavailable",
+                    outcome=Outcome.FAIL,
+                    description=(
+                        "PLC hardware unavailable. Cannot verify mechanism lock, "
+                        "torque, slip-back, or actuator position. FAIL safe."
+                    ),
+                )
+            )
+            measurements["lock_sensor_confirmed"] = 0.0
+            measurements["actuator_position_mm"] = 0.0
+            measurements["lock_torque_nm"] = 0.0
+            measurements["slip_back_mm"] = 0.0
+            lock_confirmed = False
+        else:
             # 2a. Commanded position check on actuator
             actuator_pos = self.plc.read_actuator_position()
             measurements["actuator_position_mm"] = actuator_pos
@@ -256,9 +301,9 @@ class Station4Service(BaseStation):
                     )
                 )
 
-        # 2d. Mechanical proximity lock sensor
-        lock_confirmed = self.plc.is_mechanism_locked() if self.plc is not None else False
-        measurements["lock_sensor_confirmed"] = 1.0 if lock_confirmed else 0.0
+            # 2d. Mechanical proximity lock sensor
+            lock_confirmed = self.plc.is_mechanism_locked()
+            measurements["lock_sensor_confirmed"] = 1.0 if lock_confirmed else 0.0
 
         lock_d = evaluator.evaluate_check(
             "mechanism", "lock_sensor_confirmed", lock_confirmed

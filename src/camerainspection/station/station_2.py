@@ -147,6 +147,27 @@ class Station2Service(BaseStation):
         measurements["seam_position_mm"] = meas.seam_position_mm
         measurements["stitch_count"] = float(meas.stitch_count)
 
+        # SAFETY: Validate measurements are in reasonable range
+        if meas.stitches_per_inch < 1.0 or meas.stitches_per_inch > 20.0:
+            defects.append(
+                DefectDetail(
+                    defect_type="station.measurement_invalid",
+                    outcome=Outcome.FAIL,
+                    roi_name="main_seam",
+                    description=f"SPI {meas.stitches_per_inch:.1f} is outside valid range (1-20)",
+                )
+            )
+
+        if meas.stitch_count < 3:
+            defects.append(
+                DefectDetail(
+                    defect_type="station.insufficient_stitches",
+                    outcome=Outcome.FAIL,
+                    roi_name="main_seam",
+                    description=f"Only {meas.stitch_count} stitches detected in seam ROI",
+                )
+            )
+
         # Annotate seam ROI border
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 255, 0), 2)
         cv2.putText(
@@ -202,6 +223,38 @@ class Station2Service(BaseStation):
             color_d.roi_name = "main_seam"
             if color_d.outcome != Outcome.PASS:
                 defects.append(color_d)
+
+        # 4a. Heuristic broken thread check (immediate fix until AI model ready)
+        from camerainspection.vision.station2.broken_thread_detector import BrokenThreadDetector
+
+        thread_detector = BrokenThreadDetector(min_gap_mm=5.0)
+        breaks = thread_detector.detect_breaks(meas.stitch_centers, pixel_size_mm)
+
+        for bx, by, gap_mm in breaks:
+            broken_d = evaluator.evaluate_check("stitch", "broken_thread", True)
+            broken_d.defect_type = "stitch.broken_thread"
+            broken_d.roi_name = "main_seam"
+            broken_d.bounding_box = BoundingBox(x=x1 + bx - 10, y=y1 + by - 10, w=20, h=20)
+            broken_d.description = f"Heuristic broken thread detected (gap={gap_mm:.1f}mm)"
+            defects.append(broken_d)
+
+            # Annotate on image
+            cv2.rectangle(
+                annotated,
+                (x1 + bx - 10, y1 + by - 10),
+                (x1 + bx + 10, y1 + by + 10),
+                (0, 0, 255),
+                2,
+            )
+            cv2.putText(
+                annotated,
+                f"BREAK {gap_mm:.1f}mm",
+                (x1 + bx - 10, max(0, y1 + by - 15)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 255),
+                2,
+            )
 
         # 5. AI model — broken thread and loose end
         if self.inference_engine is not None:

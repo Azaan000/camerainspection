@@ -71,9 +71,9 @@ regions_of_interest:
     width: 380
     height: 1150
 model:
-  backend: classical
+  backend: onnx
   model_type: anomalib_patchcore
-  weights_path: models/station_1/patchcore.onnx
+  weights_path: models/station_1/model.onnx
   version: v1.0.0
   threshold: 0.45
   pass_below: 0.4
