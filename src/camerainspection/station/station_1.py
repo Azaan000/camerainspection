@@ -28,6 +28,7 @@ from camerainspection.core.logging import get_logger
 from camerainspection.core.models import BoundingBox, DefectDetail, Outcome
 from camerainspection.inference.base import ModelDetection
 from camerainspection.station.base_station import BaseStation
+from camerainspection.vision.station1.color_validator import check_variant_color_match
 from camerainspection.vision.station1.surface_analysis import (
     LeatherDefectType,
     SurfaceAnalyzer,
@@ -137,6 +138,7 @@ class Station1Service(BaseStation):
                 camera_name=camera_name,
                 view=view,
                 pixel_size_mm=camera_config.pixel_size_mm,
+                variant_id=variant_id,
             )
 
         # Determine applicable ROIs for this view (classical path)
@@ -182,6 +184,7 @@ class Station1Service(BaseStation):
                 camera_name="main",
                 view="main",
                 pixel_size_mm=self.config.camera.pixel_size_mm,
+                variant_id=variant_id,
             )
         return self._analyze_surface(
             image=image,
@@ -200,15 +203,49 @@ class Station1Service(BaseStation):
         camera_name: str,
         view: str,
         pixel_size_mm: float,
+        variant_id: str = "UNKNOWN",
     ) -> tuple[list[DefectDetail], dict[str, float], np.ndarray | None]:
-        """Run PatchCore ONNX inference and convert detections to DefectDetails."""
+        """Run PatchCore ONNX inference and convert detections to DefectDetails.
+
+        PRIMARY PASS/FAIL GATE: ONNX pred_label and pred_score determine outcome.
+        ANY model error (engine unavailable, inference exception) → FAIL safe.
+
+        Also performs variant color validation as a process error check.
+        """
         defects: list[DefectDetail] = []
         measurements: dict[str, float] = {}
         annotated = image.copy()
 
+        # View-zone mapping for measurements
+        view_zone_map = {
+            "front_cushion_backrest": "seating_face",
+            "rear_back_map_pocket":   "side_back",
+        }
+        zone_key = view_zone_map.get(view, view)
+
+        # PROCESS ERROR CHECK: Variant color validation (catches wrong barcode/variant)
+        # This is a GROSS mismatch check (e.g., brown seat tested as BLACK variant)
+        # Uses REVIEW outcome to flag for human verification, not auto-FAIL
+        color_matches, color_reason = check_variant_color_match(image, variant_id, roi_mask=None)
+        if not color_matches:
+            logger.warning("Variant color mismatch detected: %s", color_reason)
+            defects.append(DefectDetail(
+                defect_type="station.variant_color_mismatch",
+                outcome=Outcome.REVIEW,  # Changed from FAIL - needs human verification
+                camera_name=camera_name,
+                view=view,
+                roi_name=zone_key,
+                confidence=0.8,  # Moderate confidence - color can vary with lighting
+                description=f"COLOR MISMATCH WARNING: {color_reason}",
+            ))
+            measurements["leather.color_mismatch"] = 1.0
+            # Don't increment defect_count for color mismatch alone - it's a warning
+        else:
+            measurements["leather.color_mismatch"] = 0.0
+
         engine = self._get_onnx_engine()
         if engine is None:
-            # Engine failed to load — fail safe
+            # Engine failed to load — FAIL SAFE (never PASS when model unavailable)
             defects.append(DefectDetail(
                 defect_type="station.engine_unavailable",
                 outcome=Outcome.FAIL,
@@ -216,13 +253,21 @@ class Station1Service(BaseStation):
                 view=view,
                 description="ONNX PatchCore engine is unavailable. Failing safe.",
             ))
-            measurements["seating_face.defect_count"] = 0.0
+            # Record non-zero defect count so no other rule can override to PASS
+            view_zone_map = {
+                "front_cushion_backrest": "seating_face",
+                "rear_back_map_pocket":   "side_back",
+            }
+            zone_key = view_zone_map.get(view, view)
+            measurements[f"{zone_key}.defect_count"] = 1.0  # Changed from 0.0
+            measurements["leather.anomaly_score"] = 1.0
             return defects, measurements, annotated
 
         try:
             raw_detections: list[ModelDetection] = engine.predict(image)
         except Exception as exc:
             logger.error("ONNX inference error on camera %s view %s: %s", camera_name, view, exc)
+            # Inference error — FAIL SAFE (never PASS on exception)
             defects.append(DefectDetail(
                 defect_type="station.inference_error",
                 outcome=Outcome.FAIL,
@@ -230,19 +275,28 @@ class Station1Service(BaseStation):
                 view=view,
                 description=f"Inference exception: {exc}",
             ))
-            measurements["seating_face.defect_count"] = 0.0
+            view_zone_map = {
+                "front_cushion_backrest": "seating_face",
+                "rear_back_map_pocket":   "side_back",
+            }
+            zone_key = view_zone_map.get(view, view)
+            measurements[f"{zone_key}.defect_count"] = 1.0  # Changed from 0.0
+            measurements["leather.anomaly_score"] = 1.0
             return defects, measurements, annotated
 
-        # Record overall anomaly score as a measurement
         # Use the view-appropriate zone name so both cameras satisfy required measurements
         view_zone_map = {
             "front_cushion_backrest": "seating_face",
             "rear_back_map_pocket":   "side_back",
         }
         zone_key = view_zone_map.get(view, view)
+
+        # Primary PASS/FAIL gate: anomaly score from first detection (or 0 if clean)
         score = raw_detections[0].anomaly_score if raw_detections else 0.0
+        measurements["leather.anomaly_score"] = float(score)
+
+        # CRITICAL: defect_count MUST match len(raw_detections) so measurements align with "Detected defects"
         measurements[f"{zone_key}.defect_count"] = float(len(raw_detections))
-        measurements["leather.anomaly_score"] = float(score or 0.0)
 
         if not raw_detections:
             # Clean PASS — annotate with a green border
@@ -252,9 +306,9 @@ class Station1Service(BaseStation):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 0), 2)
             return defects, measurements, annotated
 
-        # Convert each ModelDetection to a DefectDetail.
-        # outcome_hint is set by the engine using: FAIL if pred_label or score >= fail_above,
-        # else REVIEW.  Fall back to FAIL when the key is absent (old engine, fail safe).
+        # PRIMARY GATE: Convert each ModelDetection to a DefectDetail.
+        # outcome_hint from engine: FAIL if pred_label=True OR score >= fail_above, else REVIEW.
+        # Fall back to FAIL when absent (old engine, fail safe).
         hint = raw_detections[0].metadata.get("outcome_hint", "FAIL")
         outcome = Outcome.FAIL if hint == "FAIL" else Outcome.REVIEW
 
@@ -276,6 +330,7 @@ class Station1Service(BaseStation):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, box_colour, 1,
                 )
 
+            # PRIMARY DEFECT RECORD: Each detection becomes a defect with outcome from model
             defects.append(DefectDetail(
                 defect_type=det.class_name,
                 outcome=outcome,
@@ -283,7 +338,7 @@ class Station1Service(BaseStation):
                 bounding_box=bbox,
                 camera_name=camera_name,
                 view=view,
-                roi_name="seating_face",
+                roi_name=zone_key,  # Changed from hardcoded "seating_face"
                 description=(
                     f"PatchCore anomaly score={det.confidence:.4f} "
                     f"pred_label={det.metadata.get('pred_label')} "
