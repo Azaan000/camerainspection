@@ -105,14 +105,20 @@ class SurfaceAnalyzer:
     # Public API
     # ------------------------------------------------------------------
 
-    def analyze(self, roi_bgr: np.ndarray, pixel_size_mm: float = 0.18) -> list[LeatherDefectRegion]:
-        """Run detection-classification pipeline on a single ROI image."""
+    def analyze(self, roi_bgr: np.ndarray, pixel_size_mm: float = 0.18, relaxed: bool = False) -> list[LeatherDefectRegion]:
+        """Run detection-classification pipeline on a single ROI image.
+
+        Args:
+            roi_bgr: ROI image in BGR format
+            pixel_size_mm: Pixel size in mm for area/length calculations
+            relaxed: If True, use lower thresholds (for regions already flagged by PatchCore)
+        """
         if roi_bgr is None or roi_bgr.size == 0:
             return []
 
         if self._session is not None:
             return self._analyze_onnx(roi_bgr)
-        return self._analyze_heuristic(roi_bgr, pixel_size_mm=pixel_size_mm)
+        return self._analyze_heuristic(roi_bgr, pixel_size_mm=pixel_size_mm, relaxed=relaxed)
 
     # ------------------------------------------------------------------
     # ONNX inference path
@@ -181,9 +187,18 @@ class SurfaceAnalyzer:
     # Heuristic fallback path (original algorithm)
     # ------------------------------------------------------------------
 
-    def _analyze_heuristic(self, roi_bgr: np.ndarray, pixel_size_mm: float = 0.18) -> list[LeatherDefectRegion]:
+    def _analyze_heuristic(self, roi_bgr: np.ndarray, pixel_size_mm: float = 0.18, relaxed: bool = False) -> list[LeatherDefectRegion]:
         gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY) if len(roi_bgr.shape) == 3 else roi_bgr.copy()
         h, w = gray.shape[:2]
+
+        # Use much lower thresholds when analyzing a PatchCore-flagged region
+        # PatchCore already confirmed an anomaly exists, so we're just classifying it
+        if relaxed:
+            diff_thresh = max(8, self.diff_threshold // 3)  # Drop to ~33% (min 8)
+            min_contrast = max(8.0, self.min_contrast / 3.0)  # Drop to ~33% (min 8.0)
+        else:
+            diff_thresh = self.diff_threshold
+            min_contrast = self.min_contrast
 
         # 1. Global / macroscopic shade band detection via 1D profile analysis
         shade_regions: list[LeatherDefectRegion] = []
@@ -238,7 +253,7 @@ class SurfaceAnalyzer:
 
         # Absolute diff for detection threshold
         abs_diff = np.abs(signed_diff).astype(np.uint8)
-        _, candidate_mask = cv2.threshold(abs_diff, self.diff_threshold, 255, cv2.THRESH_BINARY)
+        _, candidate_mask = cv2.threshold(abs_diff, diff_thresh, 255, cv2.THRESH_BINARY)
 
         # Clean mask: open removes noise, close fills gaps
         k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -246,7 +261,7 @@ class SurfaceAnalyzer:
         candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_OPEN, k3)
         candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_CLOSE, k5)
 
-        local_regions = self._extract_regions(candidate_mask, signed_diff, pixel_size_mm)
+        local_regions = self._extract_regions(candidate_mask, signed_diff, pixel_size_mm, min_contrast)
         all_regs = shade_regions + local_regions
 
         # Sort by anomaly score descending and cap at max_defects_per_roi
@@ -257,7 +272,8 @@ class SurfaceAnalyzer:
         return all_regs
 
     def _extract_regions(
-        self, mask: np.ndarray, signed_diff: np.ndarray, pixel_size_mm: float = 0.18
+        self, mask: np.ndarray, signed_diff: np.ndarray, pixel_size_mm: float = 0.18,
+        min_contrast: float | None = None
     ) -> list[LeatherDefectRegion]:
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
         regions: list[LeatherDefectRegion] = []
@@ -275,7 +291,8 @@ class SurfaceAnalyzer:
                 continue
 
             mean_dev = float(signed_diff[labels == i].mean())
-            if abs(mean_dev) < self.min_contrast:
+            contrast_threshold = min_contrast if min_contrast is not None else self.min_contrast
+            if abs(mean_dev) < contrast_threshold:
                 continue
 
             anomaly_score = min(1.0, abs(mean_dev) / 60.0)
@@ -310,16 +327,20 @@ class SurfaceAnalyzer:
         if area > 15_000 or (max_dim > 250 and area > 5_000):
             return LeatherDefectType.SHADE_BAND
 
-        # 3. Cut: dark + elongated (aspect ≥ 2.5, not too long for streak)
-        if is_dark and aspect >= 2.5 and max_dim <= 300:
+        # 3. Cut: dark + elongated (aspect ≥ 2.0, not too long)
+        # Lowered from 2.5 to 2.0 to catch subtle cuts
+        if is_dark and aspect >= 2.0 and max_dim <= 300:
             return LeatherDefectType.CUT
 
         # 4. Coating streak: bright + very long
         if not is_dark and max_dim > 150 and aspect >= 4.0:
             return LeatherDefectType.COATING_STREAK
 
-        # 5. Scratch: bright + elongated (shorter)
-        if not is_dark and aspect >= 3.0:
+        # 5. Scratch: BRIGHT + elongated (aspect ≥ 2.0, shorter than streak)
+        # Lowered from 3.0 to 2.0 to catch subtle scratches
+        # Scratches are BRIGHT (surface drag/fingernail marks)
+        # Cuts are DARK (material broken/scored)
+        if not is_dark and aspect >= 2.0 and max_dim <= 150:
             return LeatherDefectType.SCRATCH
 
         # 6. Stain: dark blob (non-pinhole, non-elongated)

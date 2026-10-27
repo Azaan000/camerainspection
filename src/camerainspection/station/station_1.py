@@ -344,20 +344,52 @@ class Station1Service(BaseStation):
                 roi = image[bbox.y:bbox.y_max, bbox.x:bbox.x_max]
                 if roi.size > 0:
                     # Run classical analyzer on just this region to identify defect type
-                    regions = self._analyzer.analyze(roi, pixel_size_mm=pixel_size_mm)
+                    # Use relaxed=True since PatchCore already confirmed an anomaly exists
+                    regions = self._analyzer.analyze(roi, pixel_size_mm=pixel_size_mm, relaxed=True)
                     if regions:
-                        # Use the defect type from classical analysis
-                        primary_region = max(regions, key=lambda r: r.anomaly_score)
-                        dtype = primary_region.defect_type
-                        defect_type_name = dtype.value
+                        # Filter out shade bands - they're often lighting gradients in the ROI crop
+                        # rather than actual defects. Look for specific defect types first.
+                        non_shade_regions = [r for r in regions if r.defect_type != LeatherDefectType.SHADE_BAND]
+
+                        # Use the highest-scoring non-shade region if available
+                        if non_shade_regions:
+                            primary_region = max(non_shade_regions, key=lambda r: r.anomaly_score)
+                            dtype = primary_region.defect_type
+                            defect_type_name = dtype.value
+                        else:
+                            # Only shade band found (or nothing useful) - use PatchCore bbox shape as fallback
+                            # to infer defect type from the detection's aspect ratio
+                            bbox_aspect = max(bbox.w, bbox.h) / max(min(bbox.w, bbox.h), 1)
+                            bbox_max_dim = max(bbox.w, bbox.h)
+
+                            # Apply similar classification logic but more lenient for bbox-based inference
+                            # Since we're working with PatchCore's bbox (not the actual defect's bbox),
+                            # use a lower threshold: aspect >= 1.5 instead of 2.0
+                            if bbox_aspect >= 1.5 and bbox_max_dim <= 400:
+                                # Moderately elongated bbox -> likely scratch or cut
+                                # Without contrast info, default to scratch (more common)
+                                dtype = LeatherDefectType.SCRATCH
+                                defect_type_name = "scratch"
+                            else:
+                                # Not elongated - keep as shade_band or use the best region we found
+                                primary_region = max(regions, key=lambda r: r.anomaly_score)
+                                dtype = primary_region.defect_type
+                                defect_type_name = dtype.value
 
                         # Build readable description
                         display_name = " ".join(word.capitalize() for word in dtype.value.split("_"))
                         if dtype == LeatherDefectType.SCRATCH:
-                            length_mm = primary_region.length_px * pixel_size_mm
+                            # Use bbox dimensions when we don't have a measured region
+                            if 'primary_region' in locals():
+                                length_mm = primary_region.length_px * pixel_size_mm
+                            else:
+                                length_mm = max(bbox.w, bbox.h) * pixel_size_mm
                             defect_description = f"{display_name} ({length_mm:.1f}mm)"
                         elif dtype == LeatherDefectType.STAIN:
-                            area_mm2 = primary_region.area_px * (pixel_size_mm ** 2)
+                            if 'primary_region' in locals():
+                                area_mm2 = primary_region.area_px * (pixel_size_mm ** 2)
+                            else:
+                                area_mm2 = (bbox.w * bbox.h) * (pixel_size_mm ** 2)
                             defect_description = f"{display_name} ({area_mm2:.1f}mm²)"
                         else:
                             defect_description = display_name
