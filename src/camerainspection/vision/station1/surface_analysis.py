@@ -246,7 +246,13 @@ class SurfaceAnalyzer:
                         ))
 
         # 2. Local anomaly detection via box filter background estimation
-        bg = cv2.blur(gray.astype(np.float32), (self.blur_ksize, self.blur_ksize))
+        # Clamp blur kernel to odd value <= min(h, w) so it doesn't dwarf a small ROI crop
+        # (a 101px kernel on a 50px ROI makes signed_diff ≈ 0 everywhere → no regions found)
+        safe_blur = min(self.blur_ksize, h - 1 if h % 2 == 0 else h, w - 1 if w % 2 == 0 else w)
+        safe_blur = max(3, safe_blur)
+        if safe_blur % 2 == 0:
+            safe_blur -= 1  # keep it odd
+        bg = cv2.blur(gray.astype(np.float32), (safe_blur, safe_blur))
 
         # Signed diff (raw, for sign classification)
         signed_diff = gray.astype(np.float32) - bg
@@ -261,7 +267,7 @@ class SurfaceAnalyzer:
         candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_OPEN, k3)
         candidate_mask = cv2.morphologyEx(candidate_mask, cv2.MORPH_CLOSE, k5)
 
-        local_regions = self._extract_regions(candidate_mask, signed_diff, pixel_size_mm, min_contrast)
+        local_regions = self._extract_regions(candidate_mask, signed_diff, pixel_size_mm, min_contrast, relaxed=relaxed)
         all_regs = shade_regions + local_regions
 
         # Sort by anomaly score descending and cap at max_defects_per_roi
@@ -273,10 +279,14 @@ class SurfaceAnalyzer:
 
     def _extract_regions(
         self, mask: np.ndarray, signed_diff: np.ndarray, pixel_size_mm: float = 0.18,
-        min_contrast: float | None = None
+        min_contrast: float | None = None, relaxed: bool = False,
     ) -> list[LeatherDefectRegion]:
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
         regions: list[LeatherDefectRegion] = []
+
+        # In relaxed mode (PatchCore already confirmed an anomaly) drop the score gate
+        # to 1/3 of the normal threshold so subtle scratches aren't silently discarded.
+        score_threshold = (self.anomaly_threshold / 3.0) if relaxed else self.anomaly_threshold
 
         for i in range(1, num_labels):
             x, y, w, h, area_px = (
@@ -296,7 +306,7 @@ class SurfaceAnalyzer:
                 continue
 
             anomaly_score = min(1.0, abs(mean_dev) / 60.0)
-            if anomaly_score < self.anomaly_threshold:
+            if anomaly_score < score_threshold:
                 continue
 
             defect_type = self._classify(w, h, area_px, mean_dev, pixel_size_mm)

@@ -218,11 +218,23 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
                 # OOD / fully-saturated: use the densest heatmap region instead
                 detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
             else:
+                # Cap any single contour at 25% of the image area. A contour that large
+                # is a saturation artefact (heatmap blooms across most of the surface) rather
+                # than a real defect boundary, so fall back to the heatmap-peak strategy,
+                # which pins a box on the hottest region instead.
+                max_contour_area = combined_mask.size * 0.25
                 detections = []
                 for cnt in contours:
                     area = cv2.contourArea(cnt)
                     if area < _MIN_CONTOUR_AREA_PX:
                         continue
+                    if area > max_contour_area:
+                        logger.debug(
+                            "Contour area %.1f%% exceeds 25%% cap; using heatmap-peak fallback",
+                            100.0 * area / combined_mask.size,
+                        )
+                        detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
+                        break
                     detections.append(
                         self._make_detection(score, is_anomalous, heatmap, cnt, image.shape)
                     )

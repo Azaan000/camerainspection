@@ -65,28 +65,47 @@ class Station1Service(BaseStation):
                 self.config.model.backend = "classical"
                 self.config.model.weights_path = str(model_path)
 
-        # CRITICAL FIX: Unify threshold handling
-        # When config has 'threshold' (e.g., from slider), use it to derive pass_below/fail_above
-        # with a fixed margin. Otherwise use explicit pass_below/fail_above from config.
-        threshold = getattr(self.config.model, "threshold", None)
-        if threshold is not None:
-            # Slider/single-threshold mode: derive PASS/REVIEW/FAIL bands
-            # PASS: score < threshold - 0.05
-            # REVIEW: threshold - 0.05 <= score < threshold + 0.15
-            # FAIL: score >= threshold + 0.15
-            self.config.model.pass_below = max(0.0, threshold - 0.05)
-            self.config.model.fail_above = threshold + 0.15
+        # Threshold handling: explicit pass_below/fail_above win; 'threshold' is a fallback
+        # for configs that only supply a single slider value.
+        cfg_pass_below = getattr(self.config.model, "pass_below", None)
+        cfg_fail_above = getattr(self.config.model, "fail_above", None)
+
+        if cfg_pass_below is not None and cfg_fail_above is not None:
+            # Explicit dual-threshold mode — use as-is
+            self.config.model.pass_below = cfg_pass_below
+            self.config.model.fail_above = cfg_fail_above
             logger.info(
-                "Station 1: threshold=%.2f → pass_below=%.2f fail_above=%.2f",
-                threshold, self.config.model.pass_below, self.config.model.fail_above,
+                "Station 1: explicit pass_below=%.2f fail_above=%.2f",
+                cfg_pass_below, cfg_fail_above,
             )
         else:
-            # Explicit dual-threshold mode from config
-            self.config.model.pass_below = getattr(self.config.model, "pass_below", 0.4)
-            self.config.model.fail_above = getattr(self.config.model, "fail_above", 0.6)
+            # Fallback to single-threshold slider mode if explicit values absent
+            threshold = getattr(self.config.model, "threshold", None)
+            if threshold is not None:
+                # Slider mode: derive PASS/REVIEW/FAIL bands with a fixed margin
+                # PASS: score < threshold - 0.05
+                # REVIEW: threshold - 0.05 <= score < threshold + 0.15
+                # FAIL: score >= threshold + 0.15
+                self.config.model.pass_below = max(0.0, threshold - 0.05)
+                self.config.model.fail_above = threshold + 0.15
+                logger.info(
+                    "Station 1: threshold=%.2f → pass_below=%.2f fail_above=%.2f",
+                    threshold, self.config.model.pass_below, self.config.model.fail_above,
+                )
+            else:
+                self.config.model.pass_below = 0.4
+                self.config.model.fail_above = 0.6
+                logger.info("Station 1: using default thresholds pass_below=0.40 fail_above=0.60")
 
-        # Classical analyzer (used only when backend == "classical")
-        analyzer_model_path = self.config.model.weights_path if getattr(self.config.model, "backend", "classical") == "onnx" else None
+        # Defect-type classifier for the PatchCore bbox crop.
+        # Always force the heuristic path (model_path=None) even in ONNX mode:
+        #  - The bbox is already confirmed anomalous by PatchCore, so the analyzer only
+        #    classifies the defect type (scratch / pinhole / cut / stain).
+        #  - The heuristic path respects the relaxed=True flag (dropping thresholds to
+        #    ~33% so subtle defects inside the crop are not discarded).
+        #  - SurfaceAnalyzer's own ONNX path uses ImageNet normalisation, which the model
+        #    export docstring states is "confirmed broken"; it also ignores `relaxed`.
+        analyzer_model_path = None
         self._analyzer = SurfaceAnalyzer(
             model_path=analyzer_model_path,
             anomaly_threshold=self.config.model.pass_below,  # Use pass_below for consistency
@@ -335,64 +354,91 @@ class Station1Service(BaseStation):
         for det in raw_detections:
             bbox = det.bounding_box
 
-            # Classify the defect type using classical analysis on the detected region
-            defect_type_name = "LEATHER_ANOMALY"
-            defect_description = "Unclassified anomaly"
+            # Classify defect type.  Three layers, each one a fallback for the previous:
+            #   1. Classical analyzer on the PatchCore bbox crop (most accurate)
+            #   2. Bbox geometry heuristic (shape-based, no pixel data needed)
+            #   3. Score-based heuristic (last resort — at least avoids "LEATHER_ANOMALY")
+            dtype: LeatherDefectType | None = None
+            primary_region = None
 
             if bbox is not None:
-                # Extract the detected region for classification
-                roi = image[bbox.y:bbox.y_max, bbox.x:bbox.x_max]
+                roi = image[
+                    max(0, bbox.y):min(image.shape[0], bbox.y_max),
+                    max(0, bbox.x):min(image.shape[1], bbox.x_max),
+                ]
                 if roi.size > 0:
-                    # Run classical analyzer on just this region to identify defect type
-                    # Use relaxed=True since PatchCore already confirmed an anomaly exists
                     regions = self._analyzer.analyze(roi, pixel_size_mm=pixel_size_mm, relaxed=True)
-                    if regions:
-                        # Filter out shade bands - they're often lighting gradients in the ROI crop
-                        # rather than actual defects. Look for specific defect types first.
-                        non_shade_regions = [r for r in regions if r.defect_type != LeatherDefectType.SHADE_BAND]
+                    logger.debug(
+                        "[classify] bbox=%dx%d  classical regions=%d",
+                        bbox.w, bbox.h, len(regions),
+                    )
+                    for r in regions:
+                        logger.debug(
+                            "[classify]   %s aspect=%.2f score=%.3f",
+                            r.defect_type.value, r.aspect_ratio, r.anomaly_score,
+                        )
 
-                        # Use the highest-scoring non-shade region if available
-                        if non_shade_regions:
-                            primary_region = max(non_shade_regions, key=lambda r: r.anomaly_score)
+                    # Prefer specific defect types; treat shade_band and unknown as noise
+                    specific = [
+                        r for r in regions
+                        if r.defect_type not in (LeatherDefectType.SHADE_BAND, LeatherDefectType.UNKNOWN)
+                    ]
+                    if specific:
+                        primary_region = max(specific, key=lambda r: r.anomaly_score)
+                        dtype = primary_region.defect_type
+                    elif regions:
+                        # All regions are shade_band / unknown — still better than nothing
+                        primary_region = max(regions, key=lambda r: r.anomaly_score)
+                        if primary_region.defect_type not in (LeatherDefectType.SHADE_BAND, LeatherDefectType.UNKNOWN):
                             dtype = primary_region.defect_type
-                            defect_type_name = dtype.value
-                        else:
-                            # Only shade band found (or nothing useful) - use PatchCore bbox shape as fallback
-                            # to infer defect type from the detection's aspect ratio
-                            bbox_aspect = max(bbox.w, bbox.h) / max(min(bbox.w, bbox.h), 1)
-                            bbox_max_dim = max(bbox.w, bbox.h)
+                        # else fall through to geometry heuristic below
 
-                            # Apply similar classification logic but more lenient for bbox-based inference
-                            # Since we're working with PatchCore's bbox (not the actual defect's bbox),
-                            # use a lower threshold: aspect >= 1.5 instead of 2.0
-                            if bbox_aspect >= 1.5 and bbox_max_dim <= 400:
-                                # Moderately elongated bbox -> likely scratch or cut
-                                # Without contrast info, default to scratch (more common)
-                                dtype = LeatherDefectType.SCRATCH
-                                defect_type_name = "scratch"
-                            else:
-                                # Not elongated - keep as shade_band or use the best region we found
-                                primary_region = max(regions, key=lambda r: r.anomaly_score)
-                                dtype = primary_region.defect_type
-                                defect_type_name = dtype.value
+            # Layer 2: geometry heuristic using the PatchCore bbox shape
+            if dtype is None and bbox is not None:
+                bbox_aspect = max(bbox.w, bbox.h) / max(min(bbox.w, bbox.h), 1)
+                bbox_area = bbox.w * bbox.h
+                # Elongated → scratch/cut; tiny → pinhole; blob → stain
+                if bbox_aspect >= 2.5 and bbox.w * bbox.h <= 30_000:
+                    dtype = LeatherDefectType.SCRATCH
+                elif bbox_aspect >= 1.5 and max(bbox.w, bbox.h) <= 300:
+                    dtype = LeatherDefectType.SCRATCH
+                elif bbox_area <= 2_000:
+                    dtype = LeatherDefectType.PINHOLE
+                else:
+                    dtype = LeatherDefectType.STAIN
+                logger.debug(
+                    "[classify] geometry fallback aspect=%.2f area=%d → %s",
+                    bbox_aspect, bbox_area, dtype.value,
+                )
 
-                        # Build readable description
-                        display_name = " ".join(word.capitalize() for word in dtype.value.split("_"))
-                        if dtype == LeatherDefectType.SCRATCH:
-                            # Use bbox dimensions when we don't have a measured region
-                            if 'primary_region' in locals():
-                                length_mm = primary_region.length_px * pixel_size_mm
-                            else:
-                                length_mm = max(bbox.w, bbox.h) * pixel_size_mm
-                            defect_description = f"{display_name} ({length_mm:.1f}mm)"
-                        elif dtype == LeatherDefectType.STAIN:
-                            if 'primary_region' in locals():
-                                area_mm2 = primary_region.area_px * (pixel_size_mm ** 2)
-                            else:
-                                area_mm2 = (bbox.w * bbox.h) * (pixel_size_mm ** 2)
-                            defect_description = f"{display_name} ({area_mm2:.1f}mm²)"
-                        else:
-                            defect_description = display_name
+            # Layer 3: score heuristic (no bbox at all — very rare)
+            if dtype is None:
+                score_for_hint = det.anomaly_score or 0.0
+                dtype = LeatherDefectType.SCRATCH if score_for_hint > 0.7 else LeatherDefectType.STAIN
+                logger.debug("[classify] score fallback score=%.3f → %s", score_for_hint, dtype.value)
+
+            defect_type_name = dtype.value  # e.g. "scratch", "stain", "cut", "pinhole"
+
+            # Build human-readable description
+            display_name = " ".join(word.capitalize() for word in dtype.value.split("_"))
+            if dtype == LeatherDefectType.SCRATCH:
+                if primary_region is not None:
+                    length_mm = primary_region.length_px * pixel_size_mm
+                elif bbox is not None:
+                    length_mm = max(bbox.w, bbox.h) * pixel_size_mm
+                else:
+                    length_mm = 0.0
+                defect_description = f"{display_name} ({length_mm:.1f}mm)"
+            elif dtype == LeatherDefectType.STAIN:
+                if primary_region is not None:
+                    area_mm2 = primary_region.area_px * (pixel_size_mm ** 2)
+                elif bbox is not None:
+                    area_mm2 = (bbox.w * bbox.h) * (pixel_size_mm ** 2)
+                else:
+                    area_mm2 = 0.0
+                defect_description = f"{display_name} ({area_mm2:.1f}mm²)"
+            else:
+                defect_description = display_name
 
             # Draw annotation with specific defect type
             box_colour = (0, 0, 255) if outcome == Outcome.FAIL else (0, 165, 255)
