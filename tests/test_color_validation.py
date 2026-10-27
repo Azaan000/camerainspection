@@ -1,173 +1,128 @@
-"""Test color validation improvements for black and multi-color variants."""
+"""Tests for Station 1 material handling — any leather color is accepted.
 
+The old variant color-restriction logic has been removed. PatchCore itself is
+color-agnostic (it learns leather texture, not specific colors), so new leather
+colors require zero reconfiguration. These tests verify that:
+
+  1. Any valid leather color (black, brown, grey, cream) is accepted — no
+     false `station.variant_color_mismatch` defect is raised.
+  2. A non-leather / blank / solid-color frame still fails (caught by
+     ImageQualityGuard + PatchCore's domain warning), not by a color check.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import cv2
 import numpy as np
 import pytest
-from camerainspection.vision.station1.color_validator import (
-    classify_leather_color,
-    check_variant_color_match,
-    LeatherColorClass,
-)
+
+from camerainspection.core.config import load_station_config
+from camerainspection.core.limits import LimitsEvaluator
+from camerainspection.core.models import Outcome
+from camerainspection.station.station_1 import Station1Service
 
 
-def create_test_image(lab_values: tuple[int, int, int], size=(100, 100)) -> np.ndarray:
-    """Create test image with uniform LAB color.
+def _make_station(threshold: float = 0.45) -> Station1Service:
+    repo_root = Path(__file__).resolve().parents[1]
+    station_cfg = load_station_config(repo_root / "configs" / "stations" / "station_1_leather.yaml")
+    station_cfg.model.threshold = threshold
+    return Station1Service(
+        station_config=station_cfg,
+        variants_root=repo_root / "configs" / "variants",
+        default_limits_path=repo_root / "configs" / "variants" / "default_limits.yaml",
+    )
 
-    Args:
-        lab_values: (L, a, b) values in LAB color space
-        size: Image dimensions
 
-    Returns:
-        BGR image
-    """
-    import cv2
+def _load_limits() -> dict:
+    repo_root = Path(__file__).resolve().parents[1]
+    import yaml
+    with open(repo_root / "configs" / "variants" / "default_limits.yaml") as f:
+        data = yaml.safe_load(f)
+    return data.get("limits", {})
 
-    # Create LAB image
+
+def _lab_to_bgr(lab: tuple[int, int, int], size=(200, 200)) -> np.ndarray:
+    """Create a uniform-color BGR image from LAB values (with light grain so PatchCore sees texture)."""
     lab_img = np.zeros((*size, 3), dtype=np.uint8)
-    lab_img[:, :] = lab_values
-
-    # Convert to BGR
-    bgr_img = cv2.cvtColor(lab_img, cv2.COLOR_LAB2BGR)
-    return bgr_img
-
-
-class TestBlackColorVariations:
-    """Test black leather color variations."""
-
-    def test_pure_black_leather(self):
-        """Pure black leather (L=20) should classify as BLACK_DARK."""
-        img = create_test_image((20, 128, 128))  # Low L, neutral a/b
-        color_class = classify_leather_color(img)
-        assert color_class == LeatherColorClass.BLACK_DARK
-
-    def test_dark_charcoal_leather(self):
-        """Dark charcoal (L=50) should classify as BLACK_DARK."""
-        img = create_test_image((50, 128, 128))
-        color_class = classify_leather_color(img)
-        assert color_class == LeatherColorClass.BLACK_DARK
-
-    def test_charcoal_grey_leather(self):
-        """Charcoal grey (L=75) should classify as BLACK_DARK."""
-        img = create_test_image((75, 128, 128))
-        color_class = classify_leather_color(img)
-        assert color_class == LeatherColorClass.BLACK_DARK
-
-    def test_medium_grey_leather(self):
-        """Medium grey (L=100) should classify as GREY_MEDIUM."""
-        img = create_test_image((100, 128, 128))
-        color_class = classify_leather_color(img)
-        assert color_class == LeatherColorClass.GREY_MEDIUM
+    lab_img[:, :] = lab
+    bgr = cv2.cvtColor(lab_img, cv2.COLOR_LAB2BGR)
+    # Add subtle grain so the image isn't a perfectly flat frame (std_dev > 0)
+    rng = np.random.default_rng(42)
+    noise = rng.integers(-3, 4, size + (3,), dtype=np.int16)
+    return np.clip(bgr.astype(np.int16) + noise, 0, 255).astype(np.uint8)
 
 
-class TestVariantColorMatching:
-    """Test variant color matching with multiple acceptable colors."""
+class TestAnyColorAccepted:
+    """Any valid leather color must pass through without a color-mismatch defect."""
 
-    def test_black_variant_accepts_black_dark(self):
-        """BLACK variant should accept BLACK_DARK classification."""
-        img = create_test_image((30, 128, 128))  # Pure black
-        matches, reason = check_variant_color_match(img, "FRONT_LH_BLACK")
-        assert matches, f"Black leather should match BLACK variant: {reason}"
+    @pytest.mark.parametrize("variant_id", ["FRONT_LH_BLACK", "FRONT_RH_BROWN", "FRONT_LH_GREY"])
+    def test_no_color_mismatch_defect(self, variant_id: str) -> None:
+        """A black leather image inspected under any variant ID must NOT raise a color mismatch defect."""
+        station = _make_station()
+        evaluator = LimitsEvaluator(_load_limits())
 
-    def test_black_variant_accepts_charcoal(self):
-        """BLACK variant should accept charcoal grey (BLACK_DARK)."""
-        img = create_test_image((70, 128, 128))  # Dark charcoal
-        matches, reason = check_variant_color_match(img, "FRONT_LH_BLACK")
-        assert matches, f"Charcoal leather should match BLACK variant: {reason}"
+        # Black leather (low L, neutral chroma) with grain
+        img = _lab_to_bgr((30, 128, 128))
 
-    def test_black_variant_accepts_medium_grey(self):
-        """BLACK variant should accept GREY_MEDIUM (for dark grey seats)."""
-        img = create_test_image((100, 128, 128))  # Medium grey
-        matches, reason = check_variant_color_match(img, "FRONT_LH_BLACK")
-        assert matches, f"Medium grey leather should match BLACK variant: {reason}"
+        defects, measurements, _ = station.inspect_image(
+            image=img,
+            variant_id=variant_id,
+            evaluator=evaluator,
+            variant_nominals={},
+        )
 
-    def test_black_variant_rejects_brown(self):
-        """BLACK variant should reject brown leather."""
-        img = create_test_image((120, 145, 150))  # Brown (red + yellow)
-        matches, reason = check_variant_color_match(img, "FRONT_LH_BLACK")
-        assert not matches, f"Brown leather should not match BLACK variant"
-        assert "brown_tan" in reason.lower()
+        # No defect should mention color mismatch — color restriction is gone
+        color_defects = [d for d in defects if "color_mismatch" in d.defect_type.lower()]
+        assert not color_defects, (
+            f"Color mismatch defect raised for {variant_id} on black leather: "
+            f"{[d.defect_type for d in color_defects]}"
+        )
 
-    def test_black_variant_rejects_cream(self):
-        """BLACK variant should reject cream/light leather."""
-        img = create_test_image((200, 128, 128))  # Cream/light
-        matches, reason = check_variant_color_match(img, "FRONT_LH_BLACK")
-        assert not matches, f"Cream leather should not match BLACK variant"
-        assert "cream_light" in reason.lower()
+    def test_brown_leather_not_rejected_as_color_mismatch(self) -> None:
+        """Brown leather under a BLACK variant must not get a variant_color_mismatch defect."""
+        station = _make_station()
+        evaluator = LimitsEvaluator(_load_limits())
 
-    def test_grey_variant_accepts_both_grey_and_black(self):
-        """GREY variant should accept both GREY_MEDIUM and BLACK_DARK."""
-        # Test medium grey
-        img1 = create_test_image((100, 128, 128))
-        matches1, _ = check_variant_color_match(img1, "FRONT_LH_GREY")
-        assert matches1, "Medium grey should match GREY variant"
+        # Brown leather (medium L, red + yellow chroma) with grain
+        img = _lab_to_bgr((120, 145, 150))
 
-        # Test dark grey (BLACK_DARK range)
-        img2 = create_test_image((60, 128, 128))
-        matches2, _ = check_variant_color_match(img2, "FRONT_LH_GREY")
-        assert matches2, "Dark grey should match GREY variant"
+        defects, measurements, _ = station.inspect_image(
+            image=img,
+            variant_id="FRONT_LH_BLACK",
+            evaluator=evaluator,
+            variant_nominals={},
+        )
 
-    def test_brown_variant_accepts_brown_and_grey(self):
-        """BROWN variant should accept BROWN_TAN and GREY_MEDIUM (for taupe)."""
-        # Test brown
-        img1 = create_test_image((120, 145, 150))
-        matches1, _ = check_variant_color_match(img1, "FRONT_LH_BROWN")
-        assert matches1, "Brown should match BROWN variant"
-
-        # Test greige/taupe (medium grey)
-        img2 = create_test_image((100, 128, 128))
-        matches2, _ = check_variant_color_match(img2, "FRONT_LH_BROWN")
-        assert matches2, "Greige/taupe should match BROWN variant"
-
-    def test_unknown_variant_passes_through(self):
-        """Variants without color keywords should pass through."""
-        img = create_test_image((50, 128, 128))
-        matches, reason = check_variant_color_match(img, "FRONT_LH_PREMIUM")
-        assert matches, "Unknown variant color should pass through"
-        assert "no color keyword" in reason.lower()
+        color_defects = [d for d in defects if "color_mismatch" in d.defect_type.lower()]
+        assert not color_defects, (
+            f"Brown-as-BLOCK raised a color mismatch defect: {[d.defect_type for d in color_defects]}"
+        )
 
 
-class TestEdgeCases:
-    """Test edge cases and boundary conditions."""
+class TestBlankFrameStillFails:
+    """A completely blank / solid-color frame must still fail (via ImageQualityGuard or PatchCore)."""
 
-    def test_unknown_color_classification_passes_through(self):
-        """If color cannot be classified, should pass through (avoid false rejects)."""
-        # Create ambiguous color that falls in UNKNOWN category
-        img = create_test_image((150, 128, 128))  # Between categories
-        matches, reason = check_variant_color_match(img, "FRONT_LH_BLACK")
-        # Should either classify correctly or pass through as UNKNOWN
-        assert isinstance(matches, bool)
+    def test_solid_black_frame_fails(self) -> None:
+        """A perfectly uniform black frame (no texture) must not PASS."""
+        station = _make_station()
+        evaluator = LimitsEvaluator(_load_limits())
 
-    def test_with_roi_mask(self):
-        """Test color classification with ROI mask."""
-        # Create image with black center and white border
-        img = np.ones((100, 100, 3), dtype=np.uint8) * 255
-        img[25:75, 25:75] = 20  # Black center
+        # Perfectly uniform black — zero texture
+        img = np.zeros((512, 512, 3), dtype=np.uint8)
 
-        # Mask for center only
-        mask = np.zeros((100, 100), dtype=np.uint8)
-        mask[25:75, 25:75] = 255
+        defects, measurements, _ = station.inspect_image(
+            image=img,
+            variant_id="FRONT_LH_BLACK",
+            evaluator=evaluator,
+            variant_nominals={},
+        )
 
-        color = classify_leather_color(img, roi_mask=mask)
-        assert color == LeatherColorClass.BLACK_DARK
-
-
-def test_real_world_black_variants():
-    """Test with actual variant IDs from production."""
-    test_cases = [
-        ("FRONT_LH_BLACK", (40, 128, 128), True, "Pure black"),
-        ("FRONT_RH_BLACK", (70, 128, 128), True, "Charcoal"),
-        ("REAR_CENTER_BLACK", (95, 128, 128), True, "Dark grey"),
-        ("FRONT_LH_DARK_GREY", (60, 128, 128), True, "Dark grey variant"),
-        ("FRONT_LH_BLACK", (120, 145, 150), False, "Brown (should fail)"),
-    ]
-
-    for variant_id, lab_color, should_match, description in test_cases:
-        img = create_test_image(lab_color)
-        matches, reason = check_variant_color_match(img, variant_id)
-
-        if should_match:
-            assert matches, f"{description} should match {variant_id}: {reason}"
-        else:
-            assert not matches, f"{description} should NOT match {variant_id}"
+        # Must produce at least one defect (quality guard, engine unavailable, or anomaly)
+        assert len(defects) > 0, "Blank black frame must not PASS silently"
+        outcomes = [d.outcome for d in defects]
+        assert Outcome.FAIL in outcomes, f"Blank frame should FAIL, got {outcomes}"
 
 
 if __name__ == "__main__":

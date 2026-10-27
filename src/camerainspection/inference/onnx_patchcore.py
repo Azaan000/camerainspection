@@ -206,20 +206,29 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
         contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         if not contours:
-            # Score is elevated but mask is empty — create a heatmap-peak detection
+            # Score is elevated but mask is empty — use heatmap-peak fallback
             detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
         else:
-            detections = []
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
-                if area < _MIN_CONTOUR_AREA_PX:
-                    continue
-                detections.append(
-                    self._make_detection(score, is_anomalous, heatmap, cnt, image.shape)
-                )
-            if not detections:
-                # All contours were below noise threshold — still flag if score says so
+            # Filter and sort contours by area (largest first).
+            # When the mask is nearly fully saturated (>80% of pixels set, i.e. OOD image),
+            # skip individual contours and fall back to the heatmap-peak strategy so we pin
+            # the box on the hottest region rather than returning a full-image bbox.
+            mask_coverage = float(np.count_nonzero(combined_mask)) / combined_mask.size
+            if mask_coverage > 0.80:
+                # OOD / fully-saturated: use the densest heatmap region instead
                 detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
+            else:
+                detections = []
+                for cnt in contours:
+                    area = cv2.contourArea(cnt)
+                    if area < _MIN_CONTOUR_AREA_PX:
+                        continue
+                    detections.append(
+                        self._make_detection(score, is_anomalous, heatmap, cnt, image.shape)
+                    )
+                if not detections:
+                    # All contours were below noise threshold — still flag if score says so
+                    detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
 
         return detections
 
@@ -276,9 +285,12 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
                 h=int(h * scale_y),
             )
         else:
-            # Fallback: find peak anomaly location in heatmap
-            y_peak, x_peak = np.unravel_index(np.argmax(heatmap), heatmap.shape)
-            box_size = 64
+            # Fallback: find the hottest contiguous region in the heatmap.
+            # Blur the heatmap first so the peak lands on the centre of a dense
+            # anomalous region rather than on a single high-value pixel at the edge.
+            blurred = cv2.GaussianBlur(heatmap, (31, 31), 0)
+            y_peak, x_peak = np.unravel_index(np.argmax(blurred), blurred.shape)
+            box_size = 96
             x1 = max(0, x_peak - box_size // 2)
             y1 = max(0, y_peak - box_size // 2)
             x2 = min(_INPUT_SIZE, x_peak + box_size // 2)
@@ -290,7 +302,7 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
 
             bbox = BoundingBox(
                 x=int(x1 * scale_x),
-                y=int(y * scale_y),
+                y=int(y1 * scale_y),
                 w=int((x2 - x1) * scale_x),
                 h=int((y2 - y1) * scale_y),
             )

@@ -31,6 +31,11 @@ def _make_station(
     plc: PLCSimulator,
 ) -> Station1Service:
     st_cfg = load_station_config(configs_dir / "stations" / "station_1_leather.yaml")
+    # Force classical backend for synthetic fixture frames: PatchCore was trained on
+    # real leather so synthetic noise textures are out-of-distribution and always FAIL
+    # regardless of injected defect type. Classical analysis correctly classifies
+    # scratch/cut/pinhole/stain geometry. ONNX regression is covered separately.
+    st_cfg.model.backend = "classical"
     cam = FolderReplayCamera(folder_path=replay_dir, loop=False)
     return Station1Service(
         station_config=st_cfg,

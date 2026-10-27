@@ -280,35 +280,18 @@ class Station3Service(BaseStation):
                 gap_crop, pixel_size_mm=pixel_size_mm, axis="horizontal"
             )
 
-            # Check if camera is calibrated (default uncalibrated value is 0.18)
-            if abs(pixel_size_mm - 0.18) < 0.001:
-                # Camera uncalibrated - store pixels instead
-                measurements["shield_gap_px"] = measured_gap_mm / pixel_size_mm
-                defects.append(
-                    DefectDetail(
-                        defect_type="camera.uncalibrated",
-                        outcome=Outcome.REVIEW,
-                        roi_name="side_shield",
-                        description=(
-                            f"Shield gap measured {measured_gap_mm / pixel_size_mm:.0f} pixels "
-                            f"but camera is uncalibrated. Cannot verify mm tolerance."
-                        ),
-                    )
-                )
-            else:
-                # Camera calibrated - store mm value
-                measurements["shield_gap_mm"] = measured_gap_mm
+            measurements["shield_gap_mm"] = measured_gap_mm
 
-                nominal_gap = variant_nominals.get("plastic", {}).get("shield_gap_mm", 2.5)
-                gap_defect = evaluator.evaluate_check(
-                    "plastic",
-                    "shield_gap_mm",
-                    value=measured_gap_mm,
-                    nominal=nominal_gap,
-                )
-                gap_defect.roi_name = "side_shield"
-                if gap_defect.outcome != Outcome.PASS:
-                    defects.append(gap_defect)
+            nominal_gap = variant_nominals.get("plastic", {}).get("shield_gap_mm", 0.0)
+            gap_defect = evaluator.evaluate_check(
+                "plastic",
+                "shield_gap_mm",
+                value=measured_gap_mm,
+                nominal=nominal_gap,
+            )
+            gap_defect.roi_name = "side_shield"
+            if gap_defect.outcome != Outcome.PASS:
+                defects.append(gap_defect)
 
         # 4. Flash (burr) Protrusion Check
         if "lever_handle" in rois_to_check:
@@ -324,27 +307,11 @@ class Station3Service(BaseStation):
                 direction="bottom",
             )
 
-            # Check if camera is calibrated
-            if abs(pixel_size_mm - 0.18) < 0.001:
-                # Camera uncalibrated
-                measurements["flash_px"] = measured_flash_mm / pixel_size_mm
-                defects.append(
-                    DefectDetail(
-                        defect_type="camera.uncalibrated",
-                        outcome=Outcome.REVIEW,
-                        roi_name="lever_handle",
-                        description=(
-                            f"Flash measured {measured_flash_mm / pixel_size_mm:.0f} pixels "
-                            f"but camera is uncalibrated. Cannot verify mm tolerance."
-                        ),
-                    )
-                )
-            else:
-                measurements["flash_mm"] = measured_flash_mm
-                flash_defect = evaluator.evaluate_check("plastic", "flash_mm", value=measured_flash_mm)
-                flash_defect.roi_name = "lever_handle"
-                if flash_defect.outcome != Outcome.PASS:
-                    defects.append(flash_defect)
+            measurements["flash_mm"] = measured_flash_mm
+            flash_defect = evaluator.evaluate_check("plastic", "flash_mm", value=measured_flash_mm)
+            flash_defect.roi_name = "lever_handle"
+            if flash_defect.outcome != Outcome.PASS:
+                defects.append(flash_defect)
 
         # 5. AI Defect Classifier (Cracks, Short Shot, Sink Marks)
         if self.inference_engine is not None:

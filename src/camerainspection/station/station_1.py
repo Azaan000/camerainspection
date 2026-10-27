@@ -28,7 +28,6 @@ from camerainspection.core.logging import get_logger
 from camerainspection.core.models import BoundingBox, DefectDetail, Outcome
 from camerainspection.inference.base import ModelDetection
 from camerainspection.station.base_station import BaseStation
-from camerainspection.vision.station1.color_validator import check_variant_color_match
 from camerainspection.vision.station1.surface_analysis import (
     LeatherDefectType,
     SurfaceAnalyzer,
@@ -250,9 +249,6 @@ class Station1Service(BaseStation):
             "main": "seating_face",  # Legacy single-image path
         }
         zone_key = view_zone_map.get(view, "seating_face")  # Default to seating_face
-
-        # PROCESS ERROR CHECK: Variant color/material validation disabled in favor of pure PatchCore anomaly detection
-        measurements["leather.color_mismatch"] = 0.0
 
         engine = self._get_onnx_engine()
         if engine is None:
