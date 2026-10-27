@@ -194,11 +194,19 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
         if not is_anomalous and score < self.pass_below:
             return []
 
-        # Find contours in the thresholded mask
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Find contours in the thresholded mask combined with thresholded heatmap
+        hmap_min, hmap_max_val = float(heatmap.min()), float(heatmap.max())
+        if hmap_max_val > hmap_min:
+            hmap_norm = ((heatmap - hmap_min) / (hmap_max_val - hmap_min) * 255).astype(np.uint8)
+        else:
+            hmap_norm = np.zeros_like(heatmap, dtype=np.uint8)
+        _, hmap_thresh = cv2.threshold(hmap_norm, int(255 * 0.35), 255, cv2.THRESH_BINARY)
+        combined_mask = cv2.bitwise_or(mask, hmap_thresh)
+
+        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         if not contours:
-            # Score is elevated but mask is empty — create a full-image detection
+            # Score is elevated but mask is empty — create a heatmap-peak detection
             detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
         else:
             detections = []
@@ -266,6 +274,25 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
                 y=int(y * scale_y),
                 w=int(w * scale_x),
                 h=int(h * scale_y),
+            )
+        else:
+            # Fallback: find peak anomaly location in heatmap
+            y_peak, x_peak = np.unravel_index(np.argmax(heatmap), heatmap.shape)
+            box_size = 64
+            x1 = max(0, x_peak - box_size // 2)
+            y1 = max(0, y_peak - box_size // 2)
+            x2 = min(_INPUT_SIZE, x_peak + box_size // 2)
+            y2 = min(_INPUT_SIZE, y_peak + box_size // 2)
+
+            h_orig, w_orig = original_shape[:2]
+            scale_x = w_orig / _INPUT_SIZE
+            scale_y = h_orig / _INPUT_SIZE
+
+            bbox = BoundingBox(
+                x=int(x1 * scale_x),
+                y=int(y * scale_y),
+                w=int((x2 - x1) * scale_x),
+                h=int((y2 - y1) * scale_y),
             )
 
         # Determine outcome hint once, so callers don't need to re-implement the rules.

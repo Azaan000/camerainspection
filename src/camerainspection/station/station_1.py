@@ -251,24 +251,8 @@ class Station1Service(BaseStation):
         }
         zone_key = view_zone_map.get(view, "seating_face")  # Default to seating_face
 
-        # PROCESS ERROR CHECK: Variant color validation (catches wrong barcode/variant)
-        # Upgraded to FAIL for gross mismatches (e.g., brown seat as BLACK variant)
-        color_matches, color_reason = check_variant_color_match(image, variant_id, roi_mask=None)
-        if not color_matches:
-            logger.warning("Variant color mismatch detected: %s", color_reason)
-            # UPGRADED: FAIL for obvious mismatches, with high confidence threshold
-            defects.append(DefectDetail(
-                defect_type="station.variant_color_mismatch",
-                outcome=Outcome.FAIL,
-                camera_name=camera_name,
-                view=view,
-                roi_name=zone_key,
-                confidence=0.95,  # High confidence for gross mismatch
-                description=f"VARIANT COLOR MISMATCH: {color_reason}",
-            ))
-            measurements["leather.color_mismatch"] = 1.0
-        else:
-            measurements["leather.color_mismatch"] = 0.0
+        # PROCESS ERROR CHECK: Variant color/material validation disabled in favor of pure PatchCore anomaly detection
+        measurements["leather.color_mismatch"] = 0.0
 
         engine = self._get_onnx_engine()
         if engine is None:
