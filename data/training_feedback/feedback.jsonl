@@ -35,3 +35,4 @@
 {"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-26T23:11:26.061342+00:00"}
 {"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-27T12:19:47.776599+00:00"}
 {"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-27T14:02:17.914356+00:00"}
+{"defect_id": 42, "new_defect_type": "leather.scratch", "is_false_positive": true, "inspector_notes": "Surface glare misclassified as cut", "inspector_id": "INSP-TEST-99", "timestamp": "2026-10-27T14:08:08.605766+00:00"}
