@@ -84,8 +84,13 @@ model:
   weights_path: "models/station_3/plastic_crack.onnx"
   version: "v1.0.0"
   threshold: 0.40
+  confidence_threshold: 0.40
+  iou_threshold: 0.45
   class_names:
     - "part_correct"
+    - "crack"
+    - "short_shot"
+    - "sink_mark"
     - "part_missing"
     - "part_wrong"
 

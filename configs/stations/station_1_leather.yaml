@@ -73,7 +73,7 @@ regions_of_interest:
 model:
   backend: onnx
   model_type: anomalib_patchcore
-  weights_path: models/station_1/model.onnx
+  weights_path: models/station_1/patchcore.onnx
   version: v1.0.0
   threshold: 0.45
   pass_below: 0.4

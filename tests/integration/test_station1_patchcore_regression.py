@@ -38,7 +38,7 @@ def station1_onnx() -> Station1Service:
         name="Leather Surface Inspection",
         model={
             "backend": "onnx",
-            "weights_path": str(repo_root / "models" / "station_1" / "model.onnx"),
+            "weights_path": str(repo_root / "models" / "station_1" / "patchcore.onnx"),
             "version": "v1.0.0",
             "pass_below": 0.40,
             "fail_above": 0.60,
