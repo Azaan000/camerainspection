@@ -132,8 +132,12 @@ class Station2Service(BaseStation):
             )
             return defects, measurements, annotated
 
-        # Style line is the centre of the ROI height
-        style_line_y_px = float(seam_roi.shape[0] / 2)
+        # Style line: expected seam position in ROI-local pixels.
+        # Derived from the nominal seam distance from the fabric edge (variant config or 12 mm default).
+        nominal_seam_mm: float = float(
+            variant_nominals.get("stitch", {}).get("seam_position_mm", 12.0)
+        )
+        style_line_y_px = nominal_seam_mm / pixel_size_mm
 
         # 2. Geometry measurement
         meas = StitchGeometryEngine.analyze_seam(
@@ -145,7 +149,17 @@ class Station2Service(BaseStation):
         measurements["mean_pitch_mm"] = meas.mean_pitch_mm
         measurements["max_skip_mm"] = meas.max_skip_length_mm
         measurements["seam_position_mm"] = meas.seam_position_mm
-        measurements["stitch_count"] = float(meas.stitch_count)
+        # Fix #5: record the nominal seam distance so reports show where the seam
+        # should be, not just how far it deviated.
+        measurements["nominal_seam_mm"] = nominal_seam_mm
+
+        # Cap stitch_count: a frayed-thread contour cluster must not register as thousands of stitches.
+        # Fix #6: derive minimum pitch from nominal SPI (or a hard floor of 2.5 SPI → ~10mm pitch).
+        # 25.4 mm/inch / nominal_spi gives the expected pitch; halve it for the absolute minimum.
+        min_pitch_mm = max(0.5, (25.4 / max(nominal_spi, 2.5)) / 2.0)
+        roi_width_mm = (x2 - x1) * pixel_size_mm
+        max_plausible_stitches = int(roi_width_mm / min_pitch_mm)
+        measurements["stitch_count"] = float(min(meas.stitch_count, max_plausible_stitches))
 
         # SAFETY: Validate measurements are in reasonable range
         if meas.stitches_per_inch < 1.0 or meas.stitches_per_inch > 20.0:
@@ -224,46 +238,85 @@ class Station2Service(BaseStation):
             if color_d.outcome != Outcome.PASS:
                 defects.append(color_d)
 
-        # 4a. Heuristic broken thread check (immediate fix until AI model ready)
+        # 4a. Heuristic gap detection (flags skip stitches / large breaks until AI model ready).
+        # NOTE: the heuristic detects abnormally large inter-stitch gaps, which are
+        # skip stitches rather than true broken threads.  The defect type is
+        # "stitch.skip_stitch" to match what the gap geometry actually represents.
         from camerainspection.vision.station2.broken_thread_detector import BrokenThreadDetector
 
-        thread_detector = BrokenThreadDetector(min_gap_mm=5.0)
+        thread_detector = BrokenThreadDetector(min_gap_mm=3.0)
         breaks = thread_detector.detect_breaks(meas.stitch_centers, pixel_size_mm)
 
+        # Collect heuristic gap locations so AI detections at the same spot are suppressed
+        # (dedup for fix #12).  Store as (cx, cy) in full-image coords.
+        heuristic_gap_centers: list[tuple[int, int]] = []
+
+        # Bbox half-size proportional to min_gap_mm so it is always visible (#3).
+        gap_half_px = max(12, int(thread_detector.min_gap_mm / pixel_size_mm / 2))
+
         for bx, by, gap_mm in breaks:
-            broken_d = evaluator.evaluate_check("stitch", "broken_thread", True)
-            broken_d.defect_type = "stitch.broken_thread"
-            broken_d.roi_name = "main_seam"
-            broken_d.bounding_box = BoundingBox(x=x1 + bx - 10, y=y1 + by - 10, w=20, h=20)
-            broken_d.description = f"Heuristic broken thread detected (gap={gap_mm:.1f}mm)"
-            defects.append(broken_d)
+            # Fix #2: label as skip_stitch (gap detector), not broken_thread
+            # Fix #13: set a meaningful confidence proxy (capped at 0.95)
+            gap_confidence = min(0.95, gap_mm / (thread_detector.min_gap_mm * 4.0))
+
+            skip_d = evaluator.evaluate_check("stitch", "skip_stitch", True)
+            skip_d.defect_type = "stitch.skip_stitch"
+            skip_d.roi_name = "main_seam"
+            # Fix #3: bbox sized proportionally to the gap, not a fixed 20px
+            skip_d.bounding_box = BoundingBox(
+                x=x1 + bx - gap_half_px,
+                y=y1 + by - gap_half_px,
+                w=gap_half_px * 2,
+                h=gap_half_px * 2,
+            )
+            skip_d.confidence = gap_confidence
+            skip_d.description = f"Heuristic skip stitch detected (gap={gap_mm:.1f}mm)"
+            defects.append(skip_d)
+
+            heuristic_gap_centers.append((x1 + bx, y1 + by))
 
             # Annotate on image
             cv2.rectangle(
                 annotated,
-                (x1 + bx - 10, y1 + by - 10),
-                (x1 + bx + 10, y1 + by + 10),
-                (0, 0, 255),
+                (x1 + bx - gap_half_px, y1 + by - gap_half_px),
+                (x1 + bx + gap_half_px, y1 + by + gap_half_px),
+                (0, 165, 255),
                 2,
             )
             cv2.putText(
                 annotated,
-                f"BREAK {gap_mm:.1f}mm",
-                (x1 + bx - 10, max(0, y1 + by - 15)),
+                f"SKIP {gap_mm:.1f}mm",
+                (x1 + bx - gap_half_px, max(0, y1 + by - gap_half_px - 4)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
-                (0, 0, 255),
+                (0, 165, 255),
                 2,
             )
 
-        # 5. AI model — broken thread and loose end
+        # 5. AI model — broken thread, skip stitch, and loose end
         if self.inference_engine is not None:
             ai_dets = self.inference_engine.predict(seam_roi)
             for det in ai_dets:
+                # Fix #12: suppress AI detections that overlap a heuristic gap already reported.
+                # Overlap test: AI bbox centre (in full-image coords) within 2× gap_half_px of
+                # any heuristic gap centre.
+                if det.bounding_box:
+                    ai_cx = det.bounding_box.x + x1 + det.bounding_box.w // 2
+                    ai_cy = det.bounding_box.y + y1 + det.bounding_box.h // 2
+                    dedup_radius = gap_half_px * 2
+                    is_duplicate = any(
+                        abs(ai_cx - hx) <= dedup_radius and abs(ai_cy - hy) <= dedup_radius
+                        for hx, hy in heuristic_gap_centers
+                    )
+                else:
+                    is_duplicate = False
+
                 if det.class_name == "broken_thread":
+                    # True broken thread: AI has the pixel evidence to distinguish this
+                    # from a skip stitch gap, so trust it and always report it.
                     broken_d = evaluator.evaluate_check("stitch", "broken_thread", True)
                     broken_d.defect_type = "stitch.broken_thread"
-                    broken_d.confidence = det.confidence
+                    broken_d.confidence = det.confidence  # Fix #13: confidence always set
                     if det.bounding_box:
                         broken_d.bounding_box = BoundingBox(
                             x=det.bounding_box.x + x1,
@@ -277,21 +330,66 @@ class Station2Service(BaseStation):
                     )
                     defects.append(broken_d)
                     if det.bounding_box:
-                        bx, by = det.bounding_box.x + x1, det.bounding_box.y + y1
+                        bx_ann = det.bounding_box.x + x1
+                        by_ann = det.bounding_box.y + y1
                         cv2.rectangle(
                             annotated,
-                            (bx, by),
-                            (bx + det.bounding_box.w, by + det.bounding_box.h),
+                            (bx_ann, by_ann),
+                            (bx_ann + det.bounding_box.w, by_ann + det.bounding_box.h),
                             (0, 0, 255),
                             3,
                         )
                         cv2.putText(
                             annotated,
-                            "BROKEN THREAD",
-                            (bx, max(0, by - 8)),
+                            f"BROKEN THREAD {det.confidence:.2f}",
+                            (bx_ann, max(0, by_ann - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 0, 255),
+                            2,
+                        )
+
+                elif det.class_name == "skip_stitch":
+                    # Fix #1: handle skip_stitch class (was silently dropped before).
+                    # Fix #12: skip if the heuristic already flagged this gap.
+                    if is_duplicate:
+                        logger.debug(
+                            "AI skip_stitch at (%d,%d) suppressed — heuristic already reported nearby gap",
+                            ai_cx, ai_cy,
+                        )
+                        continue
+                    skip_ai_d = evaluator.evaluate_check("stitch", "skip_stitch", True)
+                    skip_ai_d.defect_type = "stitch.skip_stitch"
+                    skip_ai_d.confidence = det.confidence  # Fix #13
+                    if det.bounding_box:
+                        skip_ai_d.bounding_box = BoundingBox(
+                            x=det.bounding_box.x + x1,
+                            y=det.bounding_box.y + y1,
+                            w=det.bounding_box.w,
+                            h=det.bounding_box.h,
+                        )
+                    skip_ai_d.roi_name = "main_seam"
+                    skip_ai_d.description = (
+                        f"AI detected skip stitch with confidence {det.confidence:.2f}"
+                    )
+                    defects.append(skip_ai_d)
+                    if det.bounding_box:
+                        bx_ann = det.bounding_box.x + x1
+                        by_ann = det.bounding_box.y + y1
+                        cv2.rectangle(
+                            annotated,
+                            (bx_ann, by_ann),
+                            (bx_ann + det.bounding_box.w, by_ann + det.bounding_box.h),
+                            (0, 165, 255),
+                            3,
+                        )
+                        cv2.putText(
+                            annotated,
+                            f"SKIP STITCH {det.confidence:.2f}",
+                            (bx_ann, max(0, by_ann - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (0, 165, 255),
                             2,
                         )
 
@@ -300,7 +398,7 @@ class Station2Service(BaseStation):
                     measurements["loose_end_mm"] = loose_mm
                     loose_d = evaluator.evaluate_check("stitch", "loose_end_mm", loose_mm)
                     loose_d.defect_type = "stitch.loose_end"
-                    loose_d.confidence = det.confidence
+                    loose_d.confidence = det.confidence  # Fix #13
                     if det.bounding_box:
                         loose_d.bounding_box = BoundingBox(
                             x=det.bounding_box.x + x1,

@@ -71,7 +71,8 @@ def generate_station2_replay_frames(output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     w, h = 2592, 1944
     pitch_px = int(round(25.4 / 6.0 / 0.05))  # 85 px for 6.0 SPI at 0.05 mm/px
-    seam_y = 500  # Centered in main_seam ROI (y: 300..700)
+    # Nominal seam_position_mm=12.0 at pixel_size=0.05 → 240px into ROI; ROI starts at y=300
+    seam_y = 300 + int(round(12.0 / 0.05))  # = 540, aligns seam with variant nominal
     stitch_w = 40
     stitch_h = 10
     n = 25

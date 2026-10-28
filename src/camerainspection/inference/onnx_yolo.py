@@ -12,7 +12,7 @@ Preprocessing:
 
 Postprocessing:
   argmax over class scores → class_id + confidence.
-  NMS (IoU 0.45) to suppress duplicate boxes.
+  NMS (IoU 0.35) to suppress duplicate boxes.
   Coordinates are scaled back to original image size.
 
 Class names must be provided at construction time and must match the
@@ -36,7 +36,7 @@ logger = logging.getLogger("inference.onnx_yolo")
 
 # YOLOv8 standard input geometry
 _INPUT_SIZE = 640
-_IOU_THRESHOLD = 0.45
+_IOU_THRESHOLD = 0.35
 
 
 class OnnxYoloEngine(BaseInferenceEngine):
@@ -47,7 +47,7 @@ class OnnxYoloEngine(BaseInferenceEngine):
     class_names : list[str]
         Ordered class labels matching the training data.yaml names list.
     confidence_threshold : float
-        Minimum score to keep a detection (default 0.50).
+        Minimum score to keep a detection (default 0.60).
     iou_threshold : float
         NMS IoU threshold (default 0.45).
     providers : list[str] | None
@@ -57,7 +57,7 @@ class OnnxYoloEngine(BaseInferenceEngine):
     def __init__(
         self,
         class_names: list[str],
-        confidence_threshold: float = 0.50,
+        confidence_threshold: float = 0.70,
         iou_threshold: float = _IOU_THRESHOLD,
         providers: list[str] | None = None,
     ) -> None:

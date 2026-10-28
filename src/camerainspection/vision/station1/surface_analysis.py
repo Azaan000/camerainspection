@@ -117,14 +117,15 @@ class SurfaceAnalyzer:
             return []
 
         if self._session is not None:
-            return self._analyze_onnx(roi_bgr)
+            # Fix #7: pass pixel_size_mm so ONNX path uses the correct calibration
+            return self._analyze_onnx(roi_bgr, pixel_size_mm=pixel_size_mm)
         return self._analyze_heuristic(roi_bgr, pixel_size_mm=pixel_size_mm, relaxed=relaxed)
 
     # ------------------------------------------------------------------
     # ONNX inference path
     # ------------------------------------------------------------------
 
-    def _analyze_onnx(self, roi_bgr: np.ndarray) -> list[LeatherDefectRegion]:
+    def _analyze_onnx(self, roi_bgr: np.ndarray, pixel_size_mm: float = 0.18) -> list[LeatherDefectRegion]:
         h, w = roi_bgr.shape[:2]
 
         # Normalise to float32 [0,1], RGB, resize to 256×256
@@ -144,10 +145,20 @@ class SurfaceAnalyzer:
         anomaly_map = outputs[2][0, 0]   # [256,256] float32
         pred_mask   = outputs[3][0, 0]   # [256,256] bool
 
-        # Normalise anomaly map to [0,1]
+        # Fix #8: per-image min-max normalisation makes the score relative to the image's
+        # own range, not an absolute anomaly scale.  A uniformly anomalous image still
+        # peaks at 1.0 somewhere; a real defect in a textured image compresses to a low
+        # score.  We preserve the raw map values for the fallback threshold path, and
+        # apply the per-image normalisation only when the model's pred_mask is empty
+        # (i.e. the model gave no spatial signal at all).  This way, on a truly clean
+        # image, the near-zero absolute values stay near zero instead of normalising up.
         a_min, a_max = anomaly_map.min(), anomaly_map.max()
-        if a_max > a_min:
-            norm_map = (anomaly_map - a_min) / (a_max - a_min)
+        # Absolute scale: normalise only relative to the anomaly_threshold so scores
+        # retain meaning across images.
+        if a_max > 0:
+            # Clip to [0, 2× threshold] then scale, so hot pixels don't crush the rest.
+            clip_max = max(a_max, self.anomaly_threshold * 2)
+            norm_map = np.clip(anomaly_map / clip_max, 0.0, 1.0)
         else:
             norm_map = np.zeros_like(anomaly_map)
 
@@ -173,7 +184,9 @@ class SurfaceAnalyzer:
         bg   = cv2.GaussianBlur(gray, (self.blur_ksize, self.blur_ksize), 0)
         signed_diff = gray - bg
 
-        regions = self._extract_regions(mask_roi, signed_diff)
+        # Fix #7: pass pixel_size_mm so area_mm2 filtering and size-based classification
+        # use the actual camera calibration rather than the hardcoded 0.18 default.
+        regions = self._extract_regions(mask_roi, signed_diff, pixel_size_mm=pixel_size_mm)
 
         # Attach the global anomaly score to every region (overrides per-region score
         # only when the model fired overall; keeps per-region score otherwise)

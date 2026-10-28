@@ -321,7 +321,7 @@ class Station1Service(BaseStation):
         measurements[f"{zone_key}.defect_count"] = float(len(raw_detections))
 
         if not raw_detections:
-            # Clean PASS — annotate with a green border
+            # Clean PASS — annotate with a green border and draw ROI outline (#11)
             h, w = image.shape[:2]
             cv2.rectangle(annotated, (2, 2), (w - 2, h - 2), (0, 200, 0), 2)
             cv2.putText(
@@ -331,6 +331,17 @@ class Station1Service(BaseStation):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 0), 2,
             )
             return defects, measurements, annotated
+
+        # Fix #11: draw inspection ROI border in the ONNX path so operators can see
+        # which region was inspected (the classical path already does this at line ~529).
+        h_img, w_img = image.shape[:2]
+        cv2.rectangle(annotated, (2, 2), (w_img - 2, h_img - 2), (200, 200, 0), 2)
+        cv2.putText(
+            annotated,
+            f"{zone_key} ONNX  score:{score:.3f}",
+            (6, 22),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 0), 1,
+        )
 
         # PRIMARY GATE: Convert each ModelDetection to a DefectDetail.
         # outcome_hint from engine: FAIL if pred_label=True OR score >= fail_above, else REVIEW.
@@ -397,13 +408,16 @@ class Station1Service(BaseStation):
             if dtype is None and bbox is not None:
                 bbox_aspect = max(bbox.w, bbox.h) / max(min(bbox.w, bbox.h), 1)
                 bbox_area = bbox.w * bbox.h
-                # Elongated → scratch/cut; tiny → pinhole; blob → stain
-                if bbox_aspect >= 2.5 and bbox.w * bbox.h <= 30_000:
-                    dtype = LeatherDefectType.SCRATCH
-                elif bbox_aspect >= 1.5 and max(bbox.w, bbox.h) <= 300:
-                    dtype = LeatherDefectType.SCRATCH
-                elif bbox_area <= 2_000:
+                # Fix #9: previous logic classified aspect >= 1.5 as scratch, which
+                # catches almost every rectangular bbox and overstates scratches.
+                # Corrected priority: tiny → pinhole, very elongated → scratch,
+                # everything else → stain (safer default than scratch).
+                if bbox_area <= 2_000:
                     dtype = LeatherDefectType.PINHOLE
+                elif bbox_aspect >= 4.0 and max(bbox.w, bbox.h) <= 300:
+                    dtype = LeatherDefectType.SCRATCH
+                elif bbox_aspect >= 2.5 and bbox.w * bbox.h <= 30_000:
+                    dtype = LeatherDefectType.SCRATCH
                 else:
                     dtype = LeatherDefectType.STAIN
                 logger.debug(
@@ -554,16 +568,36 @@ class Station1Service(BaseStation):
                     if dtype in _CUT_OR_PINHOLE_TYPES
                     else (0, 165, 255)
                 )
-                cv2.rectangle(annotated, (gx, gy), (gx + rw, gy + rh), box_color, 2)
-                cv2.putText(
-                    annotated,
-                    f"{display_name} ({count})",
-                    (gx, max(0, gy - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45,
-                    box_color,
-                    1,
-                )
+
+                # Fix #10: annotate EVERY region, not only the best-scored one.
+                # Previously only one bbox was drawn per defect type per zone, hiding
+                # the others on the annotated image.
+                for r_idx, reg in enumerate(group_regs):
+                    rx_r, ry_r, rw_r, rh_r = reg.bbox_px
+                    gx_r, gy_r = x1 + rx_r, y1 + ry_r
+                    cv2.rectangle(annotated, (gx_r, gy_r), (gx_r + rw_r, gy_r + rh_r), box_color, 2)
+                    # Label only the first (best-scored) region to avoid clutter; mark
+                    # subsequent ones with a small index so they are identifiable.
+                    if r_idx == 0:
+                        cv2.putText(
+                            annotated,
+                            f"{display_name} ({count})",
+                            (gx_r, max(0, gy_r - 5)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.45,
+                            box_color,
+                            1,
+                        )
+                    else:
+                        cv2.putText(
+                            annotated,
+                            f"+{r_idx}",
+                            (gx_r, max(0, gy_r - 3)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.35,
+                            box_color,
+                            1,
+                        )
 
                 # 1. Cut or pinhole → fail_on_any regardless of zone
                 if dtype in _CUT_OR_PINHOLE_TYPES:

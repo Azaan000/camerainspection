@@ -122,7 +122,8 @@ model:
   model_type: "yolo_stitch_defect"
   weights_path: "models/station_2/yolo_defect.onnx"
   version: "v1.0.0"
-  # threshold: 0.50  # REMOVED - Model inference handles threshold internally
+  confidence_threshold: 0.70   # raised — suppresses pattern-fabric false positives
+  iou_threshold: 0.35           # tightened from 0.45 — deduplicates overlapping boxes on noisy geometry
   class_names:
     - "broken_thread"
     - "skip_stitch"
