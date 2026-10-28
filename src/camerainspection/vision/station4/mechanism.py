@@ -12,28 +12,28 @@ class MechanismVisionEngine:
     """Optical measurement of mechanical positions: recliner lever angle & track travel end mark."""
 
     @classmethod
-    def measure_recliner_angle(cls, recliner_roi: np.ndarray) -> float:
+    def measure_recliner_angle(cls, recliner_roi: np.ndarray) -> float | None:
         """Measure the recliner lever angle in degrees from ROI.
 
-        Convention:
-            Finds the prominent lever arm / centerline in the ROI.
-            Returns angle in degrees (0..180), where 90 deg represents vertical upright nominal.
-            Uses Hough Lines or oriented bounding box / principal component analysis.
+        Returns None when no lever is detected (empty ROI, no contours, or
+        contour too small to be a real lever).  Returns 0.0..180.0 on success.
+        Callers must treat None as a vision failure and emit a FAIL defect
+        rather than recording 0.0, which could spuriously match a 0° nominal.
         """
         if recliner_roi is None or recliner_roi.size == 0:
-            return 0.0
+            return None
 
         gray = cv2.cvtColor(recliner_roi, cv2.COLOR_BGR2GRAY) if len(recliner_roi.shape) == 3 else recliner_roi
         # Threshold to find lever arm
         _, binary = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
-            return 0.0
+            return None
 
         # Find largest contour (the lever)
         c = max(contours, key=cv2.contourArea)
         if cv2.contourArea(c) < 50:
-            return 0.0
+            return None
 
         # Fit line to determine orientation: returns normalized direction vector (vx, vy)
         line_params = cv2.fitLine(c, cv2.DIST_L2, 0, 0.01, 0.01)
@@ -52,8 +52,12 @@ class MechanismVisionEngine:
         track_roi: np.ndarray,
         pixel_size_mm: float = 0.15,
         reference_datum_x: float = 0.0,
-    ) -> float:
+    ) -> float | None:
         """Measure linear position of track travel mark in millimeters.
+
+        Returns None when no mark is detected (empty ROI, no contours, or zero
+        moment).  Callers must treat None as a vision failure and emit a FAIL
+        defect rather than recording 0.0, which could spuriously match a 0mm nominal.
 
         Args:
             track_roi: Crop containing the track mark / pointer indicator.
@@ -61,14 +65,14 @@ class MechanismVisionEngine:
             reference_datum_x: Pixel X coordinate of zero travel datum in ROI.
         """
         if track_roi is None or track_roi.size == 0:
-            return 0.0
+            return None
 
         gray = cv2.cvtColor(track_roi, cv2.COLOR_BGR2GRAY) if len(track_roi.shape) == 3 else track_roi
         # Track pointer/fiducial mark is high-contrast
         _, binary = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
-            return 0.0
+            return None
 
         # Filter candidate marks by area
         filtered = [c for c in contours if 20 < cv2.contourArea(c) < 5000]
@@ -77,11 +81,9 @@ class MechanismVisionEngine:
         # Pick pointer mark (most distinct indicator)
         best = max(valid, key=cv2.contourArea)
         moment = cv2.moments(best)
-        if moment["m00"] > 0:
-            mark_x = float(moment["m10"] / moment["m00"])
-        else:
-            x, _, w, _ = cv2.boundingRect(best)
-            mark_x = float(x + w / 2)
+        if moment["m00"] <= 0:
+            return None
 
+        mark_x = float(moment["m10"] / moment["m00"])
         travel_mm = (mark_x - reference_datum_x) * pixel_size_mm
         return round(float(travel_mm), 2)

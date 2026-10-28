@@ -193,14 +193,24 @@ def build_line(
 
                     # Use class_names from config, fallback to defaults
                     class_names = st_cfg.model.class_names or ["broken_thread", "skip_stitch"]
-                    inference_engine = OnnxYoloEngine(
-                        class_names=class_names,
-                        confidence_threshold=st_cfg.model.threshold,
+                    # T6: use confidence_threshold from config if set, else fall back to threshold
+                    conf_thresh = (
+                        st_cfg.model.confidence_threshold
+                        if st_cfg.model.confidence_threshold is not None
+                        else st_cfg.model.threshold
                     )
+                    yolo_kwargs: dict[str, Any] = {
+                        "class_names": class_names,
+                        "confidence_threshold": conf_thresh,
+                    }
+                    if st_cfg.model.iou_threshold is not None:
+                        yolo_kwargs["iou_threshold"] = st_cfg.model.iou_threshold
+                    inference_engine = OnnxYoloEngine(**yolo_kwargs)
                     inference_engine.load(st_cfg.model.weights_path)
                     logger.info(
-                        "Loaded ONNX YOLO engine for %s: %s (classes=%s, threshold=%.2f)",
-                        st_id, st_cfg.model.weights_path, class_names, st_cfg.model.threshold,
+                        "Loaded ONNX YOLO engine for %s: %s (classes=%s, conf=%.2f, iou=%s)",
+                        st_id, st_cfg.model.weights_path, class_names, conf_thresh,
+                        st_cfg.model.iou_threshold,
                     )
                 else:
                     logger.warning(
@@ -228,6 +238,19 @@ def build_line(
             require_all_hardware=sys_cfg.hardware.require_all,
         )
         svc.save_images = sys_cfg.save_images
+
+        # T5c: warn about any configured YOLO class name not handled by the station code
+        if inference_engine is not None and st_cfg.model.class_names:
+            handled = svc.get_handled_class_names()
+            if handled:
+                unhandled = [c for c in st_cfg.model.class_names if c not in handled]
+                for cls in unhandled:
+                    logger.warning(
+                        "%s: configured class '%s' is not handled by %s.get_handled_class_names() "
+                        "— detections of this class will be silently dropped",
+                        st_id, cls, type(svc).__name__,
+                    )
+
         built_stations[st_id] = svc
 
     return LineRuntime(

@@ -156,13 +156,14 @@ class StitchGeometryEngine:
             candidates.append({"cx": cx, "cy": cy, "x": x, "y": y, "w": w, "h": h, "area": area})
 
         # Suppress weave-texture noise: real stitches lie along the seam line, so
-        # their Y-coords cluster tightly. Keep only candidates within ±8px of the
+        # their Y-coords cluster tightly. Keep only candidates within ±15px of the
         # median Y. Texture blobs scatter across the full band height (std > 20px)
         # so this eliminates them while leaving real stitches (std < 2px) intact.
+        # Allow ±15px to also accommodate double-seam cases where two rows are offset.
         if len(candidates) >= 4:
             cy_vals = np.array([s["cy"] for s in candidates])
             med_cy = float(np.median(cy_vals))
-            candidates = [s for s in candidates if abs(s["cy"] - med_cy) <= 8.0]
+            candidates = [s for s in candidates if abs(s["cy"] - med_cy) <= 15.0]
 
         # Suppress dense weave-texture blobs: real stitches have a minimum pitch.
         # Sort by X and enforce that consecutive candidates are at least min_pitch_px
@@ -193,7 +194,7 @@ class StitchGeometryEngine:
         seam_roi: np.ndarray,
         pixel_size_mm: float = 0.05,
         reference_style_line_y: float | None = None,
-        double_seam_threshold_mm: float = 0.7,
+        double_seam_threshold_mm: float = 0.5,
     ) -> StitchMeasurementResult:
         """Calculate stitches per inch, skip length, and seam distance to style line.
 
@@ -260,7 +261,7 @@ class StitchGeometryEngine:
         if len(y_coords) >= 4:
             y_std = float(np.std(y_coords))
             double_seam_threshold_px = double_seam_threshold_mm / pixel_size_mm
-            if y_std > double_seam_threshold_px:
+            if y_std >= double_seam_threshold_px:
                 has_double_seam = True
 
         return StitchMeasurementResult(

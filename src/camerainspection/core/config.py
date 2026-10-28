@@ -101,7 +101,7 @@ class CameraConfig(BaseModel):
 
 
 class StationModelConfig(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
 
     backend: str = "mock"
     model_type: str = "generic"
@@ -110,6 +110,9 @@ class StationModelConfig(BaseModel):
     threshold: float = 0.5
     pass_below: float = 0.40
     fail_above: float = 0.60
+    # Per-model detection thresholds (override threshold/iou_threshold defaults when set)
+    confidence_threshold: float | None = None
+    iou_threshold: float | None = None
     # Class names for YOLO detection models — must match training order
     class_names: list[str] = Field(default_factory=list)
 
@@ -126,6 +129,16 @@ class TriggerConfig(BaseModel):
     timeout_s: float = 5.0
 
 
+class QualityConfig(BaseModel):
+    """Image quality guard thresholds.  Defaults match the historical never-trigger values
+    so stations that omit the quality: block stay permissive.  Set real values in the station
+    YAML to activate the guard (T10)."""
+    min_std: float = -1.0
+    min_mean: float = -1.0
+    max_mean: float = 999.0
+    min_edge_density: float = 0.0
+
+
 class StationConfig(BaseModel):
     station_id: str
     name: str
@@ -139,6 +152,7 @@ class StationConfig(BaseModel):
     mechanism: dict[str, Any] = Field(default_factory=dict)
     model: StationModelConfig = Field(default_factory=StationModelConfig)
     trigger: TriggerConfig = Field(default_factory=TriggerConfig)
+    quality: QualityConfig = Field(default_factory=QualityConfig)
     capture_sequence: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="before")

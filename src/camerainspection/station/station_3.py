@@ -27,6 +27,10 @@ class Station3Service(BaseStation):
         # Multi-camera stations check different views, so keep this minimal
         return ["sanity_check_passed"]  # At minimum, image must pass sanity check
 
+    def get_handled_class_names(self) -> set[str]:
+        """T5c: class names this station's AI branch explicitly handles."""
+        return {"crack", "short_shot", "sink_mark", "part_missing", "part_wrong", "part_correct"}
+
     def load_golden_template(self, variant_id: str, component_name: str) -> np.ndarray | None:
         """Load golden reference image for a specific component and variant."""
         var_golden_dir = self.variants_root / variant_id / "golden_images"
@@ -90,25 +94,83 @@ class Station3Service(BaseStation):
         evaluator: LimitsEvaluator,
         pixel_size_mm: float,
     ) -> tuple[list[DefectDetail], dict[str, float], np.ndarray | None]:
-        """Inspect seat underside: mounting points, clips, harness connector, ISOFIX cover."""
+        """Inspect seat underside: clips presence via golden-template match.
+
+        T7 fix: this was a stub that always returned PASS with hardcoded 1.0 measurements.
+        Now fail-closed: returns FAIL when golden template is missing (always, until real
+        golden images are added), or when the template match fails.
+
+        NEEDS DECISION: components.clips.count and components.isofix_cover.count from
+        variant configs are not checked here — multi-instance matching API not defined.
+        """
         defects: list[DefectDetail] = []
         measurements: dict[str, float] = {}
         annotated = image.copy()
-
-        # Check underside clips presence
         h, w = image.shape[:2]
-        cv2.rectangle(annotated, (20, 20), (w - 20, h - 20), (0, 200, 0), 2)
-        cv2.putText(
-            annotated,
-            "UNDERSIDE OK: clips & harness confirmed",
-            (30, 50),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 200, 0),
-            2,
+
+        # Get underside_clips ROI (camera-level preferred, station-level fallback)
+        roi_cfg = self.config.regions_of_interest.get("underside_clips")
+        if roi_cfg is not None:
+            y1_roi = max(0, roi_cfg.y)
+            y2_roi = min(h, roi_cfg.y + roi_cfg.h)
+            x1_roi = max(0, roi_cfg.x)
+            x2_roi = min(w, roi_cfg.x + roi_cfg.w)
+            search_crop = image[y1_roi:y2_roi, x1_roi:x2_roi]
+            if search_crop.size == 0:
+                search_crop = image
+        else:
+            search_crop = image
+
+        # Load golden template — required for any meaningful check
+        golden = self.load_golden_template(variant_id, "underside_clips")
+        if golden is None:
+            defects.append(DefectDetail(
+                defect_type="station.missing_golden_template",
+                outcome=Outcome.FAIL,
+                roi_name="underside_clips",
+                description=(
+                    f"Golden template 'underside_clips' missing for variant '{variant_id}'. "
+                    "Cannot verify underside. Add golden images to enable this check."
+                ),
+            ))
+            cv2.rectangle(annotated, (20, 20), (w - 20, h - 20), (0, 0, 255), 3)
+            cv2.putText(
+                annotated, "UNDERSIDE FAIL: no golden template",
+                (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2,
+            )
+            return defects, measurements, annotated
+
+        # Run template match
+        threshold = float(self.config.matching.get("golden_match_threshold", 0.80))
+        match_res = GoldenTemplateMatcher.match_component(
+            search_roi=search_crop,
+            component_name="underside_clips",
+            golden_template=golden,
+            expected_hand=None,
+            opposite_hand_template=None,
+            threshold=threshold,
         )
-        measurements["underside_clips_present"] = 1.0
-        measurements["harness_connector_clicked"] = 1.0
+        measurements["underside_clips_match_score"] = match_res.match_score
+
+        if not match_res.detected:
+            d = evaluator.evaluate_check("plastic", "presence_hand_count", True)
+            d.defect_type = "plastic.underside_clips_missing"
+            d.roi_name = "underside_clips"
+            d.description = match_res.message
+            defects.append(d)
+            cv2.rectangle(annotated, (20, 20), (w - 20, h - 20), (0, 0, 255), 3)
+            cv2.putText(
+                annotated, "UNDERSIDE FAIL: clips not confirmed",
+                (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2,
+            )
+        else:
+            measurements["underside_clips_present"] = 1.0
+            measurements["harness_connector_clicked"] = 1.0
+            cv2.rectangle(annotated, (20, 20), (w - 20, h - 20), (0, 200, 0), 2)
+            cv2.putText(
+                annotated, "UNDERSIDE OK: clips confirmed",
+                (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2,
+            )
 
         return defects, measurements, annotated
 
@@ -313,7 +375,7 @@ class Station3Service(BaseStation):
             if flash_defect.outcome != Outcome.PASS:
                 defects.append(flash_defect)
 
-        # 5. AI Defect Classifier (Cracks, Short Shot, Sink Marks)
+        # 5. AI Defect Classifier (Cracks, Short Shot, Sink Marks + presence classes)
         if self.inference_engine is not None:
             ai_detections = self.inference_engine.predict(image)
             for det in ai_detections:
@@ -330,5 +392,22 @@ class Station3Service(BaseStation):
                         f"({conf_check.description})"
                     )
                     defects.append(crack_defect)
+                elif det.class_name == "part_missing":
+                    # T5b: handle YOLO presence model class
+                    d = evaluator.evaluate_check("plastic", "presence_hand_count", True)
+                    d.defect_type = "plastic.part_missing"
+                    d.confidence = det.confidence
+                    d.bounding_box = det.bounding_box
+                    d.description = f"AI detected missing part (confidence {det.confidence:.2f})"
+                    defects.append(d)
+                elif det.class_name == "part_wrong":
+                    # T5b: handle YOLO presence model class
+                    d = evaluator.evaluate_check("plastic", "presence_hand_count", True)
+                    d.defect_type = "plastic.part_wrong"
+                    d.confidence = det.confidence
+                    d.bounding_box = det.bounding_box
+                    d.description = f"AI detected wrong part (confidence {det.confidence:.2f})"
+                    defects.append(d)
+                # part_correct → no defect (intentionally ignored)
 
         return defects, measurements, annotated_img

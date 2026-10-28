@@ -245,12 +245,17 @@ class OnnxYoloEngine(BaseInferenceEngine):
         detections: list[ModelDetection] = []
         for cls_id in np.unique(class_ids):
             cls_mask = class_ids == cls_id
-            cls_boxes = np.stack([x1[cls_mask], y1[cls_mask],
-                                  x2[cls_mask], y2[cls_mask]], axis=1).astype(np.float32)
+            # Keep xyxy for final output; build separate xywh array for NMSBoxes.
+            # cv2.dnn.NMSBoxes expects [x, y, w, h] (top-left + size), NOT [x1,y1,x2,y2].
+            # Passing xyxy caused incorrect IoU calculations inside NMS (T3 fix).
+            xyxy_boxes = np.stack([x1[cls_mask], y1[cls_mask],
+                                   x2[cls_mask], y2[cls_mask]], axis=1).astype(np.float32)
+            xywh_boxes = np.stack([x1[cls_mask], y1[cls_mask],
+                                   (x2 - x1)[cls_mask], (y2 - y1)[cls_mask]], axis=1).astype(np.float32)
             cls_scores_nms = confidences[cls_mask].astype(np.float32)
 
             indices = cv2.dnn.NMSBoxes(
-                cls_boxes.tolist(),
+                xywh_boxes.tolist(),
                 cls_scores_nms.tolist(),
                 self.confidence_threshold,
                 self.iou_threshold,
@@ -269,7 +274,7 @@ class OnnxYoloEngine(BaseInferenceEngine):
             )
 
             for idx in indices:
-                bx1, by1, bx2, by2 = cls_boxes[idx]
+                bx1, by1, bx2, by2 = xyxy_boxes[idx]
                 bw = max(1, int(bx2 - bx1))
                 bh = max(1, int(by2 - by1))
                 conf = float(cls_scores_nms[idx])

@@ -80,3 +80,8 @@ model:
   fail_above: 0.6
 trigger:
   timeout_s: 5.0
+quality:
+  min_std: 2.0
+  min_mean: 5.0
+  max_mean: 250.0
+  min_edge_density: 0.0

@@ -181,6 +181,14 @@ class BaseStation(ABC):
         """Return list of measurement keys that must affirmatively be produced by this station."""
         return []
 
+    def get_handled_class_names(self) -> set[str]:
+        """Return the set of AI model class names this station's code explicitly handles.
+
+        Overridden by stations that process YOLO detections so the builder can
+        warn about configured class names that will be silently dropped (T5c).
+        """
+        return set()
+
     def is_valid_measurement(self, key: str, value: Any) -> bool:
         """Affirmatively validate that a measurement value is numeric and finite (not None, NaN, Inf)."""
         import math
@@ -390,7 +398,14 @@ class BaseStation(ABC):
 
                 # Check image quality guard first (contrast, blank/flat image check)
                 from camerainspection.vision.quality_guard import ImageQualityGuard
-                quality_defect = ImageQualityGuard.evaluate_image(image)
+                qc = self.config.quality
+                quality_defect = ImageQualityGuard.evaluate_image(
+                    image,
+                    min_std=qc.min_std,
+                    min_mean=qc.min_mean,
+                    max_mean=qc.max_mean,
+                    min_edge_density=qc.min_edge_density,
+                )
                 if quality_defect is not None:
                     quality_defect.camera_name = cam_name
                     quality_defect.view = cam_view

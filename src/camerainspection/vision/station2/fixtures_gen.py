@@ -96,6 +96,8 @@ def generate_station2_replay_frames(output_dir: Path) -> None:
     # 4. Loose end dangling
     cv2.imwrite(str(output_dir / "04_review_loose_end.png"), _base(add_loose_end=True))
 
-    # 5. Wrong thread color (red thread on leather - large Delta E)
-    cv2.imwrite(str(output_dir / "05_fail_wrong_color.png"), _base(thread_color_bgr=(30, 30, 200)))
+    # 5. Wrong thread color (cyan thread on leather - large Delta E vs normal grey)
+    # Use (180, 180, 80) - a distinct yellowish-cyan that differs significantly from normal grey (210,210,210)
+    # while still having enough contrast (std ~50) to pass the quality guard
+    cv2.imwrite(str(output_dir / "05_fail_wrong_color.png"), _base(thread_color_bgr=(180, 180, 80)))
 

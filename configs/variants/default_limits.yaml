@@ -12,6 +12,8 @@ limits:
       fail_at: 5.0
     broken_thread:
       fail_on_any: true
+    skip_stitch:
+      fail_on_any: true
     loose_end_mm:
       pass_max: 3.0
       fail_at: 5.0
@@ -24,6 +26,7 @@ limits:
     thread_color_delta_e:
       pass_max: 3.0
       fail_at: 5.0
+    broken_thread_min_gap_mm: 3.0
 
   leather:
     scratch_length_mm:

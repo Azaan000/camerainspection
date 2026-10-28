@@ -42,28 +42,40 @@ _CUT_OR_PINHOLE_TYPES = {LeatherDefectType.CUT, LeatherDefectType.PINHOLE}
 class Station1Service(BaseStation):
     """Station 1: Leather / Rexene panel surface inspection across multiple views."""
 
+    # Maps camera view names → zone key used in measurements and required checks.
+    # Single source of truth shared by get_required_measurements() and _analyze_surface_onnx().
+    _VIEW_ZONE_MAP: dict[str, str] = {
+        "front_cushion_backrest": "seating_face",
+        "rear_back_map_pocket": "side_back",
+        "main": "seating_face",
+    }
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         backend = getattr(self.config.model, "backend", "onnx")
         model_path = getattr(self.config.model, "weights_path", "models/station_1/model.onnx")
+
+        # T4: Remove silent model file substitution. If the configured file is missing,
+        # log an ERROR and leave the path/backend as-is so _get_onnx_engine() fails and
+        # the existing "station.engine_unavailable" FAIL path triggers. Never switch to
+        # a different file or to "classical" silently.
         mp = Path(model_path)
         if not mp.exists():
-            if not model_path or model_path == "models/station_1/model.onnx":
-                if Path("models/station_1/model.onnx").exists():
-                    model_path = "models/station_1/model.onnx"
-                elif Path("models/station_1/patchcore.onnx").exists():
-                    model_path = "models/station_1/patchcore.onnx"
-
-        if backend != "classical" and Path(model_path).exists():
+            logger.error(
+                "Station 1: model file not found at '%s' — engine will be unavailable "
+                "and every frame will produce station.engine_unavailable (FAIL).",
+                model_path,
+            )
+            # Keep backend="onnx" and weights_path as configured so the lazy-load
+            # attempt surfaces the FileNotFoundError through the normal fail-safe path.
+            self.config.model.backend = "onnx"
+            self.config.model.weights_path = str(model_path)
+        elif backend != "classical":
             self.config.model.backend = "onnx"
             self.config.model.weights_path = str(model_path)
         else:
-            if backend == "onnx" and model_path and not Path(model_path).exists():
-                self.config.model.backend = "onnx"
-                self.config.model.weights_path = str(model_path)
-            else:
-                self.config.model.backend = "classical"
-                self.config.model.weights_path = str(model_path)
+            self.config.model.backend = "classical"
+            self.config.model.weights_path = str(model_path)
 
         # Threshold handling: explicit pass_below/fail_above win; 'threshold' is a fallback
         # for configs that only supply a single slider value.
@@ -160,9 +172,41 @@ class Station1Service(BaseStation):
     # ------------------------------------------------------------------
 
     def get_required_measurements(self) -> list[str]:
-        # At least one defect count measurement must be affirmatively recorded
-        reqs = [f"{zone}.defect_count" for zone in self.config.regions_of_interest]
-        return reqs if reqs else ["seating_face.defect_count"]
+        # T1: derive required keys from what the enabled cameras actually emit,
+        # not from the station-level ROI dict which may contain zones no camera produces.
+        # Use self.cameras (actual hardware) not self.config.cameras (config) because
+        # integration tests may provide fewer cameras than the config specifies.
+        if self.config.model.backend == "onnx":
+            # ONNX path: each camera maps its view through _VIEW_ZONE_MAP → zone.defect_count
+            zones: list[str] = []
+            seen: set[str] = set()
+            for cam_cfg in self.config.cameras:
+                if not cam_cfg.enabled:
+                    continue
+                # Only require measurement if camera has hardware built
+                if cam_cfg.name not in self.cameras:
+                    continue
+                zone = self._VIEW_ZONE_MAP.get(cam_cfg.view, cam_cfg.view)
+                if zone not in seen:
+                    zones.append(zone)
+                    seen.add(zone)
+            return [f"{z}.defect_count" for z in zones] if zones else ["seating_face.defect_count"]
+        else:
+            # Classical path: each camera contributes its own ROI names → zone.defect_count
+            zones_cl: list[str] = []
+            seen_cl: set[str] = set()
+            for cam_cfg in self.config.cameras:
+                if not cam_cfg.enabled:
+                    continue
+                # Only require measurement if camera has hardware built
+                if cam_cfg.name not in self.cameras:
+                    continue
+                roi_names = list(cam.regions_of_interest.keys()) or list(self.config.regions_of_interest.keys())
+                for roi in roi_names:
+                    if roi not in seen_cl:
+                        zones_cl.append(roi)
+                        seen_cl.add(roi)
+            return [f"{z}.defect_count" for z in zones_cl] if zones_cl else ["seating_face.defect_count"]
 
     def inspect_camera_view(
         self,
@@ -261,13 +305,8 @@ class Station1Service(BaseStation):
         measurements: dict[str, float] = {}
         annotated = image.copy()
 
-        # View-zone mapping for measurements
-        view_zone_map = {
-            "front_cushion_backrest": "seating_face",
-            "rear_back_map_pocket":   "side_back",
-            "main": "seating_face",  # Legacy single-image path
-        }
-        zone_key = view_zone_map.get(view, "seating_face")  # Default to seating_face
+        # View-zone mapping for measurements — shared with get_required_measurements()
+        zone_key = self._VIEW_ZONE_MAP.get(view, view)  # default to view name if not mapped
 
         engine = self._get_onnx_engine()
         if engine is None:
@@ -371,6 +410,7 @@ class Station1Service(BaseStation):
             #   3. Score-based heuristic (last resort — at least avoids "LEATHER_ANOMALY")
             dtype: LeatherDefectType | None = None
             primary_region = None
+            classification_source: str = "layer3"  # T11: track which layer classified
 
             if bbox is not None:
                 roi = image[
@@ -397,21 +437,19 @@ class Station1Service(BaseStation):
                     if specific:
                         primary_region = max(specific, key=lambda r: r.anomaly_score)
                         dtype = primary_region.defect_type
+                        classification_source = "layer1"
                     elif regions:
                         # All regions are shade_band / unknown — still better than nothing
                         primary_region = max(regions, key=lambda r: r.anomaly_score)
                         if primary_region.defect_type not in (LeatherDefectType.SHADE_BAND, LeatherDefectType.UNKNOWN):
                             dtype = primary_region.defect_type
+                            classification_source = "layer1"
                         # else fall through to geometry heuristic below
 
             # Layer 2: geometry heuristic using the PatchCore bbox shape
             if dtype is None and bbox is not None:
                 bbox_aspect = max(bbox.w, bbox.h) / max(min(bbox.w, bbox.h), 1)
                 bbox_area = bbox.w * bbox.h
-                # Fix #9: previous logic classified aspect >= 1.5 as scratch, which
-                # catches almost every rectangular bbox and overstates scratches.
-                # Corrected priority: tiny → pinhole, very elongated → scratch,
-                # everything else → stain (safer default than scratch).
                 if bbox_area <= 2_000:
                     dtype = LeatherDefectType.PINHOLE
                 elif bbox_aspect >= 4.0 and max(bbox.w, bbox.h) <= 300:
@@ -420,6 +458,7 @@ class Station1Service(BaseStation):
                     dtype = LeatherDefectType.SCRATCH
                 else:
                     dtype = LeatherDefectType.STAIN
+                classification_source = "layer2"
                 logger.debug(
                     "[classify] geometry fallback aspect=%.2f area=%d → %s",
                     bbox_aspect, bbox_area, dtype.value,
@@ -429,30 +468,29 @@ class Station1Service(BaseStation):
             if dtype is None:
                 score_for_hint = det.anomaly_score or 0.0
                 dtype = LeatherDefectType.SCRATCH if score_for_hint > 0.7 else LeatherDefectType.STAIN
+                classification_source = "layer3"
                 logger.debug("[classify] score fallback score=%.3f → %s", score_for_hint, dtype.value)
 
-            defect_type_name = dtype.value  # e.g. "scratch", "stain", "cut", "pinhole"
-
-            # Build human-readable description
-            display_name = " ".join(word.capitalize() for word in dtype.value.split("_"))
-            if dtype == LeatherDefectType.SCRATCH:
-                if primary_region is not None:
-                    length_mm = primary_region.length_px * pixel_size_mm
-                elif bbox is not None:
-                    length_mm = max(bbox.w, bbox.h) * pixel_size_mm
+            # T11: only report specific type + mm values when Layer 1 (real pixel measurement).
+            # Layer 2/3 use geometry or score heuristics — label as unclassified to avoid
+            # printing spurious mm values that have no pixel-measurement backing.
+            if classification_source == "layer1":
+                defect_type_name = dtype.value  # e.g. "scratch", "stain"
+                display_name = " ".join(word.capitalize() for word in dtype.value.split("_"))
+                if dtype == LeatherDefectType.SCRATCH:
+                    length_mm = primary_region.length_px * pixel_size_mm  # type: ignore[union-attr]
+                    defect_description = f"{display_name} ({length_mm:.1f}mm)"
+                elif dtype == LeatherDefectType.STAIN:
+                    area_mm2 = primary_region.area_px * (pixel_size_mm ** 2)  # type: ignore[union-attr]
+                    defect_description = f"{display_name} ({area_mm2:.1f}mm²)"
                 else:
-                    length_mm = 0.0
-                defect_description = f"{display_name} ({length_mm:.1f}mm)"
-            elif dtype == LeatherDefectType.STAIN:
-                if primary_region is not None:
-                    area_mm2 = primary_region.area_px * (pixel_size_mm ** 2)
-                elif bbox is not None:
-                    area_mm2 = (bbox.w * bbox.h) * (pixel_size_mm ** 2)
-                else:
-                    area_mm2 = 0.0
-                defect_description = f"{display_name} ({area_mm2:.1f}mm²)"
+                    defect_description = display_name
             else:
-                defect_description = display_name
+                # Layer 2 or 3: type is estimated, no reliable measurements
+                defect_type_name = "anomaly_unclassified"
+                defect_description = f"Unclassified anomaly (estimated: {dtype.value})"
+                if bbox is not None:
+                    defect_description += f" [{bbox.w}x{bbox.h}px]"
 
             # Draw annotation with specific defect type
             box_colour = (0, 0, 255) if outcome == Outcome.FAIL else (0, 165, 255)

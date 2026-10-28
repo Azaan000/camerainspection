@@ -118,28 +118,45 @@ class Station4Service(BaseStation):
                 )
             else:
                 measured_angle = MechanismVisionEngine.measure_recliner_angle(recliner_crop)
-                measurements["recliner_angle_deg"] = measured_angle
-
-                angle_d = evaluator.evaluate_check(
-                    "mechanism",
-                    "recliner_angle_deg",
-                    measured_angle,
-                    nominal=nom_recliner_deg,
-                )
-                angle_d.roi_name = "recliner_pivot"
-                if angle_d.outcome != Outcome.PASS:
-                    defects.append(angle_d)
-
-                cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), (255, 200, 0), 2)
-                cv2.putText(
-                    annotated,
-                    f"Angle: {measured_angle:.1f} deg",
-                    (rx1, max(0, ry1 - 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 200, 0),
-                    2,
-                )
+                # T2: None means no lever contour detected — FAIL, don't record 0.0
+                if measured_angle is None:
+                    defects.append(DefectDetail(
+                        defect_type="vision.measurement_missing",
+                        outcome=Outcome.FAIL,
+                        roi_name="recliner_pivot",
+                        description="No lever contour detected in recliner ROI — angle cannot be measured.",
+                    ))
+                    cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), (0, 0, 255), 2)
+                    cv2.putText(
+                        annotated,
+                        "Angle: NO DETECTION",
+                        (rx1, max(0, ry1 - 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 0, 255),
+                        2,
+                    )
+                else:
+                    measurements["recliner_angle_deg"] = measured_angle
+                    angle_d = evaluator.evaluate_check(
+                        "mechanism",
+                        "recliner_angle_deg",
+                        measured_angle,
+                        nominal=nom_recliner_deg,
+                    )
+                    angle_d.roi_name = "recliner_pivot"
+                    if angle_d.outcome != Outcome.PASS:
+                        defects.append(angle_d)
+                    cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), (255, 200, 0), 2)
+                    cv2.putText(
+                        annotated,
+                        f"Angle: {measured_angle:.1f} deg",
+                        (rx1, max(0, ry1 - 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 200, 0),
+                        2,
+                    )
         else:
             defects.append(
                 DefectDetail(
@@ -174,35 +191,28 @@ class Station4Service(BaseStation):
                     track_crop, pixel_size_mm=pixel_size_mm, reference_datum_x=0.0
                 )
 
-                # Check if camera is calibrated (default uncalibrated value is 0.18)
-                if abs(pixel_size_mm - 0.18) < 0.001:
-                    # Camera uncalibrated
-                    measurements["track_end_position_px"] = measured_pos / pixel_size_mm
-                    defects.append(
-                        DefectDetail(
-                            defect_type="camera.uncalibrated",
-                            outcome=Outcome.REVIEW,
-                            roi_name="track_travel",
-                            description=(
-                                f"Track position measured {measured_pos / pixel_size_mm:.0f} pixels "
-                                f"but camera is uncalibrated. Cannot verify mm tolerance."
-                            ),
-                        )
-                    )
-                    cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), (255, 200, 0), 2)
+                # T2: None means no track mark detected — FAIL, don't record 0.0.
+                # Also removed the abs(pixel_size_mm - 0.18) calibration sentinel hack;
+                # calibration is enforced by base_station.run_cycle via _mm measurement keys.
+                if measured_pos is None:
+                    defects.append(DefectDetail(
+                        defect_type="vision.measurement_missing",
+                        outcome=Outcome.FAIL,
+                        roi_name="track_travel",
+                        description="No track mark detected in track ROI — position cannot be measured.",
+                    ))
+                    cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), (0, 0, 255), 2)
                     cv2.putText(
                         annotated,
-                        f"Track: {measured_pos / pixel_size_mm:.0f} px (uncal)",
+                        "Track: NO DETECTION",
                         (tx1, max(0, ty1 - 10)),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
-                        (255, 200, 0),
+                        (0, 0, 255),
                         2,
                     )
                 else:
-                    # Camera calibrated
                     measurements["track_end_position_mm"] = measured_pos
-
                     pos_d = evaluator.evaluate_check(
                         "mechanism",
                         "track_end_position_mm",
@@ -212,7 +222,6 @@ class Station4Service(BaseStation):
                     pos_d.roi_name = "track_travel"
                     if pos_d.outcome != Outcome.PASS:
                         defects.append(pos_d)
-
                     cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), (255, 200, 0), 2)
                     cv2.putText(
                         annotated,

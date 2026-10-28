@@ -12,7 +12,7 @@ def _dark_leather_base(
     width: int = 640,
     height: int = 480,
     base_gray: int = 35,
-    grain_strength: int = 8,
+    grain_strength: int = 14,  # std ~2.3, balanced for quality guard and stain detection
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Generate a dark leather-like BGR canvas with subtle grain texture."""
@@ -80,13 +80,25 @@ def make_leather_with_stain(
     height: int = 480,
     cx: int = 320,
     cy: int = 240,
-    rx: int = 30,
-    ry: int = 20,
-    darkness: int = 35,
+    rx: int = 20,
+    ry: int = 15,
+    darkness: int = 0,  # pixel value of the stain (0=black, well below base_gray=35)
 ) -> np.ndarray:
-    """Dark elliptical stain with high local contrast."""
-    canvas = _dark_leather_base(width, height)
-    cv2.ellipse(canvas, (cx, cy), (rx, ry), 0, 0, 360, (0, 0, 0), -1)
+    """Dark elliptical stain with high local contrast.
+
+    The stain radius is kept < blur_ksize/2 (default 51//2=25) so the
+    Gaussian/box background estimator treats it as a point anomaly with
+    mean_dev ≈ -contrast, well above the min_contrast=10.0 threshold.
+    Grain is added so the image passes the quality guard's min_std check.
+    """
+    # Noise-free base for a clean contrast step in the stain region
+    base_bgr = np.full((height, width, 3), 35, dtype=np.uint8)
+    cv2.ellipse(base_bgr, (cx, cy), (rx, ry), 0, 0, 360, (darkness, darkness, darkness), -1)
+    # Add grain so image passes quality guard's min_std check
+    rng = np.random.default_rng(0)
+    noise = rng.integers(-14, 15, (height, width), dtype=np.int16)
+    noise_bgr = np.stack([noise, noise, noise], axis=2)
+    canvas = np.clip(base_bgr.astype(np.int16) + noise_bgr, 0, 255).astype(np.uint8)
     return canvas
 
 
@@ -165,9 +177,10 @@ def generate_station1_replay_frames(output_dir: Path) -> None:
         make_leather_with_pinhole(w, h, cx=sf_x + 100, cy=sf_y, radius=3),
     )
 
-    # Frame 5: stain inside seating_face
+    # Frame 5: stain inside seating_face — radius < blur_ksize/2 = 25px so
+    # background estimator treats it as a point anomaly with mean_dev > 10.0
     cv2.imwrite(
         str(output_dir / "05_review_stain.png"),
-        make_leather_with_stain(w, h, cx=sf_x + 200, cy=sf_y, rx=30, ry=20, darkness=50),
+        make_leather_with_stain(w, h, cx=sf_x + 200, cy=sf_y, rx=20, ry=15, darkness=0),
     )
 

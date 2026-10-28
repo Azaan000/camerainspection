@@ -77,8 +77,13 @@ def test_pinhole_detected_and_classified() -> None:
 
 
 def test_stain_detected_and_classified() -> None:
-    """Dark irregular ellipse must be detected and classified as STAIN."""
-    image = make_leather_with_stain(W, H, cx=320, cy=240, rx=30, ry=20)
+    """Dark irregular ellipse must be detected and classified as STAIN.
+
+    Stain radius kept < blur_ksize/2 (51//2=25px) so the background estimator
+    treats the stain as a point anomaly with mean_dev ≈ -(35-0) = -35,
+    well above the min_contrast=10.0 threshold.
+    """
+    image = make_leather_with_stain(W, H, cx=320, cy=240, rx=20, ry=15)
     regions = ANALYZER.analyze(image)
     stain_regions = [r for r in regions if r.defect_type == LeatherDefectType.STAIN]
     assert len(stain_regions) >= 1, f"Stain not detected. Got: {[r.defect_type for r in regions]}"

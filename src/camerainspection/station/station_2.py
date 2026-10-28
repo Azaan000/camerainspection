@@ -31,6 +31,10 @@ class Station2Service(BaseStation):
     def get_required_measurements(self) -> list[str]:
         return ["spi", "max_skip_mm", "seam_position_mm", "stitch_count"]
 
+    def get_handled_class_names(self) -> set[str]:
+        """T5c: class names this station's AI branch explicitly handles."""
+        return {"broken_thread", "skip_stitch", "loose_end"}
+
     def inspect_camera_view(
         self,
         camera_name: str,
