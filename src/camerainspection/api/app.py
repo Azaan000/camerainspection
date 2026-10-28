@@ -1850,6 +1850,7 @@ def create_app(
         camera_name: str = Query("main", description="Camera or view name"),
         variant_id: str = Query("FRONT_LH_BLACK", description="Seat variant ID"),
         flexible_mode: bool = Query(False, description="Bypass strict ROI/calibration bounds for uncalibrated tests"),
+        threshold: float | None = Query(None, description="Optional inference threshold override (0.0 - 1.0)"),
         auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Manually inject an image into a station pipeline to test AI inference and limits."""
@@ -1892,6 +1893,29 @@ def create_app(
 
         evaluator = LimitsEvaluator(limits_dict)
 
+        # Apply optional dynamic threshold override
+        orig_pass_below = getattr(station_svc.config.model, "pass_below", None)
+        orig_fail_above = getattr(station_svc.config.model, "fail_above", None)
+        orig_threshold = getattr(station_svc.config.model, "threshold", None)
+        onnx_eng = getattr(station_svc, "_onnx_engine", None)
+        orig_eng_pass_below = getattr(onnx_eng, "pass_below", None)
+        orig_eng_fail_above = getattr(onnx_eng, "fail_above", None)
+        yolo_eng = getattr(station_svc, "inference_engine", None)
+        orig_yolo_conf = getattr(yolo_eng, "confidence_threshold", None)
+
+        if threshold is not None:
+            if hasattr(station_svc.config.model, "pass_below"):
+                station_svc.config.model.pass_below = threshold
+                station_svc.config.model.fail_above = min(1.0, threshold + 0.15)
+            if hasattr(station_svc.config.model, "threshold"):
+                station_svc.config.model.threshold = threshold
+
+            if onnx_eng is not None:
+                onnx_eng.pass_below = threshold
+                onnx_eng.fail_above = min(1.0, threshold + 0.15)
+            if yolo_eng is not None and hasattr(yolo_eng, "confidence_threshold"):
+                yolo_eng.confidence_threshold = threshold
+
         try:
             defects, measurements, annotated = station_svc.inspect_image(
                 image=frame,
@@ -1902,6 +1926,22 @@ def create_app(
         except Exception as e:
             logger.error(f"Error inspecting injected image for {station_id}: {e}")
             raise HTTPException(status_code=500, detail=f"Inspection pipeline error: {e}")
+        finally:
+            # Restore original configured thresholds
+            if threshold is not None:
+                if orig_pass_below is not None:
+                    station_svc.config.model.pass_below = orig_pass_below
+                if orig_fail_above is not None:
+                    station_svc.config.model.fail_above = orig_fail_above
+                if orig_threshold is not None:
+                    station_svc.config.model.threshold = orig_threshold
+                if onnx_eng is not None:
+                    if orig_eng_pass_below is not None:
+                        onnx_eng.pass_below = orig_eng_pass_below
+                    if orig_eng_fail_above is not None:
+                        onnx_eng.fail_above = orig_eng_fail_above
+                if yolo_eng is not None and orig_yolo_conf is not None:
+                    yolo_eng.confidence_threshold = orig_yolo_conf
 
         # In flexible mode, filter out strict physical calibration and ROI geometry mismatches
         # and ensure AI inference covers the entire uncropped image
@@ -1913,20 +1953,35 @@ def create_app(
                 "station.invalid_image",
                 "station.missing_golden_template",
                 "stitch.stitches_per_inch",
+                "stitch.seam_position_mm",
+                "stitch.thread_color",
+                "plastic.presence_underside_clips",
+                "plastic.underside_clips_missing",
+                "plastic.color_side_shield",
+                "plastic.color_lever_handle",
+                "plastic.presence_side_shield",
+                "plastic.presence_lever_handle",
+                "plastic.shield_gap_mm",
+                "plastic.flash_mm",
                 "vision.measurement_missing",
             }
-            defects = [d for d in defects if d.defect_type not in strict_error_types]
+            defects = [
+                d for d in defects
+                if d.defect_type not in strict_error_types
+                and not d.defect_type.startswith("station.missing_golden_template")
+                and not d.defect_type.startswith("plastic.presence_")
+                and not d.defect_type.startswith("plastic.color_")
+            ]
 
             if station_id.upper() == "STATION_2" and getattr(station_svc, "inference_engine", None) is not None:
                 ai_dets = station_svc.inference_engine.predict(frame)
-                existing_descs = {d.description for d in defects}
+                existing_types = {d.defect_type for d in defects}
                 for det in ai_dets:
-                    if det.class_name in ("broken_thread", "skip_stitch"):
-                        check_name = "broken_thread" if det.class_name == "broken_thread" else "skip_stitch"
-                        defect_type = f"stitch.{check_name}"
+                    if det.class_name in ("broken_thread", "skip_stitch", "loose_end"):
+                        defect_type = f"stitch.{det.class_name}"
                         desc = f"AI detected {det.class_name.replace('_', ' ')} with confidence {det.confidence:.2f} (flexible mode)"
-                        if desc not in existing_descs:
-                            d_item = evaluator.evaluate_check("stitch", check_name, True)
+                        if defect_type not in existing_types:
+                            d_item = evaluator.evaluate_check("stitch", det.class_name, True)
                             d_item.defect_type = defect_type
                             d_item.confidence = det.confidence
                             d_item.bounding_box = det.bounding_box
@@ -1935,16 +1990,58 @@ def create_app(
                             defects.append(d_item)
                             if annotated is not None and det.bounding_box:
                                 bx, by, bw, bh = det.bounding_box.x, det.bounding_box.y, det.bounding_box.w, det.bounding_box.h
-                                cv2.rectangle(annotated, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
+                                cv2.rectangle(annotated, (bx, by), (bx + bw, by + bh), (0, 0, 255), 3)
                                 cv2.putText(
                                     annotated,
-                                    f"{det.class_name.upper()} {det.confidence:.2f}",
-                                    (bx, max(0, by - 5)),
+                                    f"{det.class_name.upper().replace('_', ' ')} {det.confidence:.2f}",
+                                    (bx, max(20, by - 8)),
                                     cv2.FONT_HERSHEY_SIMPLEX,
-                                    0.5,
+                                    0.6,
                                     (0, 0, 255),
                                     2,
                                 )
+
+            elif station_id.upper() == "STATION_3" and getattr(station_svc, "inference_engine", None) is not None:
+                ai_dets = station_svc.inference_engine.predict(frame)
+                existing_types = {d.defect_type for d in defects}
+                for det in ai_dets:
+                    if det.class_name in ("crack", "short_shot", "sink_mark", "part_missing", "part_wrong"):
+                        defect_type = f"plastic.{det.class_name}"
+                        desc = f"AI detected {det.class_name.replace('_', ' ')} with confidence {det.confidence:.2f} (flexible mode)"
+                        if defect_type not in existing_types:
+                            d_item = evaluator.evaluate_check("plastic", "crack_or_short_shot", True)
+                            d_item.defect_type = defect_type
+                            d_item.confidence = det.confidence
+                            d_item.bounding_box = det.bounding_box
+                            d_item.roi_name = "flexible_full_frame"
+                            d_item.description = desc
+                            defects.append(d_item)
+                            if annotated is not None and det.bounding_box:
+                                bx, by, bw, bh = det.bounding_box.x, det.bounding_box.y, det.bounding_box.w, det.bounding_box.h
+                                cv2.rectangle(annotated, (bx, by), (bx + bw, by + bh), (0, 0, 255), 3)
+                                cv2.putText(
+                                    annotated,
+                                    f"{det.class_name.upper().replace('_', ' ')} {det.confidence:.2f}",
+                                    (bx, max(20, by - 8)),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.6,
+                                    (0, 0, 255),
+                                    2,
+                                )
+
+            if not defects and annotated is not None:
+                annotated = frame.copy()
+                h_f, w_f = frame.shape[:2]
+                cv2.rectangle(annotated, (2, 2), (w_f - 2, h_f - 2), (0, 200, 0), 2)
+                cv2.putText(
+                    annotated,
+                    f"PASS - {station_id.upper()} OK",
+                    (12, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 200, 0),
+                    2,
+                )
 
         # Determine outcome
         from camerainspection.core.models import Outcome, StationInspectionResult

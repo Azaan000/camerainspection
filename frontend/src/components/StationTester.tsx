@@ -107,7 +107,14 @@ export default function StationTester() {
     setLoading(true)
     setError(null)
     try {
-      const res = await apiClient.injectStationImage(selectedStation, cameraName, variantId, buffer, flexibleMode)
+      const res = await apiClient.injectStationImage(
+        selectedStation,
+        cameraName,
+        variantId,
+        buffer,
+        flexibleMode,
+        threshold
+      )
       setResult(res)
       setShowAnnotated(true)
       audioAlerts.playOutcomeSound(res.outcome)

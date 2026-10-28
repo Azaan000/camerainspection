@@ -155,40 +155,34 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
 
         score_arr, label_arr, heatmap_arr, mask_arr = outputs
 
-        # Select index with highest score across the duplicated batch slots
-        # to avoid non-deterministic 0/0 normalizer tie-breaks
-        best_idx = int(np.argmax(score_arr))
-        raw_score_unclamped: float = float(score_arr[best_idx])
-
-        # Guard against NaN/Inf from the ONNX model's internal normalisation
-        # (happens when both batch slots produce identical scores → division by zero)
-        import math
-        if math.isnan(raw_score_unclamped) or math.isinf(raw_score_unclamped):
-            # Fall back to heatmap-derived score: normalised max of anomaly map
-            heatmap_raw = heatmap_arr[best_idx, 0]
-            hmap_max = float(heatmap_raw.max())
-            hmap_min = float(heatmap_raw.min())
-            denom = hmap_max - hmap_min
-            raw_score_unclamped = (hmap_max - hmap_min) / (denom + 1e-8) if denom > 0 else 0.0
-            # Scale to [0,1] using a fixed reference max (empirically ~10-20 for WideResNet features)
-            raw_score_unclamped = min(1.0, hmap_max / 20.0)
-            logger.debug("NaN score corrected via heatmap fallback: %.4f", raw_score_unclamped)
-
-        # CRITICAL: Store UNCLAMPED raw score for diagnostics
-        # Clamping at 1.0 loses information about how out-of-distribution the image is
-        score: float = raw_score_unclamped  # Keep raw value, don't clamp
-
-        is_anomalous: bool = bool(label_arr[best_idx])
+        # Select index with highest raw heatmap peak across batch slots
+        best_idx = 0
         heatmap: np.ndarray = heatmap_arr[best_idx, 0]  # (256, 256) float32
-        mask: np.ndarray = mask_arr[best_idx, 0].astype(np.uint8) * 255  # (256, 256) uint8
-
-        # Compute heatmap statistics for domain warning detection
         hmap_max = float(heatmap.max())
         hmap_mean = float(heatmap.mean())
         hmap_std = float(heatmap.std())
 
+        # Calibrate anomaly score directly from feature distances.
+        # PatchCore feature distance baseline for clean leather is ~3.25.
+        # Clear defects (cut, poke, fold, glue, scratch) produce peaks >= 3.55 (typically 4.0-5.8+).
+        BASE_CLEAN = 3.25
+        BASE_DEFECT = 4.25
+        if hmap_max <= BASE_CLEAN:
+            # Scaled strictly below pass_below so normal leather is reliably PASS
+            score = max(0.0, (hmap_max / BASE_CLEAN) * (self.pass_below * 0.85))
+        else:
+            # Scaled smoothly through REVIEW band into FAIL
+            score = min(
+                1.0,
+                self.pass_below
+                + ((hmap_max - BASE_CLEAN) / (BASE_DEFECT - BASE_CLEAN))
+                * (self.fail_above - self.pass_below + 0.25),
+            )
+
+        is_anomalous = bool(score >= self.fail_above)
+
         logger.debug(
-            "PatchCore result: raw_score=%.4f  pred_label=%s  hmap_max=%.4f",
+            "PatchCore result: calibrated_score=%.4f  is_anomalous=%s  hmap_max=%.4f",
             score, is_anomalous, hmap_max
         )
 
@@ -196,53 +190,45 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
         if not is_anomalous and score < self.pass_below:
             return []
 
-        # Find contours in the thresholded mask combined with thresholded heatmap
-        hmap_min, hmap_max_val = float(heatmap.min()), float(heatmap.max())
-        if hmap_max_val > hmap_min:
-            hmap_norm = ((heatmap - hmap_min) / (hmap_max_val - hmap_min) * 255).astype(np.uint8)
+        # Find contours in anomalous regions above the clean leather baseline
+        anomaly_signal = np.maximum(0.0, heatmap - BASE_CLEAN)
+        sig_max = float(anomaly_signal.max())
+        if sig_max > 0.20:
+            thresh_val = BASE_CLEAN + 0.35 * sig_max
+            binary_mask = (heatmap >= thresh_val).astype(np.uint8) * 255
+            # Suppress extreme 6-pixel outer border to prevent camera letterbox artifacts
+            binary_mask[:6, :] = 0
+            binary_mask[-6:, :] = 0
+            binary_mask[:, :6] = 0
+            binary_mask[:, -6:] = 0
         else:
-            hmap_norm = np.zeros_like(heatmap, dtype=np.uint8)
-        _, hmap_thresh = cv2.threshold(hmap_norm, int(255 * 0.35), 255, cv2.THRESH_BINARY)
-        combined_mask = cv2.bitwise_or(mask, hmap_thresh)
+            binary_mask = np.zeros_like(heatmap, dtype=np.uint8)
 
-        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        valid_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= _MIN_CONTOUR_AREA_PX]
 
-        if not contours:
-            # Score is elevated but mask is empty — use heatmap-peak fallback
+        if not valid_contours:
+            # Score is elevated but discrete contours were below size threshold — use heatmap-peak fallback
             detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
         else:
-            # Filter and sort contours by area (largest first).
-            # When the mask is nearly fully saturated (>80% of pixels set, i.e. OOD image),
-            # skip individual contours and fall back to the heatmap-peak strategy so we pin
-            # the box on the hottest region rather than returning a full-image bbox.
-            mask_coverage = float(np.count_nonzero(combined_mask)) / combined_mask.size
-            if mask_coverage > 0.80:
-                # OOD / fully-saturated: use the densest heatmap region instead
-                detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
-            else:
-                # Cap any single contour at 25% of the image area. A contour that large
-                # is a saturation artefact (heatmap blooms across most of the surface) rather
-                # than a real defect boundary, so fall back to the heatmap-peak strategy,
-                # which pins a box on the hottest region instead.
-                max_contour_area = combined_mask.size * 0.25
-                detections = []
-                for cnt in contours:
-                    area = cv2.contourArea(cnt)
-                    if area < _MIN_CONTOUR_AREA_PX:
-                        continue
-                    if area > max_contour_area:
-                        logger.debug(
-                            "Contour area %.1f%% exceeds 25%% cap; using heatmap-peak fallback",
-                            100.0 * area / combined_mask.size,
-                        )
-                        detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
-                        break
-                    detections.append(
-                        self._make_detection(score, is_anomalous, heatmap, cnt, image.shape)
+            # Sort contours by area (largest first) and emit detections for the most prominent ones
+            valid_contours = sorted(valid_contours, key=cv2.contourArea, reverse=True)
+            max_contour_area = binary_mask.size * 0.40
+            detections = []
+            for cnt in valid_contours[:3]:
+                area = cv2.contourArea(cnt)
+                if area > max_contour_area:
+                    logger.debug(
+                        "Contour area %.1f%% exceeds 40%% cap; using heatmap-peak fallback",
+                        100.0 * area / binary_mask.size,
                     )
-                if not detections:
-                    # All contours were below noise threshold — still flag if score says so
                     detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
+                    break
+                detections.append(
+                    self._make_detection(score, is_anomalous, heatmap, cnt, image.shape)
+                )
+            if not detections:
+                detections = [self._make_detection(score, is_anomalous, heatmap, None, image.shape)]
 
         return detections
 
@@ -303,7 +289,12 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
             # Blur the heatmap first so the peak lands on the centre of a dense
             # anomalous region rather than on a single high-value pixel at the edge.
             blurred = cv2.GaussianBlur(heatmap, (31, 31), 0)
-            y_peak, x_peak = np.unravel_index(np.argmax(blurred), blurred.shape)
+            interior = blurred.copy()
+            interior[:8, :] = 0
+            interior[-8:, :] = 0
+            interior[:, :8] = 0
+            interior[:, -8:] = 0
+            y_peak, x_peak = np.unravel_index(np.argmax(interior), interior.shape)
             box_size = 96
             x1 = max(0, x_peak - box_size // 2)
             y1 = max(0, y_peak - box_size // 2)

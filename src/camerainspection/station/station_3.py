@@ -392,6 +392,19 @@ class Station3Service(BaseStation):
                         f"({conf_check.description})"
                     )
                     defects.append(crack_defect)
+                    if det.bounding_box is not None:
+                        bx, by, bw, bh = det.bounding_box.x, det.bounding_box.y, det.bounding_box.w, det.bounding_box.h
+                        cv2.rectangle(annotated_img, (bx, by), (bx + bw, by + bh), (0, 0, 255), 3)
+                        label = f"{det.class_name.upper().replace('_', ' ')} {det.confidence:.2f}"
+                        cv2.putText(
+                            annotated_img,
+                            label,
+                            (bx, max(20, by - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (0, 0, 255),
+                            2,
+                        )
                 elif det.class_name == "part_missing":
                     # T5b: handle YOLO presence model class
                     d = evaluator.evaluate_check("plastic", "presence_hand_count", True)
@@ -400,6 +413,19 @@ class Station3Service(BaseStation):
                     d.bounding_box = det.bounding_box
                     d.description = f"AI detected missing part (confidence {det.confidence:.2f})"
                     defects.append(d)
+                    if det.bounding_box is not None:
+                        bx, by, bw, bh = det.bounding_box.x, det.bounding_box.y, det.bounding_box.w, det.bounding_box.h
+                        cv2.rectangle(annotated_img, (bx, by), (bx + bw, by + bh), (0, 0, 255), 3)
+                        label = f"MISSING PART {det.confidence:.2f}"
+                        cv2.putText(
+                            annotated_img,
+                            label,
+                            (bx, max(20, by - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (0, 0, 255),
+                            2,
+                        )
                 elif det.class_name == "part_wrong":
                     # T5b: handle YOLO presence model class
                     d = evaluator.evaluate_check("plastic", "presence_hand_count", True)
@@ -408,6 +434,45 @@ class Station3Service(BaseStation):
                     d.bounding_box = det.bounding_box
                     d.description = f"AI detected wrong part (confidence {det.confidence:.2f})"
                     defects.append(d)
-                # part_correct → no defect (intentionally ignored)
+                    if det.bounding_box is not None:
+                        bx, by, bw, bh = det.bounding_box.x, det.bounding_box.y, det.bounding_box.w, det.bounding_box.h
+                        cv2.rectangle(annotated_img, (bx, by), (bx + bw, by + bh), (0, 0, 255), 3)
+                        label = f"WRONG PART {det.confidence:.2f}"
+                        cv2.putText(
+                            annotated_img,
+                            label,
+                            (bx, max(20, by - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (0, 0, 255),
+                            2,
+                        )
+                elif det.class_name == "part_correct":
+                    if det.bounding_box is not None:
+                        bx, by, bw, bh = det.bounding_box.x, det.bounding_box.y, det.bounding_box.w, det.bounding_box.h
+                        cv2.rectangle(annotated_img, (bx, by), (bx + bw, by + bh), (0, 200, 0), 2)
+                        label = f"OK: {det.confidence:.2f}"
+                        cv2.putText(
+                            annotated_img,
+                            label,
+                            (bx, max(20, by - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 200, 0),
+                            2,
+                        )
+
+        if not defects:
+            h, w = image.shape[:2]
+            cv2.rectangle(annotated_img, (2, 2), (w - 2, h - 2), (0, 200, 0), 2)
+            cv2.putText(
+                annotated_img,
+                "PASS - Plastic components OK",
+                (12, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 200, 0),
+                2,
+            )
 
         return defects, measurements, annotated_img

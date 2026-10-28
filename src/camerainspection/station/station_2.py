@@ -416,5 +416,37 @@ class Station2Service(BaseStation):
                     )
                     if loose_d.outcome != Outcome.PASS:
                         defects.append(loose_d)
+                        if det.bounding_box:
+                            bx_ann = det.bounding_box.x + x1
+                            by_ann = det.bounding_box.y + y1
+                            cv2.rectangle(
+                                annotated,
+                                (bx_ann, by_ann),
+                                (bx_ann + det.bounding_box.w, by_ann + det.bounding_box.h),
+                                (0, 0, 255),
+                                3,
+                            )
+                            cv2.putText(
+                                annotated,
+                                f"LOOSE END {loose_mm:.1f}mm {det.confidence:.2f}",
+                                (bx_ann, max(0, by_ann - 8)),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                (0, 0, 255),
+                                2,
+                            )
+
+        if not defects:
+            h, w = image.shape[:2]
+            cv2.rectangle(annotated, (2, 2), (w - 2, h - 2), (0, 200, 0), 2)
+            cv2.putText(
+                annotated,
+                "PASS - Stitch & Seam OK",
+                (12, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 200, 0),
+                2,
+            )
 
         return defects, measurements, annotated

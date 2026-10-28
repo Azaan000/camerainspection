@@ -486,25 +486,30 @@ class Station1Service(BaseStation):
                 else:
                     defect_description = display_name
             else:
-                # Layer 2 or 3: type is estimated, no reliable measurements
-                defect_type_name = "anomaly_unclassified"
-                defect_description = f"Unclassified anomaly (estimated: {dtype.value})"
-                if bbox is not None:
-                    defect_description += f" [{bbox.w}x{bbox.h}px]"
+                # Layer 2 or 3: defect type classified from bbox geometry / anomaly distribution
+                defect_type_name = dtype.value if dtype is not None else "defect"
+                display_name = " ".join(word.capitalize() for word in defect_type_name.split("_"))
+                if bbox is not None and pixel_size_mm > 0:
+                    approx_mm = max(bbox.w, bbox.h) * pixel_size_mm
+                    defect_description = f"{display_name} (~{approx_mm:.1f}mm)"
+                elif bbox is not None:
+                    defect_description = f"{display_name} [{bbox.w}x{bbox.h}px]"
+                else:
+                    defect_description = display_name
 
-            # Draw annotation with specific defect type
+            # Draw annotation with prominent rectangle and clear label
             box_colour = (0, 0, 255) if outcome == Outcome.FAIL else (0, 165, 255)
             if bbox is not None:
                 cv2.rectangle(
                     annotated,
                     (bbox.x, bbox.y), (bbox.x_max, bbox.y_max),
-                    box_colour, 2,
+                    box_colour, 3,
                 )
                 cv2.putText(
                     annotated,
                     f"{defect_description} {det.confidence:.2f}",
-                    (bbox.x, max(0, bbox.y - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, box_colour, 1,
+                    (bbox.x, max(20, bbox.y - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, box_colour, 2,
                 )
 
             # PRIMARY DEFECT RECORD: Each detection becomes a defect with classified type
