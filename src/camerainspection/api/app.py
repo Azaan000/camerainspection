@@ -1849,6 +1849,7 @@ def create_app(
         request: Request,
         camera_name: str = Query("main", description="Camera or view name"),
         variant_id: str = Query("FRONT_LH_BLACK", description="Seat variant ID"),
+        flexible_mode: bool = Query(False, description="Bypass strict ROI/calibration bounds for uncalibrated tests"),
         auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Manually inject an image into a station pipeline to test AI inference and limits."""
@@ -1901,6 +1902,49 @@ def create_app(
         except Exception as e:
             logger.error(f"Error inspecting injected image for {station_id}: {e}")
             raise HTTPException(status_code=500, detail=f"Inspection pipeline error: {e}")
+
+        # In flexible mode, filter out strict physical calibration and ROI geometry mismatches
+        # and ensure AI inference covers the entire uncropped image
+        if flexible_mode:
+            strict_error_types = {
+                "station.insufficient_stitches",
+                "station.measurement_invalid",
+                "station.invalid_roi",
+                "station.invalid_image",
+                "station.missing_golden_template",
+                "stitch.stitches_per_inch",
+                "vision.measurement_missing",
+            }
+            defects = [d for d in defects if d.defect_type not in strict_error_types]
+
+            if station_id.upper() == "STATION_2" and getattr(station_svc, "inference_engine", None) is not None:
+                ai_dets = station_svc.inference_engine.predict(frame)
+                existing_descs = {d.description for d in defects}
+                for det in ai_dets:
+                    if det.class_name in ("broken_thread", "skip_stitch"):
+                        check_name = "broken_thread" if det.class_name == "broken_thread" else "skip_stitch"
+                        defect_type = f"stitch.{check_name}"
+                        desc = f"AI detected {det.class_name.replace('_', ' ')} with confidence {det.confidence:.2f} (flexible mode)"
+                        if desc not in existing_descs:
+                            d_item = evaluator.evaluate_check("stitch", check_name, True)
+                            d_item.defect_type = defect_type
+                            d_item.confidence = det.confidence
+                            d_item.bounding_box = det.bounding_box
+                            d_item.roi_name = "flexible_full_frame"
+                            d_item.description = desc
+                            defects.append(d_item)
+                            if annotated is not None and det.bounding_box:
+                                bx, by, bw, bh = det.bounding_box.x, det.bounding_box.y, det.bounding_box.w, det.bounding_box.h
+                                cv2.rectangle(annotated, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
+                                cv2.putText(
+                                    annotated,
+                                    f"{det.class_name.upper()} {det.confidence:.2f}",
+                                    (bx, max(0, by - 5)),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    (0, 0, 255),
+                                    2,
+                                )
 
         # Determine outcome
         from camerainspection.core.models import Outcome, StationInspectionResult

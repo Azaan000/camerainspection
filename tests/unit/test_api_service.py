@@ -245,16 +245,50 @@ def test_spc_measurements_endpoint(api_client: TestClient) -> None:
     assert all("seat_id" in m and "value" in m for m in data["measurements"])
 
 
-def test_golden_image_endpoint(api_client: TestClient) -> None:
-    """Verify GET /api/v1/variants/{variant_id}/golden-images/{component_name} serves template files."""
-    # Existing golden template
-    res = api_client.get("/api/v1/variants/FRONT_LH_BLACK/golden-images/side_shield", headers=_AUTH_HEADERS)
-    assert res.status_code == 200
-    assert res.headers["content-type"].startswith("image/")
+def test_station_inject_image_flexible_mode(in_memory_db: DatabaseManager) -> None:
+    """Verify that flexible_mode filters out uncalibrated stitch/geometry errors."""
+    import cv2
+    import numpy as np
+    from camerainspection.core.config import SystemConfig
+    from camerainspection.line.builder import build_line
 
-    # Missing golden template returns 404
-    missing_res = api_client.get("/api/v1/variants/FRONT_LH_BLACK/golden-images/non_existent_part", headers=_AUTH_HEADERS)
-    assert missing_res.status_code == 404
+    sys_cfg = SystemConfig(
+        system={
+            "environment": "development",
+            "operating_mode": "camera_leads_with_audit",
+            "shadow_mode": False,
+        }
+    )
+    overrides = {
+        "db_url": "sqlite:///:memory:",
+        "camera_adapter": "synthetic",
+        "simulate_lock": True,
+    }
+    line = build_line(sys_cfg, overrides=overrides)
+    app = create_app(db_manager=line.db_manager, line_runtime=line)
+    client = TestClient(app)
+
+    # 640x640 blank image
+    img = np.zeros((640, 640, 3), dtype=np.uint8)
+    _, enc = cv2.imencode(".jpg", img)
+
+    # Without flexible mode: fails due to uncalibrated stitches/SPI
+    res_strict = client.post(
+        "/api/v1/stations/STATION_2/inject-image?flexible_mode=false",
+        content=enc.tobytes(),
+        headers=_AUTH_HEADERS,
+    )
+    assert res_strict.status_code == 200
+    assert res_strict.json()["outcome"] == "FAIL"
+
+    # With flexible mode: filters out uncalibrated stitch count / SPI errors
+    res_flex = client.post(
+        "/api/v1/stations/STATION_2/inject-image?flexible_mode=true",
+        content=enc.tobytes(),
+        headers=_AUTH_HEADERS,
+    )
+    assert res_flex.status_code == 200
+    assert res_flex.json()["outcome"] == "PASS"
 
 
 

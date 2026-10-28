@@ -155,15 +155,17 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
 
         score_arr, label_arr, heatmap_arr, mask_arr = outputs
 
-        # Use batch index 0
-        raw_score_unclamped: float = float(score_arr[0])
+        # Select index with highest score across the duplicated batch slots
+        # to avoid non-deterministic 0/0 normalizer tie-breaks
+        best_idx = int(np.argmax(score_arr))
+        raw_score_unclamped: float = float(score_arr[best_idx])
 
         # Guard against NaN/Inf from the ONNX model's internal normalisation
         # (happens when both batch slots produce identical scores → division by zero)
         import math
         if math.isnan(raw_score_unclamped) or math.isinf(raw_score_unclamped):
             # Fall back to heatmap-derived score: normalised max of anomaly map
-            heatmap_raw = heatmap_arr[0, 0]
+            heatmap_raw = heatmap_arr[best_idx, 0]
             hmap_max = float(heatmap_raw.max())
             hmap_min = float(heatmap_raw.min())
             denom = hmap_max - hmap_min
@@ -176,9 +178,9 @@ class OnnxPatchCoreEngine(BaseInferenceEngine):
         # Clamping at 1.0 loses information about how out-of-distribution the image is
         score: float = raw_score_unclamped  # Keep raw value, don't clamp
 
-        is_anomalous: bool = bool(label_arr[0])
-        heatmap: np.ndarray = heatmap_arr[0, 0]  # (256, 256) float32
-        mask: np.ndarray = mask_arr[0, 0].astype(np.uint8) * 255  # (256, 256) uint8
+        is_anomalous: bool = bool(label_arr[best_idx])
+        heatmap: np.ndarray = heatmap_arr[best_idx, 0]  # (256, 256) float32
+        mask: np.ndarray = mask_arr[best_idx, 0].astype(np.uint8) * 255  # (256, 256) uint8
 
         # Compute heatmap statistics for domain warning detection
         hmap_max = float(heatmap.max())

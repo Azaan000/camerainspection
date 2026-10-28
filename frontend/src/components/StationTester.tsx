@@ -40,6 +40,7 @@ export default function StationTester() {
   // Comparison view mode
   const [viewMode, setViewMode] = useState<'toggle' | 'split'>('toggle')
   const [showAnnotated, setShowAnnotated] = useState(true)
+  const [flexibleMode, setFlexibleMode] = useState(false)
   const [splitPosition, setSplitPosition] = useState(50)
   const splitContainerRef = useRef<HTMLDivElement>(null)
 
@@ -106,7 +107,7 @@ export default function StationTester() {
     setLoading(true)
     setError(null)
     try {
-      const res = await apiClient.injectStationImage(selectedStation, cameraName, variantId, buffer)
+      const res = await apiClient.injectStationImage(selectedStation, cameraName, variantId, buffer, flexibleMode)
       setResult(res)
       setShowAnnotated(true)
       audioAlerts.playOutcomeSound(res.outcome)
@@ -244,6 +245,20 @@ export default function StationTester() {
                 value={threshold}
                 onChange={(e) => setThreshold(parseFloat(e.target.value))}
                 className="w-full accent-primary-500 bg-surface-900"
+              />
+            </div>
+
+            {/* Flexible Testing Mode Toggle */}
+            <div className="flex items-center justify-between p-3 bg-surface-900 rounded-xl border border-surface-700">
+              <div>
+                <div className="text-sm font-medium text-white">Flexible Testing Mode</div>
+                <div className="text-xs text-zinc-400">Bypass strict ROI/calibration bounds for uncalibrated uploads</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={flexibleMode}
+                onChange={(e) => setFlexibleMode(e.target.checked)}
+                className="w-4 h-4 accent-primary-500 rounded bg-surface-800 border-surface-600 cursor-pointer"
               />
             </div>
 
