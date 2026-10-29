@@ -45,7 +45,23 @@ export default function StationTester() {
   const [customRoi, setCustomRoi] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [saveDefaultRoi, setSaveDefaultRoi] = useState(false)
   const [showRoiEditor, setShowRoiEditor] = useState(false)
+  const [isDraggingRoi, setIsDraggingRoi] = useState(false)
+  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const imagePreviewRef = useRef<HTMLDivElement>(null)
   const splitContainerRef = useRef<HTMLDivElement>(null)
+
+  // Default ROI boxes per station
+  const getDefaultRoiForStation = (st: string) => {
+    switch (st) {
+      case 'STATION_1': return { x: 200, y: 250, w: 2100, h: 1400 } // Leather seating face
+      case 'STATION_2': return { x: 150, y: 300, w: 2300, h: 400 }  // Main stitch seam
+      case 'STATION_3': return { x: 300, y: 300, w: 1900, h: 1300 } // Plastic shield & components
+      case 'STATION_4': return { x: 250, y: 250, w: 2000, h: 1400 } // Mechanism & final fit
+      default: return { x: 150, y: 300, w: 2300, h: 400 }
+    }
+  }
+
+  const activeRoi = customRoi || getDefaultRoiForStation(selectedStation)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -529,8 +545,57 @@ export default function StationTester() {
                   </div>
                 ) : (
                   <div>
-                    <div className="rounded-xl overflow-hidden bg-black/60 h-72 flex items-center justify-center border border-surface-700 relative">
+                    <div
+                      ref={imagePreviewRef}
+                      className="rounded-xl overflow-hidden bg-black/60 h-72 flex items-center justify-center border border-surface-700 relative group"
+                    >
                       <img src={activeDisplayUrl || ''} alt="Inspection view" className="w-full h-full object-contain" />
+
+                      {/* Interactive Visual ROI Overlay */}
+                      {previewUrl && !showAnnotated && (
+                        <div
+                          className="absolute border-2 border-primary-400 bg-primary-500/10 shadow-[0_0_15px_rgba(99,102,241,0.5)] cursor-move pointer-events-auto rounded transition-all"
+                          style={{
+                            // Map pixel coordinates (assuming standard 2592x1944 industrial resolution base) to container percentage
+                            left: `${(activeRoi.x / 2592) * 100}%`,
+                            top: `${(activeRoi.y / 1944) * 100}%`,
+                            width: `${(activeRoi.w / 2592) * 100}%`,
+                            height: `${(activeRoi.h / 1944) * 100}%`,
+                          }}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setIsDraggingRoi(true)
+                            setDragStart({ x: e.clientX, y: e.clientY })
+                          }}
+                          onMouseMove={(e) => {
+                            if (!isDraggingRoi || !imagePreviewRef.current) return
+                            const rect = imagePreviewRef.current.getBoundingClientRect()
+                            const dx = ((e.clientX - dragStart.x) / rect.width) * 2592
+                            const dy = ((e.clientY - dragStart.y) / rect.height) * 1944
+                            setDragStart({ x: e.clientX, y: e.clientY })
+                            setCustomRoi((prev) => {
+                              const curr = prev || getDefaultRoiForStation(selectedStation)
+                              return {
+                                x: Math.max(0, Math.min(2592 - curr.w, Math.round(curr.x + dx))),
+                                y: Math.max(0, Math.min(1944 - curr.h, Math.round(curr.y + dy))),
+                                w: curr.w,
+                                h: curr.h,
+                              }
+                            })
+                          }}
+                          onMouseUp={() => setIsDraggingRoi(false)}
+                          onMouseLeave={() => setIsDraggingRoi(false)}
+                        >
+                          <div className="absolute top-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-primary-300 pointer-events-none">
+                            ROI: {selectedStation} ({activeRoi.w}x{activeRoi.h})
+                          </div>
+                          {/* Corner Resize Handles */}
+                          <div className="absolute -top-1 -left-1 w-2.5 h-2.5 bg-white border border-primary-600 rounded-full" />
+                          <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-white border border-primary-600 rounded-full" />
+                          <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 bg-white border border-primary-600 rounded-full" />
+                          <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-white border border-primary-600 rounded-full" />
+                        </div>
+                      )}
                     </div>
 
                     {annotatedUrl && (
