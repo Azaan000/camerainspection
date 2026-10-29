@@ -232,6 +232,27 @@ class AuditDecisionPayload(BaseModel):
     discrepancy_details: str = ""
 
 
+def _boxes_overlap_iou(b1: Any, b2: Any, iou_thresh: float = 0.35) -> bool:
+    """Check if two bounding boxes have Intersection over Union (IoU) >= iou_thresh."""
+    if b1 is None or b2 is None:
+        return False
+    x1, y1, w1, h1 = b1.x, b1.y, b1.w, b1.h
+    x2, y2, w2, h2 = b2.x, b2.y, b2.w, b2.h
+    x_left = max(x1, x2)
+    y_top = max(y1, y2)
+    x_right = min(x1 + w1, x2 + w2)
+    y_bottom = min(y1 + h1, y2 + h2)
+    if x_right <= x_left or y_bottom <= y_top:
+        return False
+    intersection = (x_right - x_left) * (y_bottom - y_top)
+    area1 = w1 * h1
+    area2 = w2 * h2
+    union = area1 + area2 - intersection
+    if union <= 0:
+        return False
+    return (intersection / union) >= iou_thresh
+
+
 def create_app(
     db_manager: DatabaseManager,
     coordinator: InspectionCoordinator | None = None,
@@ -1955,6 +1976,8 @@ def create_app(
                 "stitch.stitches_per_inch",
                 "stitch.seam_position_mm",
                 "stitch.thread_color",
+                "stitch.skip_length_mm",
+                "stitch.double_seam",
                 "plastic.presence_underside_clips",
                 "plastic.underside_clips_missing",
                 "plastic.color_side_shield",
@@ -1971,16 +1994,44 @@ def create_app(
                 and not d.defect_type.startswith("station.missing_golden_template")
                 and not d.defect_type.startswith("plastic.presence_")
                 and not d.defect_type.startswith("plastic.color_")
+                and not (d.description and d.description.startswith("Heuristic skip stitch"))
             ]
 
+            # In flexible mode, start with clean frame annotation to avoid uncalibrated heuristic markings
+            if annotated is not None:
+                annotated = frame.copy()
+                for d in defects:
+                    if d.bounding_box:
+                        bx, by, bw, bh = d.bounding_box.x, d.bounding_box.y, d.bounding_box.w, d.bounding_box.h
+                        cv2.rectangle(annotated, (bx, by), (bx + bw, by + bh), (0, 0, 255), 3)
+                        lbl = d.defect_type.split(".")[-1].upper().replace("_", " ")
+                        conf_str = f" {d.confidence:.2f}" if d.confidence is not None else ""
+                        cv2.putText(
+                            annotated,
+                            f"{lbl}{conf_str}",
+                            (bx, max(20, by - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (0, 0, 255),
+                            2,
+                        )
+
             if station_id.upper() == "STATION_2" and getattr(station_svc, "inference_engine", None) is not None:
+                if threshold is not None and hasattr(station_svc.inference_engine, "confidence_threshold"):
+                    station_svc.inference_engine.confidence_threshold = threshold
                 ai_dets = station_svc.inference_engine.predict(frame)
-                existing_types = {d.defect_type for d in defects}
+                if threshold is not None and orig_yolo_conf is not None and hasattr(station_svc.inference_engine, "confidence_threshold"):
+                    station_svc.inference_engine.confidence_threshold = orig_yolo_conf
+
                 for det in ai_dets:
                     if det.class_name in ("broken_thread", "skip_stitch", "loose_end"):
                         defect_type = f"stitch.{det.class_name}"
                         desc = f"AI detected {det.class_name.replace('_', ' ')} with confidence {det.confidence:.2f} (flexible mode)"
-                        if defect_type not in existing_types:
+                        is_duplicate = any(
+                            d.defect_type == defect_type and _boxes_overlap_iou(d.bounding_box, det.bounding_box)
+                            for d in defects
+                        )
+                        if not is_duplicate:
                             d_item = evaluator.evaluate_check("stitch", det.class_name, True)
                             d_item.defect_type = defect_type
                             d_item.confidence = det.confidence
@@ -2002,13 +2053,21 @@ def create_app(
                                 )
 
             elif station_id.upper() == "STATION_3" and getattr(station_svc, "inference_engine", None) is not None:
+                if threshold is not None and hasattr(station_svc.inference_engine, "confidence_threshold"):
+                    station_svc.inference_engine.confidence_threshold = threshold
                 ai_dets = station_svc.inference_engine.predict(frame)
-                existing_types = {d.defect_type for d in defects}
+                if threshold is not None and orig_yolo_conf is not None and hasattr(station_svc.inference_engine, "confidence_threshold"):
+                    station_svc.inference_engine.confidence_threshold = orig_yolo_conf
+
                 for det in ai_dets:
                     if det.class_name in ("crack", "short_shot", "sink_mark", "part_missing", "part_wrong"):
                         defect_type = f"plastic.{det.class_name}"
                         desc = f"AI detected {det.class_name.replace('_', ' ')} with confidence {det.confidence:.2f} (flexible mode)"
-                        if defect_type not in existing_types:
+                        is_duplicate = any(
+                            d.defect_type == defect_type and _boxes_overlap_iou(d.bounding_box, det.bounding_box)
+                            for d in defects
+                        )
+                        if not is_duplicate:
                             d_item = evaluator.evaluate_check("plastic", "crack_or_short_shot", True)
                             d_item.defect_type = defect_type
                             d_item.confidence = det.confidence

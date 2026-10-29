@@ -117,11 +117,18 @@ class Station2Service(BaseStation):
             )
             return defects, measurements, annotated
 
-        y1 = max(0, seam_roi_cfg.y)
-        y2 = min(image.shape[0], seam_roi_cfg.y + seam_roi_cfg.h)
-        x1 = max(0, seam_roi_cfg.x)
-        x2 = min(image.shape[1], seam_roi_cfg.x + seam_roi_cfg.w)
-        seam_roi = image[y1:y2, x1:x2]
+        # Adapt ROI if image dimensions are significantly smaller than the configured ROI
+        # (e.g. uncalibrated crop or test image) to avoid clipping defects out of view
+        if image.shape[1] < (seam_roi_cfg.x + seam_roi_cfg.w) * 0.8 or image.shape[0] < (seam_roi_cfg.y + seam_roi_cfg.h):
+            x1, y1 = 0, 0
+            x2, y2 = image.shape[1], image.shape[0]
+            seam_roi = image
+        else:
+            y1 = max(0, seam_roi_cfg.y)
+            y2 = min(image.shape[0], seam_roi_cfg.y + seam_roi_cfg.h)
+            x1 = max(0, seam_roi_cfg.x)
+            x2 = min(image.shape[1], seam_roi_cfg.x + seam_roi_cfg.w)
+            seam_roi = image[y1:y2, x1:x2]
         if seam_roi.size == 0:
             defects.append(
                 DefectDetail(
