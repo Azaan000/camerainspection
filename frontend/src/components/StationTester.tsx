@@ -37,11 +37,14 @@ export default function StationTester() {
   const [result, setResult] = useState<any | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Comparison view mode
+  // Comparison view mode & Custom ROI override state
   const [viewMode, setViewMode] = useState<'toggle' | 'split'>('toggle')
   const [showAnnotated, setShowAnnotated] = useState(true)
   const [flexibleMode, setFlexibleMode] = useState(false)
   const [splitPosition, setSplitPosition] = useState(50)
+  const [customRoi, setCustomRoi] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [saveDefaultRoi, setSaveDefaultRoi] = useState(false)
+  const [showRoiEditor, setShowRoiEditor] = useState(false)
   const splitContainerRef = useRef<HTMLDivElement>(null)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -113,7 +116,9 @@ export default function StationTester() {
         variantId,
         buffer,
         flexibleMode,
-        threshold
+        threshold,
+        customRoi || undefined,
+        saveDefaultRoi
       )
       setResult(res)
       setShowAnnotated(true)
@@ -267,6 +272,82 @@ export default function StationTester() {
                 onChange={(e) => setFlexibleMode(e.target.checked)}
                 className="w-4 h-4 accent-primary-500 rounded bg-surface-800 border-surface-600 cursor-pointer"
               />
+            </div>
+
+            {/* Custom ROI Adjustment & Tuning Panel */}
+            <div className="p-4 bg-surface-900 rounded-xl border border-surface-700 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Custom Inspection ROI & Bounding Box</div>
+                <button
+                  type="button"
+                  onClick={() => setShowRoiEditor(!showRoiEditor)}
+                  className="text-xs text-primary-400 hover:underline font-medium"
+                >
+                  {showRoiEditor ? 'Hide ROI Adjuster' : 'Adjust ROI Box...'}
+                </button>
+              </div>
+
+              {showRoiEditor && (
+                <div className="space-y-3 pt-2 border-t border-surface-800 text-xs">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-zinc-400 mb-1">ROI X</label>
+                      <input
+                        type="number"
+                        value={customRoi?.x ?? 150}
+                        onChange={(e) => setCustomRoi(prev => ({ x: Number(e.target.value), y: prev?.y ?? 300, w: prev?.w ?? 2300, h: prev?.h ?? 400 }))}
+                        className="w-full text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-zinc-400 mb-1">ROI Y</label>
+                      <input
+                        type="number"
+                        value={customRoi?.y ?? 300}
+                        onChange={(e) => setCustomRoi(prev => ({ x: prev?.x ?? 150, y: Number(e.target.value), w: prev?.w ?? 2300, h: prev?.h ?? 400 }))}
+                        className="w-full text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-zinc-400 mb-1">Width (W)</label>
+                      <input
+                        type="number"
+                        value={customRoi?.w ?? 2300}
+                        onChange={(e) => setCustomRoi(prev => ({ x: prev?.x ?? 150, y: prev?.y ?? 300, w: Number(e.target.value), h: prev?.h ?? 400 }))}
+                        className="w-full text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-zinc-400 mb-1">Height (H)</label>
+                      <input
+                        type="number"
+                        value={customRoi?.h ?? 400}
+                        onChange={(e) => setCustomRoi(prev => ({ x: prev?.x ?? 150, y: prev?.y ?? 300, w: prev?.w ?? 2300, h: Number(e.target.value) }))}
+                        className="w-full text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2">
+                    <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={saveDefaultRoi}
+                        onChange={(e) => setSaveDefaultRoi(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-primary-500 rounded bg-surface-850 border-surface-700"
+                      />
+                      Save as station default ROI config
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setCustomRoi(null)}
+                      className="text-zinc-500 hover:text-zinc-300 underline text-[11px]"
+                    >
+                      Reset Default
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Source Input: File Upload or Live Camera Capture */}

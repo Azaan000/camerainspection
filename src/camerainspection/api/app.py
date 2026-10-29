@@ -1872,6 +1872,11 @@ def create_app(
         variant_id: str = Query("FRONT_LH_BLACK", description="Seat variant ID"),
         flexible_mode: bool = Query(False, description="Bypass strict ROI/calibration bounds for uncalibrated tests"),
         threshold: float | None = Query(None, description="Optional inference threshold override (0.0 - 1.0)"),
+        roi_x: int | None = Query(None, description="Custom ROI X coordinate override"),
+        roi_y: int | None = Query(None, description="Custom ROI Y coordinate override"),
+        roi_w: int | None = Query(None, description="Custom ROI Width override"),
+        roi_h: int | None = Query(None, description="Custom ROI Height override"),
+        save_default: bool = Query(False, description="Save custom ROI as station default"),
         auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Manually inject an image into a station pipeline to test AI inference and limits."""
@@ -1936,6 +1941,34 @@ def create_app(
                 onnx_eng.fail_above = min(1.0, threshold + 0.15)
             if yolo_eng is not None and hasattr(yolo_eng, "confidence_threshold"):
                 yolo_eng.confidence_threshold = threshold
+
+        # Apply custom ROI override if provided
+        if roi_x is not None and roi_y is not None and roi_w is not None and roi_h is not None:
+            from camerainspection.core.models import BoundingBox
+            custom_roi = BoundingBox(x=roi_x, y=roi_y, w=roi_w, h=roi_h)
+            # Temporarily set ROI in station config regions_of_interest
+            for cam in station_svc.config.cameras:
+                if cam.name == camera_name or cam.view == camera_name:
+                    cam.regions_of_interest['main_seam'] = custom_roi
+                    cam.regions_of_interest['seating_face'] = custom_roi
+                    cam.regions_of_interest['side_shield'] = custom_roi
+            station_svc.config.regions_of_interest['main_seam'] = custom_roi
+            station_svc.config.regions_of_interest['seating_face'] = custom_roi
+            station_svc.config.regions_of_interest['side_shield'] = custom_roi
+
+            if save_default:
+                import yaml
+                cfg_path = Path(f'configs/stations/{station_id.lower()}_*.yaml')
+                matching_files = list(Path('configs/stations').glob(f'{station_id.lower()}_*.yaml'))
+                if matching_files:
+                    cfg_file = matching_files[0]
+                    with open(cfg_file, 'r', encoding='utf-8') as cf:
+                        cfg_data = yaml.safe_load(cf)
+                    if 'regions_of_interest' in cfg_data:
+                        for r_key in cfg_data['regions_of_interest']:
+                            cfg_data['regions_of_interest'][r_key] = {'x': roi_x, 'y': roi_y, 'w': roi_w, 'h': roi_h}
+                    with open(cfg_file, 'w', encoding='utf-8') as cf:
+                        yaml.safe_dump(cfg_data, cf, sort_keys=False)
 
         try:
             defects, measurements, annotated = station_svc.inspect_image(
