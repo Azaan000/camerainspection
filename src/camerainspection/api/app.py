@@ -1986,6 +1986,8 @@ def create_app(
                 "plastic.presence_lever_handle",
                 "plastic.shield_gap_mm",
                 "plastic.flash_mm",
+                "plastic.sink_mark",   # surface feature -- misfires on uncalibrated images
+                "stitch.skip_stitch",  # heuristic + AI skip-stitch noisy without calibration
                 "vision.measurement_missing",
             }
             defects = [
@@ -2024,7 +2026,9 @@ def create_app(
                     station_svc.inference_engine.confidence_threshold = orig_yolo_conf
 
                 for det in ai_dets:
-                    if det.class_name in ("broken_thread", "skip_stitch", "loose_end"):
+                    # In flexible mode only flag broken_thread and loose_end.
+                    # skip_stitch is suppressed (noisy on uncalibrated images without calibrated pitch).
+                    if det.class_name in ("broken_thread", "loose_end"):
                         defect_type = f"stitch.{det.class_name}"
                         desc = f"AI detected {det.class_name.replace('_', ' ')} with confidence {det.confidence:.2f} (flexible mode)"
                         is_duplicate = any(
@@ -2060,7 +2064,10 @@ def create_app(
                     station_svc.inference_engine.confidence_threshold = orig_yolo_conf
 
                 for det in ai_dets:
-                    if det.class_name in ("crack", "short_shot", "sink_mark", "part_missing", "part_wrong"):
+                    # In flexible mode only flag high-confidence structural defects.
+                    # sink_mark is already suppressed by strict_error_types; exclude it here too
+                    # so uncalibrated-image texture noise (confidence 0.6-0.7) does not cause FAILs.
+                    if det.class_name in ("crack", "short_shot", "part_missing", "part_wrong"):
                         defect_type = f"plastic.{det.class_name}"
                         desc = f"AI detected {det.class_name.replace('_', ' ')} with confidence {det.confidence:.2f} (flexible mode)"
                         is_duplicate = any(
