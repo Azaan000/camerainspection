@@ -1986,9 +1986,7 @@ def create_app(
                 "plastic.presence_lever_handle",
                 "plastic.shield_gap_mm",
                 "plastic.flash_mm",
-                "plastic.sink_mark",   # surface feature -- misfires on uncalibrated images
-                "stitch.skip_stitch",  # heuristic + AI skip-stitch noisy without calibration
-                "vision.measurement_missing",
+                                        "vision.measurement_missing",
             }
             defects = [
                 d for d in defects
