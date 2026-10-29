@@ -1521,7 +1521,7 @@ def create_app(
 
         # 2. Detect Basler cameras (if pypylon installed)
         try:
-            import pypylon.pylon as pylon  # noqa: PLC0415
+            import pypylon.pylon as pylon  # type: ignore # noqa: PLC0415
             tl_factory = pylon.TlFactory.GetInstance()
             devices = tl_factory.EnumerateDevices()
             for dev in devices:
@@ -1540,7 +1540,7 @@ def create_app(
 
         # 3. Detect Hikrobot cameras (if MVS SDK installed)
         try:
-            import MvImport  # noqa: F401, PLC0415
+            import MvImport  # type: ignore # noqa: F401, PLC0415
             # MVS SDK enumeration would go here
             # For now, placeholder
         except ImportError:
@@ -1589,7 +1589,7 @@ def create_app(
                     result["error"] = f"Could not open webcam device {idx}"
 
             elif adapter == "basler":
-                import pypylon.pylon as pylon  # noqa: PLC0415
+                import pypylon.pylon as pylon  # type: ignore # noqa: PLC0415
                 tl_factory = pylon.TlFactory.GetInstance()
                 info = pylon.CDeviceInfo()
                 info.SetSerialNumber(camera_id)
@@ -1943,22 +1943,38 @@ def create_app(
                 yolo_eng.confidence_threshold = threshold
 
         # Apply custom ROI override if provided
-        if roi_x is not None and roi_y is not None and roi_w is not None and roi_h is not None:
+        h_f, w_f = frame.shape[:2]
+        has_custom_roi = (roi_x is not None and roi_y is not None and roi_w is not None and roi_h is not None)
+        rx1, ry1, rx2, ry2 = 0, 0, w_f, h_f
+        rw, rh = w_f, h_f
+
+        orig_station_rois = dict(station_svc.config.regions_of_interest)
+        orig_cam_rois = [dict(cam.regions_of_interest) for cam in station_svc.config.cameras]
+
+        if has_custom_roi:
             from camerainspection.core.models import BoundingBox
-            custom_roi = BoundingBox(x=roi_x, y=roi_y, w=roi_w, h=roi_h)
-            # Temporarily set ROI in station config regions_of_interest
+            # Safe clamping within image bounds
+            rx1 = max(0, min(w_f - 1, int(roi_x)))
+            ry1 = max(0, min(h_f - 1, int(roi_y)))
+            rx2 = max(rx1 + 10, min(w_f, int(roi_x + roi_w)))
+            ry2 = max(ry1 + 10, min(h_f, int(roi_y + roi_h)))
+            rw = rx2 - rx1
+            rh = ry2 - ry1
+            custom_roi = BoundingBox(x=rx1, y=ry1, w=rw, h=rh)
+
+            # Temporarily set ROI in station config regions_of_interest and all cameras
+            roi_keys = list(station_svc.config.regions_of_interest.keys()) or [
+                'main_seam', 'seating_face', 'side_shield', 'side_back', 'underside_clips', 'lever_handle'
+            ]
+            for rk in roi_keys:
+                station_svc.config.regions_of_interest[rk] = custom_roi
             for cam in station_svc.config.cameras:
-                if cam.name == camera_name or cam.view == camera_name:
-                    cam.regions_of_interest['main_seam'] = custom_roi
-                    cam.regions_of_interest['seating_face'] = custom_roi
-                    cam.regions_of_interest['side_shield'] = custom_roi
-            station_svc.config.regions_of_interest['main_seam'] = custom_roi
-            station_svc.config.regions_of_interest['seating_face'] = custom_roi
-            station_svc.config.regions_of_interest['side_shield'] = custom_roi
+                cam_keys = list(cam.regions_of_interest.keys()) or roi_keys
+                for rk in cam_keys:
+                    cam.regions_of_interest[rk] = custom_roi
 
             if save_default:
                 import yaml
-                cfg_path = Path(f'configs/stations/{station_id.lower()}_*.yaml')
                 matching_files = list(Path('configs/stations').glob(f'{station_id.lower()}_*.yaml'))
                 if matching_files:
                     cfg_file = matching_files[0]
@@ -1966,7 +1982,7 @@ def create_app(
                         cfg_data = yaml.safe_load(cf)
                     if 'regions_of_interest' in cfg_data:
                         for r_key in cfg_data['regions_of_interest']:
-                            cfg_data['regions_of_interest'][r_key] = {'x': roi_x, 'y': roi_y, 'w': roi_w, 'h': roi_h}
+                            cfg_data['regions_of_interest'][r_key] = {'x': rx1, 'y': ry1, 'w': rw, 'h': rh}
                     with open(cfg_file, 'w', encoding='utf-8') as cf:
                         yaml.safe_dump(cfg_data, cf, sort_keys=False)
 
@@ -1981,7 +1997,11 @@ def create_app(
             logger.error(f"Error inspecting injected image for {station_id}: {e}")
             raise HTTPException(status_code=500, detail=f"Inspection pipeline error: {e}")
         finally:
-            # Restore original configured thresholds
+            # Restore original configured thresholds and ROIs
+            if has_custom_roi:
+                station_svc.config.regions_of_interest = orig_station_rois
+                for cam, rois in zip(station_svc.config.cameras, orig_cam_rois):
+                    cam.regions_of_interest = rois
             if threshold is not None:
                 if orig_pass_below is not None:
                     station_svc.config.model.pass_below = orig_pass_below
@@ -2060,6 +2080,12 @@ def create_app(
                     # In flexible mode only flag broken_thread and loose_end.
                     # skip_stitch is suppressed (noisy on uncalibrated images without calibrated pitch).
                     if det.class_name in ("broken_thread", "loose_end"):
+                        if has_custom_roi and det.bounding_box:
+                            dcx = det.bounding_box.x + det.bounding_box.w / 2.0
+                            dcy = det.bounding_box.y + det.bounding_box.h / 2.0
+                            if not (rx1 <= dcx <= rx2 and ry1 <= dcy <= ry2):
+                                continue
+
                         defect_type = f"stitch.{det.class_name}"
                         desc = f"AI detected {det.class_name.replace('_', ' ')} with confidence {det.confidence:.2f} (flexible mode)"
                         is_duplicate = any(
@@ -2099,6 +2125,12 @@ def create_app(
                     # sink_mark is already suppressed by strict_error_types; exclude it here too
                     # so uncalibrated-image texture noise (confidence 0.6-0.7) does not cause FAILs.
                     if det.class_name in ("crack", "short_shot", "part_missing", "part_wrong"):
+                        if has_custom_roi and det.bounding_box:
+                            dcx = det.bounding_box.x + det.bounding_box.w / 2.0
+                            dcy = det.bounding_box.y + det.bounding_box.h / 2.0
+                            if not (rx1 <= dcx <= rx2 and ry1 <= dcy <= ry2):
+                                continue
+
                         defect_type = f"plastic.{det.class_name}"
                         desc = f"AI detected {det.class_name.replace('_', ' ')} with confidence {det.confidence:.2f} (flexible mode)"
                         is_duplicate = any(
@@ -2126,9 +2158,54 @@ def create_app(
                                     2,
                                 )
 
-            if not defects and annotated is not None:
+        # STRICT CUSTOM ROI ENFORCEMENT:
+        # Discard any candidate defect located outside the active custom ROI bounds.
+        # Defects without bounding boxes (e.g. whole-station missing component/geometry checks)
+        # are also excluded when isolating testing to a custom sub-region.
+        if has_custom_roi:
+            defects = [
+                d for d in defects
+                if d.bounding_box and (
+                    rx1 <= (d.bounding_box.x + d.bounding_box.w / 2.0) <= rx2
+                    and ry1 <= (d.bounding_box.y + d.bounding_box.h / 2.0) <= ry2
+                )
+            ]
+
+        # Finalize image annotations
+        if annotated is not None:
+            # Whenever custom ROI is set or flexible mode is enabled, redraw clean from frame.copy()
+            # so that no out-of-ROI defects or old station annotations pollute the visualization
+            if has_custom_roi or flexible_mode:
                 annotated = frame.copy()
-                h_f, w_f = frame.shape[:2]
+                if not defects:
+                    cv2.rectangle(annotated, (2, 2), (w_f - 2, h_f - 2), (0, 200, 0), 2)
+                    cv2.putText(
+                        annotated,
+                        f"PASS - {station_id.upper()} OK",
+                        (12, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        (0, 200, 0),
+                        2,
+                    )
+                else:
+                    for d in defects:
+                        if d.bounding_box:
+                            bx, by, bw, bh = d.bounding_box.x, d.bounding_box.y, d.bounding_box.w, d.bounding_box.h
+                            cv2.rectangle(annotated, (bx, by), (bx + bw, by + bh), (0, 0, 255), 3)
+                            lbl = d.defect_type.split(".")[-1].upper().replace("_", " ")
+                            conf_str = f" {d.confidence:.2f}" if d.confidence is not None else ""
+                            cv2.putText(
+                                annotated,
+                                f"{lbl}{conf_str}",
+                                (bx, max(20, by - 8)),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                (0, 0, 255),
+                                2,
+                            )
+            elif not defects:
+                annotated = frame.copy()
                 cv2.rectangle(annotated, (2, 2), (w_f - 2, h_f - 2), (0, 200, 0), 2)
                 cv2.putText(
                     annotated,
@@ -2137,6 +2214,19 @@ def create_app(
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
                     (0, 200, 0),
+                    2,
+                )
+
+            # Clearly render the active custom ROI in cyan so the inspector can confirm bounds
+            if has_custom_roi:
+                cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), (255, 255, 0), 2)
+                cv2.putText(
+                    annotated,
+                    f"ROI: {rw}x{rh}",
+                    (rx1 + 4, max(22, ry1 - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 0),
                     2,
                 )
 

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { apiClient } from '../lib/api'
 import { audioAlerts } from '../lib/audioAlerts'
 import {
@@ -12,6 +12,10 @@ import {
   Split,
   Wifi,
   AlertTriangle,
+  Maximize2,
+  X,
+  Check,
+  Crop,
 } from 'lucide-react'
 
 export default function StationTester() {
@@ -24,6 +28,7 @@ export default function StationTester() {
   // File upload state
   const [file, setFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number }>({ width: 2592, height: 1944 })
 
   // Camera capture state
   const [camMode, setCamMode] = useState<'device' | 'url'>('device')
@@ -45,32 +50,236 @@ export default function StationTester() {
   const [customRoi, setCustomRoi] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [saveDefaultRoi, setSaveDefaultRoi] = useState(false)
   const [showRoiEditor, setShowRoiEditor] = useState(false)
+
+  // Full Visual ROI Calibrator Modal state
+  const [isRoiModalOpen, setIsRoiModalOpen] = useState(false)
+  const [modalRoi, setModalRoi] = useState<{ x: number; y: number; w: number; h: number }>({ x: 150, y: 300, w: 2300, h: 400 })
+  const [modalDragState, setModalDragState] = useState<{
+    type: 'move' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w'
+    startX: number
+    startY: number
+    initialRoi: { x: number; y: number; w: number; h: number }
+  } | null>(null)
+  const modalImgRef = useRef<HTMLImageElement>(null)
+
+  // Embedded preview drag state
   const [isDraggingRoi, setIsDraggingRoi] = useState(false)
+  const [resizingHandle, setResizingHandle] = useState<string | null>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const imagePreviewRef = useRef<HTMLDivElement>(null)
+  const previewImgRef = useRef<HTMLImageElement>(null)
   const splitContainerRef = useRef<HTMLDivElement>(null)
 
-  // Default ROI boxes per station
-  const getDefaultRoiForStation = (st: string) => {
+  // Default ROI boxes per station scaled to image dimensions
+  const getDefaultRoiForStation = (st: string, imgW = imageDimensions.width, imgH = imageDimensions.height) => {
+    if (imgW === 2592 && imgH === 1944) {
+      switch (st) {
+        case 'STATION_1': return { x: 200, y: 250, w: 2100, h: 1400 } // Leather seating face
+        case 'STATION_2': return { x: 150, y: 300, w: 2300, h: 400 }  // Main stitch seam
+        case 'STATION_3': return { x: 300, y: 300, w: 1900, h: 1300 } // Plastic shield & components
+        case 'STATION_4': return { x: 250, y: 250, w: 2000, h: 1400 } // Mechanism & final fit
+        default: return { x: 150, y: 300, w: 2300, h: 400 }
+      }
+    }
+    // Proportional fallback for arbitrary resolutions
     switch (st) {
-      case 'STATION_1': return { x: 200, y: 250, w: 2100, h: 1400 } // Leather seating face
-      case 'STATION_2': return { x: 150, y: 300, w: 2300, h: 400 }  // Main stitch seam
-      case 'STATION_3': return { x: 300, y: 300, w: 1900, h: 1300 } // Plastic shield & components
-      case 'STATION_4': return { x: 250, y: 250, w: 2000, h: 1400 } // Mechanism & final fit
-      default: return { x: 150, y: 300, w: 2300, h: 400 }
+      case 'STATION_1':
+        return { x: Math.round(imgW * 0.08), y: Math.round(imgH * 0.12), w: Math.round(imgW * 0.84), h: Math.round(imgH * 0.72) }
+      case 'STATION_2':
+        return { x: Math.round(imgW * 0.06), y: Math.round(imgH * 0.2), w: Math.round(imgW * 0.88), h: Math.round(imgH * 0.35) }
+      case 'STATION_3':
+        return { x: Math.round(imgW * 0.1), y: Math.round(imgH * 0.15), w: Math.round(imgW * 0.8), h: Math.round(imgH * 0.7) }
+      case 'STATION_4':
+        return { x: Math.round(imgW * 0.08), y: Math.round(imgH * 0.12), w: Math.round(imgW * 0.84), h: Math.round(imgH * 0.72) }
+      default:
+        return { x: Math.round(imgW * 0.06), y: Math.round(imgH * 0.2), w: Math.round(imgW * 0.88), h: Math.round(imgH * 0.35) }
     }
   }
 
   const activeRoi = customRoi || getDefaultRoiForStation(selectedStation)
 
+  // Smooth window mouse tracking for Full Modal Visual Calibrator
+  useEffect(() => {
+    if (!modalDragState || !modalImgRef.current) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!modalImgRef.current) return
+      const rect = modalImgRef.current.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+
+      const scaleX = imageDimensions.width / rect.width
+      const scaleY = imageDimensions.height / rect.height
+      const dx = (e.clientX - modalDragState.startX) * scaleX
+      const dy = (e.clientY - modalDragState.startY) * scaleY
+
+      const init = modalDragState.initialRoi
+      const maxW = imageDimensions.width
+      const maxH = imageDimensions.height
+
+      let newX = init.x
+      let newY = init.y
+      let newW = init.w
+      let newH = init.h
+
+      switch (modalDragState.type) {
+        case 'move':
+          newX = Math.max(0, Math.min(maxW - init.w, Math.round(init.x + dx)))
+          newY = Math.max(0, Math.min(maxH - init.h, Math.round(init.y + dy)))
+          break
+        case 'se':
+          newW = Math.max(40, Math.min(maxW - init.x, Math.round(init.w + dx)))
+          newH = Math.max(40, Math.min(maxH - init.y, Math.round(init.h + dy)))
+          break
+        case 'nw': {
+          const targetX = Math.max(0, Math.min(init.x + init.w - 40, Math.round(init.x + dx)))
+          const targetY = Math.max(0, Math.min(init.y + init.h - 40, Math.round(init.y + dy)))
+          newX = targetX
+          newY = targetY
+          newW = init.w + (init.x - targetX)
+          newH = init.h + (init.y - targetY)
+          break
+        }
+        case 'ne': {
+          const targetY = Math.max(0, Math.min(init.y + init.h - 40, Math.round(init.y + dy)))
+          newY = targetY
+          newW = Math.max(40, Math.min(maxW - init.x, Math.round(init.w + dx)))
+          newH = init.h + (init.y - targetY)
+          break
+        }
+        case 'sw': {
+          const targetX = Math.max(0, Math.min(init.x + init.w - 40, Math.round(init.x + dx)))
+          newX = targetX
+          newW = init.w + (init.x - targetX)
+          newH = Math.max(40, Math.min(maxH - init.y, Math.round(init.h + dy)))
+          break
+        }
+        case 'n': {
+          const targetY = Math.max(0, Math.min(init.y + init.h - 40, Math.round(init.y + dy)))
+          newY = targetY
+          newH = init.h + (init.y - targetY)
+          break
+        }
+        case 's':
+          newH = Math.max(40, Math.min(maxH - init.y, Math.round(init.h + dy)))
+          break
+        case 'w': {
+          const targetX = Math.max(0, Math.min(init.x + init.w - 40, Math.round(init.x + dx)))
+          newX = targetX
+          newW = init.w + (init.x - targetX)
+          break
+        }
+        case 'e':
+          newW = Math.max(40, Math.min(maxW - init.x, Math.round(init.w + dx)))
+          break
+      }
+
+      setModalRoi({ x: newX, y: newY, w: newW, h: newH })
+    }
+
+    const handleMouseUp = () => {
+      setModalDragState(null)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [modalDragState, imageDimensions])
+
+  // Smooth window mouse tracking for embedded preview
+  useEffect(() => {
+    if (!isDraggingRoi && !resizingHandle) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const container = previewImgRef.current || imagePreviewRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+
+      const scaleX = imageDimensions.width / rect.width
+      const scaleY = imageDimensions.height / rect.height
+      const dx = (e.clientX - dragStart.x) * scaleX
+      const dy = (e.clientY - dragStart.y) * scaleY
+      setDragStart({ x: e.clientX, y: e.clientY })
+
+      setCustomRoi((prev) => {
+        const curr = prev || getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height)
+        const maxW = imageDimensions.width
+        const maxH = imageDimensions.height
+
+        if (resizingHandle === 'se') {
+          return {
+            x: curr.x,
+            y: curr.y,
+            w: Math.max(50, Math.min(maxW - curr.x, Math.round(curr.w + dx))),
+            h: Math.max(50, Math.min(maxH - curr.y, Math.round(curr.h + dy))),
+          }
+        } else if (resizingHandle === 'nw') {
+          const newX = Math.max(0, Math.min(curr.x + curr.w - 50, Math.round(curr.x + dx)))
+          const newY = Math.max(0, Math.min(curr.y + curr.h - 50, Math.round(curr.y + dy)))
+          return {
+            x: newX,
+            y: newY,
+            w: curr.w + (curr.x - newX),
+            h: curr.h + (curr.y - newY),
+          }
+        } else if (resizingHandle === 'ne') {
+          const newY = Math.max(0, Math.min(curr.y + curr.h - 50, Math.round(curr.y + dy)))
+          return {
+            x: curr.x,
+            y: newY,
+            w: Math.max(50, Math.min(maxW - curr.x, Math.round(curr.w + dx))),
+            h: curr.h + (curr.y - newY),
+          }
+        } else if (resizingHandle === 'sw') {
+          const newX = Math.max(0, Math.min(curr.x + curr.w - 50, Math.round(curr.x + dx)))
+          return {
+            x: newX,
+            y: curr.y,
+            w: curr.w + (curr.x - newX),
+            h: Math.max(50, Math.min(maxH - curr.y, Math.round(curr.h + dy))),
+          }
+        } else {
+          // Full box drag
+          return {
+            x: Math.max(0, Math.min(maxW - curr.w, Math.round(curr.x + dx))),
+            y: Math.max(0, Math.min(maxH - curr.h, Math.round(curr.y + dy))),
+            w: curr.w,
+            h: curr.h,
+          }
+        }
+      })
+    }
+
+    const handleMouseUp = () => {
+      setIsDraggingRoi(false)
+      setResizingHandle(null)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isDraggingRoi, resizingHandle, dragStart, selectedStation, imageDimensions])
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const f = e.target.files[0]
       setFile(f)
-      setPreviewUrl(URL.createObjectURL(f))
+      const url = URL.createObjectURL(f)
+      setPreviewUrl(url)
       setCapturedBlob(null)
       setResult(null)
       setError(null)
+      const img = new Image()
+      img.onload = () => {
+        setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight })
+      }
+      img.src = url
     }
   }
 
@@ -95,9 +304,15 @@ export default function StationTester() {
       }
       const blob = await res.blob()
       setCapturedBlob(blob)
-      setPreviewUrl(URL.createObjectURL(blob))
+      const blobUrl = URL.createObjectURL(blob)
+      setPreviewUrl(blobUrl)
       setFile(null)
       setResult(null)
+      const img = new Image()
+      img.onload = () => {
+        setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight })
+      }
+      img.src = blobUrl
     } catch (err: any) {
       setError(err.message || 'Failed to capture from live camera')
     } finally {
@@ -294,13 +509,29 @@ export default function StationTester() {
             <div className="p-4 bg-surface-900 rounded-xl border border-surface-700 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Custom Inspection ROI & Bounding Box</div>
-                <button
-                  type="button"
-                  onClick={() => setShowRoiEditor(!showRoiEditor)}
-                  className="text-xs text-primary-400 hover:underline font-medium"
-                >
-                  {showRoiEditor ? 'Hide ROI Adjuster' : 'Adjust ROI Box...'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalRoi(customRoi || getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height))
+                      setIsRoiModalOpen(true)
+                    }}
+                    disabled={!previewUrl}
+                    className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 disabled:opacity-40"
+                    title={!previewUrl ? "Upload or capture an image first" : "Open full visual ROI calibrator"}
+                  >
+                    <Crop className="w-3.5 h-3.5" />
+                    Set Visually...
+                  </button>
+                  <span className="text-zinc-600">|</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowRoiEditor(!showRoiEditor)}
+                    className="text-xs text-primary-400 hover:underline font-medium"
+                  >
+                    {showRoiEditor ? 'Hide Manual' : 'Manual Coordinates...'}
+                  </button>
+                </div>
               </div>
 
               {showRoiEditor && (
@@ -422,7 +653,7 @@ export default function StationTester() {
                   </div>
                 ) : (
                   <div>
-                    <label className="block text-xs font-medium text-zinc-400 mb-1 flex items-center gap-1.5">
+                    <label className="text-xs font-medium text-zinc-400 mb-1 flex items-center gap-1.5">
                       <Wifi className="w-3 h-3 text-primary-400" />
                       Phone / Network Stream URL
                     </label>
@@ -551,52 +782,73 @@ export default function StationTester() {
                     >
                       <img src={activeDisplayUrl || ''} alt="Inspection view" className="w-full h-full object-contain" />
 
-                      {/* Interactive Visual ROI Overlay */}
-                      {previewUrl && !showAnnotated && (
+                      {/* Active Visual ROI Overlay indicator */}
+                      {previewUrl && (
                         <div
-                          className="absolute border-2 border-primary-400 bg-primary-500/10 shadow-[0_0_15px_rgba(99,102,241,0.5)] cursor-move pointer-events-auto rounded transition-all"
+                          onClick={() => {
+                            setModalRoi(customRoi || getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height))
+                            setIsRoiModalOpen(true)
+                          }}
+                          className="absolute border-2 border-cyan-400 bg-cyan-500/10 shadow-[0_0_15px_rgba(6,182,212,0.4)] cursor-pointer rounded transition-all hover:bg-cyan-500/20 group/roi z-10"
                           style={{
-                            // Map pixel coordinates (assuming standard 2592x1944 industrial resolution base) to container percentage
-                            left: `${(activeRoi.x / 2592) * 100}%`,
-                            top: `${(activeRoi.y / 1944) * 100}%`,
-                            width: `${(activeRoi.w / 2592) * 100}%`,
-                            height: `${(activeRoi.h / 1944) * 100}%`,
+                            left: `${(activeRoi.x / imageDimensions.width) * 100}%`,
+                            top: `${(activeRoi.y / imageDimensions.height) * 100}%`,
+                            width: `${(activeRoi.w / imageDimensions.width) * 100}%`,
+                            height: `${(activeRoi.h / imageDimensions.height) * 100}%`,
                           }}
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            setIsDraggingRoi(true)
-                            setDragStart({ x: e.clientX, y: e.clientY })
-                          }}
-                          onMouseMove={(e) => {
-                            if (!isDraggingRoi || !imagePreviewRef.current) return
-                            const rect = imagePreviewRef.current.getBoundingClientRect()
-                            const dx = ((e.clientX - dragStart.x) / rect.width) * 2592
-                            const dy = ((e.clientY - dragStart.y) / rect.height) * 1944
-                            setDragStart({ x: e.clientX, y: e.clientY })
-                            setCustomRoi((prev) => {
-                              const curr = prev || getDefaultRoiForStation(selectedStation)
-                              return {
-                                x: Math.max(0, Math.min(2592 - curr.w, Math.round(curr.x + dx))),
-                                y: Math.max(0, Math.min(1944 - curr.h, Math.round(curr.y + dy))),
-                                w: curr.w,
-                                h: curr.h,
-                              }
-                            })
-                          }}
-                          onMouseUp={() => setIsDraggingRoi(false)}
-                          onMouseLeave={() => setIsDraggingRoi(false)}
+                          title="Click to open Full Visual ROI Calibrator"
                         >
-                          <div className="absolute top-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-primary-300 pointer-events-none">
-                            ROI: {selectedStation} ({activeRoi.w}x{activeRoi.h})
+                          <div className="absolute top-1 left-1 bg-black/85 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] font-mono text-cyan-300 pointer-events-none flex items-center gap-1 border border-cyan-500/30">
+                            <Crop className="w-2.5 h-2.5 text-cyan-400" />
+                            <span>ROI: {selectedStation} ({activeRoi.w}×{activeRoi.h})</span>
                           </div>
-                          {/* Corner Resize Handles */}
-                          <div className="absolute -top-1 -left-1 w-2.5 h-2.5 bg-white border border-primary-600 rounded-full" />
-                          <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-white border border-primary-600 rounded-full" />
-                          <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 bg-white border border-primary-600 rounded-full" />
-                          <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-white border border-primary-600 rounded-full" />
+                          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/roi:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px]">
+                            <span className="text-[11px] font-semibold text-white bg-cyan-600 px-2.5 py-1 rounded shadow-md flex items-center gap-1.5">
+                              <Maximize2 className="w-3 h-3" />
+                              Open Visual Calibrator
+                            </span>
+                          </div>
                         </div>
                       )}
                     </div>
+
+                    {/* Dedicated Visual ROI Calibrator Bar below preview */}
+                    {previewUrl && (
+                      <div className="mt-3 p-3 bg-surface-900 rounded-xl border border-surface-700 flex flex-wrap items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setModalRoi(customRoi || getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height))
+                              setIsRoiModalOpen(true)
+                            }}
+                            className="btn-primary py-1.5 px-3.5 text-xs flex items-center gap-2 font-semibold shadow-md shadow-primary-600/30 bg-gradient-to-r from-primary-600 to-cyan-600 hover:from-primary-500 hover:to-cyan-500"
+                          >
+                            <Crop className="w-4 h-4 text-white" />
+                            <span>Set ROI Visually</span>
+                          </button>
+
+                          {customRoi && (
+                            <button
+                              type="button"
+                              onClick={() => setCustomRoi(null)}
+                              className="text-xs text-zinc-400 hover:text-white px-2.5 py-1.5 rounded-lg bg-surface-800 hover:bg-surface-700 border border-surface-700 transition-colors"
+                              title="Reset to station default ROI"
+                            >
+                              Reset ROI
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="text-[11px] font-mono text-zinc-400 flex items-center gap-1.5">
+                          <span className="text-zinc-500 font-sans">Active ROI:</span>
+                          <span className="text-cyan-400 font-semibold bg-surface-850 px-2 py-0.5 rounded border border-surface-700">
+                            {activeRoi.w}×{activeRoi.h}
+                          </span>
+                          <span className="text-zinc-500">at ({activeRoi.x}, {activeRoi.y})</span>
+                        </div>
+                      </div>
+                    )}
 
                     {annotatedUrl && (
                       <div className="flex justify-center gap-2 mt-2">
@@ -696,9 +948,172 @@ export default function StationTester() {
                 )}
               </div>
             )}
+
+            {/* Full Visual ROI Calibrator Modal */}
+            {isRoiModalOpen && previewUrl && (
+              <div
+                className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 backdrop-blur-sm"
+                onClick={(e) => { if (e.target === e.currentTarget) setIsRoiModalOpen(false) }}
+              >
+                <div className="bg-surface-900 rounded-2xl border border-surface-700 shadow-2xl w-[min(92vw,1280px)] max-h-[92vh] flex flex-col overflow-hidden">
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between px-5 py-3.5 border-b border-surface-700 bg-surface-850 rounded-t-2xl flex-shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      <Crop className="w-5 h-5 text-cyan-400" />
+                      <div>
+                        <div className="text-sm font-semibold text-white">Visual ROI Calibrator</div>
+                        <div className="text-[11px] text-zinc-400">Drag the cyan box to move — drag edges/corners to resize — image coordinates</div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setIsRoiModalOpen(false)}
+                      className="text-zinc-400 hover:text-white hover:bg-surface-800 rounded-lg p-1.5 transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Preset Row */}
+                  <div className="flex items-center gap-2 px-5 py-2.5 bg-surface-850 border-b border-surface-700 flex-shrink-0">
+                    <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mr-1">Presets:</span>
+                    {[
+                      { label: 'Full Image', value: () => ({ x: 0, y: 0, w: imageDimensions.width, h: imageDimensions.height }) },
+                      { label: 'Station Default', value: () => getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height) },
+                      { label: 'Center 80%', value: () => ({
+                        x: Math.round(imageDimensions.width * 0.1),
+                        y: Math.round(imageDimensions.height * 0.1),
+                        w: Math.round(imageDimensions.width * 0.8),
+                        h: Math.round(imageDimensions.height * 0.8),
+                      })},
+                      { label: 'Center Seam Strip', value: () => ({
+                        x: Math.round(imageDimensions.width * 0.05),
+                        y: Math.round(imageDimensions.height * 0.35),
+                        w: Math.round(imageDimensions.width * 0.9),
+                        h: Math.round(imageDimensions.height * 0.3),
+                      })},
+                    ].map(({ label, value }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setModalRoi(value())}
+                        className="text-xs px-3 py-1 rounded-lg bg-surface-800 border border-surface-700 text-zinc-300 hover:border-cyan-500 hover:text-cyan-300 transition-colors font-medium"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <div className="ml-auto text-[11px] font-mono text-zinc-400 flex items-center gap-2">
+                      <span className="text-zinc-500">ROI:</span>
+                      <span className="text-cyan-400 font-semibold">{modalRoi.w}×{modalRoi.h}</span>
+                      <span className="text-zinc-500">at</span>
+                      <span className="text-zinc-300">({modalRoi.x}, {modalRoi.y})</span>
+                    </div>
+                  </div>
+
+                  {/* Image Canvas Area */}
+                  <div className="relative flex-1 overflow-hidden bg-black/70 flex items-center justify-center p-4 min-h-0">
+                    <div className="relative inline-block max-w-full max-h-full select-none" style={{ cursor: modalDragState ? 'grabbing' : 'default' }}>
+                      <img
+                        ref={modalImgRef}
+                        src={previewUrl}
+                        alt="ROI calibration canvas"
+                        className="block max-w-full max-h-[calc(92vh-200px)] object-contain rounded-lg border border-surface-700 shadow-lg"
+                        draggable={false}
+                      />
+
+                      {/* ROI Overlay Box */}
+                      <div
+                        className="absolute border-2 border-cyan-400 bg-cyan-500/10 cursor-grab active:cursor-grabbing shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+                        style={{
+                          left: `${(modalRoi.x / imageDimensions.width) * 100}%`,
+                          top: `${(modalRoi.y / imageDimensions.height) * 100}%`,
+                          width: `${(modalRoi.w / imageDimensions.width) * 100}%`,
+                          height: `${(modalRoi.h / imageDimensions.height) * 100}%`,
+                        }}
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setModalDragState({ type: 'move', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } })
+                        }}
+                      >
+                        {/* ROI info label */}
+                        <div className="absolute top-2 left-2 bg-black/85 backdrop-blur-sm px-2 py-0.5 rounded text-[11px] font-mono text-cyan-300 border border-cyan-500/30 pointer-events-none flex items-center gap-1.5">
+                          <Crop className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                          <span>{modalRoi.w}×{modalRoi.h}</span>
+                        </div>
+
+                        {/* N handle */}
+                        <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-5 h-2.5 bg-cyan-400 rounded-sm cursor-ns-resize border border-cyan-300 hover:bg-cyan-300 transition-colors shadow-md"
+                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'n', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
+                        {/* S handle */}
+                        <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-5 h-2.5 bg-cyan-400 rounded-sm cursor-ns-resize border border-cyan-300 hover:bg-cyan-300 transition-colors shadow-md"
+                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 's', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
+                        {/* W handle */}
+                        <div className="absolute top-1/2 -left-2 -translate-y-1/2 w-2.5 h-5 bg-cyan-400 rounded-sm cursor-ew-resize border border-cyan-300 hover:bg-cyan-300 transition-colors shadow-md"
+                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'w', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
+                        {/* E handle */}
+                        <div className="absolute top-1/2 -right-2 -translate-y-1/2 w-2.5 h-5 bg-cyan-400 rounded-sm cursor-ew-resize border border-cyan-300 hover:bg-cyan-300 transition-colors shadow-md"
+                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'e', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
+                        {/* NW corner */}
+                        <div className="absolute -top-2.5 -left-2.5 w-5 h-5 bg-white border-2 border-cyan-500 rounded-full cursor-nwse-resize hover:bg-cyan-200 hover:scale-110 transition-all shadow-md"
+                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'nw', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
+                        {/* NE corner */}
+                        <div className="absolute -top-2.5 -right-2.5 w-5 h-5 bg-white border-2 border-cyan-500 rounded-full cursor-nesw-resize hover:bg-cyan-200 hover:scale-110 transition-all shadow-md"
+                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'ne', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
+                        {/* SW corner */}
+                        <div className="absolute -bottom-2.5 -left-2.5 w-5 h-5 bg-white border-2 border-cyan-500 rounded-full cursor-nesw-resize hover:bg-cyan-200 hover:scale-110 transition-all shadow-md"
+                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'sw', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
+                        {/* SE corner */}
+                        <div className="absolute -bottom-2.5 -right-2.5 w-5 h-5 bg-white border-2 border-cyan-500 rounded-full cursor-nwse-resize hover:bg-cyan-200 hover:scale-110 transition-all shadow-md"
+                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'se', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
+
+                        {/* Crosshair guides */}
+                        <div className="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px bg-cyan-400/30 pointer-events-none" style={{ borderLeft: '1px dashed rgba(6,182,212,0.3)' }} />
+                        <div className="absolute left-0 right-0 top-1/2 -translate-y-px h-px bg-cyan-400/30 pointer-events-none" style={{ borderTop: '1px dashed rgba(6,182,212,0.3)' }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer Actions */}
+                  <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-t border-surface-700 bg-surface-850 rounded-b-2xl flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-2 cursor-pointer text-zinc-300 text-xs font-medium select-none">
+                        <input
+                          type="checkbox"
+                          checked={saveDefaultRoi}
+                          onChange={(e) => setSaveDefaultRoi(e.target.checked)}
+                          className="w-3.5 h-3.5 accent-cyan-500 rounded bg-surface-800 border-surface-600"
+                        />
+                        Save as station default
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsRoiModalOpen(false)}
+                        className="text-xs px-4 py-2 rounded-lg bg-surface-800 border border-surface-700 text-zinc-300 hover:text-white hover:border-surface-600 transition-colors font-medium"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomRoi({ ...modalRoi })
+                          setIsRoiModalOpen(false)
+                        }}
+                        className="text-xs px-5 py-2 rounded-lg bg-gradient-to-r from-cyan-600 to-primary-600 hover:from-cyan-500 hover:to-primary-500 text-white font-semibold shadow-md transition-all flex items-center gap-1.5"
+                      >
+                        <Check className="w-4 h-4" />
+                        Apply ROI
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
     </div>
   )
 }
+
