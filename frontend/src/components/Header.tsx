@@ -157,17 +157,31 @@ export default function Header({ currentSection, onSectionChange, onBarcodeScan 
 
   return (
     <header className="border-b border-surface-700 bg-surface-900 px-6 lg:px-8 py-3.5 flex items-center justify-between sticky top-0 z-40 shadow-md gap-4">
-      {/* Logo */}
-      <div className="flex items-center gap-3 flex-shrink-0 cursor-pointer" onClick={() => onSectionChange('live')}>
-        <div className="w-9 h-9 rounded-xl bg-primary-600 flex items-center justify-center shadow-lg shadow-primary-500/20">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-          </svg>
+      {/* Logo + Mode Badge */}
+      <div className="flex items-center gap-4 flex-shrink-0">
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => onSectionChange('live')}>
+          <div className="w-9 h-9 rounded-xl bg-primary-600 flex items-center justify-center shadow-lg shadow-primary-500/20">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-bold text-base text-white tracking-tight leading-none">SeatGuard</div>
+            <div className="text-[10px] text-zinc-400 mt-1 font-medium">Vision Intelligence</div>
+          </div>
         </div>
-        <div>
-          <div className="font-bold text-base text-white tracking-tight leading-none">SeatGuard</div>
-          <div className="text-[10px] text-zinc-400 mt-1 font-medium">Vision Intelligence</div>
-        </div>
+
+        {systemSettings?.shadow_mode ? (
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-bold animate-pulse">
+            <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+            SHADOW MODE (Simulation)
+          </div>
+        ) : (
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
+            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+            PRODUCTION MODE
+          </div>
+        )}
       </div>
 
       {/* Barcode Quick-Scan Field */}

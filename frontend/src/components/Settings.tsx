@@ -91,8 +91,15 @@ export default function Settings() {
 
   const toggleShadowMode = async () => {
     if (!settings) return
+    const nextMode = !settings.shadow_mode
+    const confirmMsg = nextMode
+      ? 'Switch to Shadow Mode? WARNING: Physical line control (label printer, pallet hold, reject diverters) will be DISABLED. AI decisions will be logged for evaluation only.'
+      : 'Switch to Production Mode? WARNING: AI decisions will now actively control factory hardware and label printing.'
+    if (!window.confirm(confirmMsg)) {
+      return
+    }
     try {
-      await apiClient.setShadowMode(!settings.shadow_mode)
+      await apiClient.setShadowMode(nextMode)
       await fetchSystemSettings()
     } catch (error) {
       console.error('Failed to toggle shadow mode:', error)
