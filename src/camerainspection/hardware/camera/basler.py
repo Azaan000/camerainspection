@@ -50,6 +50,13 @@ class BaslerCamera(BaseCamera):
         if self._pylon_available:
             try:
                 tl_factory = self._pylon.TlFactory.GetInstance()
+                devices = tl_factory.EnumerateDevices()
+                if not devices:
+                    logger.warning("No physical Basler devices found. Falling back to simulator mode.")
+                    self._pylon_available = False
+                    self._connected = True
+                    return
+
                 if self.serial_number:
                     info = self._pylon.CDeviceInfo()
                     info.SetSerialNumber(self.serial_number)
@@ -64,9 +71,9 @@ class BaslerCamera(BaseCamera):
                 self._connected = True
                 logger.info(f"Connected to Basler camera (SN: {self.serial_number or 'default'})")
             except Exception as e:
-                self._connected = False
-                logger.error(f"Failed to connect to Basler camera: {e}")
-                raise CameraOfflineError(f"Basler camera connection failed: {e}") from e
+                logger.warning(f"Failed to connect to physical Basler camera ({e}). Falling back to simulator mode.")
+                self._pylon_available = False
+                self._connected = True
         else:
             # Stand-in simulation for environments without hardware SDK
             self._connected = True

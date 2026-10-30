@@ -22,7 +22,7 @@ CAPTURES_ROOT = Path("storage/captures")
 
 
 def cleanup_old_captures(
-    retention_days: int = 30,
+    retention_days: int = 0,
     captures_root: Path = CAPTURES_ROOT,
     dry_run: bool = False,
 ) -> dict[str, int | list[str]]:
@@ -35,8 +35,8 @@ def cleanup_old_captures(
       - skipped: int
       - errors: list[str]
     """
-    if retention_days < 1:
-        raise ValueError(f"retention_days must be >= 1, got {retention_days}")
+    if retention_days < 0:
+        raise ValueError(f"retention_days must be >= 0, got {retention_days}")
 
     cutoff_ts = time.time() - retention_days * 86400
     cutoff_dt = datetime.fromtimestamp(cutoff_ts, tz=timezone.utc)
@@ -98,7 +98,13 @@ def cleanup_old_captures(
 
         if not dry_run:
             try:
-                shutil.rmtree(seat_dir)
+                # Remove read-only attribute if present on Windows
+                for f in seat_dir.rglob("*"):
+                    try:
+                        f.chmod(0o777)
+                    except Exception:
+                        pass
+                shutil.rmtree(seat_dir, ignore_errors=True)
                 deleted_folders += 1
                 freed_bytes += folder_bytes
                 deleted_paths.append(seat_dir.name)

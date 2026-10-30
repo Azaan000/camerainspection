@@ -127,11 +127,12 @@ export default function Settings() {
     }
   }
 
-  const handleCleanup = async (dryRun: boolean) => {
+  const handleCleanup = async (dryRun: boolean, retentionDays = 0) => {
     setCleaningUp(true)
     try {
-      const res = (await apiClient.cleanupImages(dryRun)) as any
+      const res = (await apiClient.cleanupImages(dryRun, retentionDays)) as any
       setCleanupResult(res)
+      await fetchSystemSettings()
     } catch (err) {
       console.error('Cleanup failed:', err)
       alert('Image cleanup failed')
@@ -248,14 +249,14 @@ export default function Settings() {
                   }}
                 />
               </div>
-              <div className="flex gap-3 pt-2">
+              <div className="flex gap-3 pt-2 items-center flex-wrap">
                 <button
                   onClick={() => handleCleanup(true)}
                   disabled={cleaningUp}
                   className="btn-ghost text-xs flex items-center gap-1.5"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  Dry Run Cleanup (30d)
+                  Dry Run (0d)
                 </button>
                 <button
                   onClick={() => handleCleanup(false)}
@@ -263,7 +264,7 @@ export default function Settings() {
                   className="btn-primary text-xs bg-danger-600 hover:bg-danger-700 flex items-center gap-1.5"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  Execute Cleanup
+                  Delete All Captures (0d)
                 </button>
               </div>
               {cleanupResult && (

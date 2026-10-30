@@ -1470,11 +1470,12 @@ def create_app(
     @app.post("/api/v1/system/cleanup-images")
     def cleanup_images(
         dry_run: bool = Query(False, description="If true, shows what would be deleted without deleting"),
+        retention_days: int = Query(0, description="Retention period in days (0 deletes all captures)"),
         auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
-        """Delete seat capture folders older than the configured retention period (default 30 days)."""
+        """Delete seat capture folders older than the configured retention period."""
         from camerainspection.tools.image_cleanup import cleanup_old_captures  # noqa: PLC0415
-        result = cleanup_old_captures(retention_days=30, dry_run=dry_run)
+        result = cleanup_old_captures(retention_days=retention_days, dry_run=dry_run)
         if not dry_run:
             db_manager.log_audit(
                 event_type="IMAGE_CLEANUP",
@@ -1877,6 +1878,7 @@ def create_app(
         roi_w: int | None = Query(None, description="Custom ROI Width override"),
         roi_h: int | None = Query(None, description="Custom ROI Height override"),
         save_default: bool = Query(False, description="Save custom ROI as station default"),
+        glare_suppression: bool = Query(False, description="Apply specular glare suppression pre-filter"),
         auth_user: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Manually inject an image into a station pipeline to test AI inference and limits."""
@@ -1904,6 +1906,18 @@ def create_app(
             except Exception as pil_err:
                 logger.error(f"Image decode failed via cv2 and PIL: {pil_err}")
                 raise HTTPException(status_code=422, detail=f"Could not decode image data: {pil_err}")
+
+        # Optional Specular Glare Suppression Pre-filter
+        if glare_suppression:
+            try:
+                lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+                l, a, b = cv2.split(lab)
+                # Threshold extremely bright specular highlights (L > 245)
+                _, glare_mask = cv2.threshold(l, 245, 255, cv2.THRESH_BINARY)
+                # Inpaint specular spots smoothly using surrounding texture
+                frame = cv2.inpaint(frame, glare_mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+            except Exception as glare_err:
+                logger.warning(f"Glare suppression pre-filter failed: {glare_err}")
 
         station_svc = line_runtime.stations[station_id.upper()]
 

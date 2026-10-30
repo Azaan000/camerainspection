@@ -952,30 +952,32 @@ export default function StationTester() {
             {/* Full Visual ROI Calibrator Modal */}
             {isRoiModalOpen && previewUrl && (
               <div
-                className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 backdrop-blur-sm"
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md overflow-y-auto"
                 onClick={(e) => { if (e.target === e.currentTarget) setIsRoiModalOpen(false) }}
               >
-                <div className="bg-surface-900 rounded-2xl border border-surface-700 shadow-2xl w-[min(92vw,1280px)] max-h-[92vh] flex flex-col overflow-hidden">
+                <div className="bg-surface-900 rounded-2xl border border-surface-700 shadow-2xl w-full max-w-7xl max-h-[92vh] flex flex-col overflow-hidden my-auto">
                   {/* Modal Header */}
-                  <div className="flex items-center justify-between px-5 py-3.5 border-b border-surface-700 bg-surface-850 rounded-t-2xl flex-shrink-0">
-                    <div className="flex items-center gap-2.5">
-                      <Crop className="w-5 h-5 text-cyan-400" />
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-surface-700 bg-surface-850 rounded-t-2xl flex-shrink-0">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                        <Crop className="w-5 h-5" />
+                      </div>
                       <div>
-                        <div className="text-sm font-semibold text-white">Visual ROI Calibrator</div>
-                        <div className="text-[11px] text-zinc-400">Drag the cyan box to move — drag edges/corners to resize — image coordinates</div>
+                        <div className="text-base font-bold text-white">Visual ROI Calibrator — {selectedStation}</div>
+                        <div className="text-xs text-zinc-400">Drag box to position, drag handles or edges to resize. Full resolution view ({imageDimensions.width} × {imageDimensions.height} px).</div>
                       </div>
                     </div>
                     <button
                       onClick={() => setIsRoiModalOpen(false)}
-                      className="text-zinc-400 hover:text-white hover:bg-surface-800 rounded-lg p-1.5 transition-colors"
+                      className="text-zinc-400 hover:text-white hover:bg-surface-800 rounded-xl p-2 transition-colors"
                     >
                       <X className="w-5 h-5" />
                     </button>
                   </div>
 
                   {/* Preset Row */}
-                  <div className="flex items-center gap-2 px-5 py-2.5 bg-surface-850 border-b border-surface-700 flex-shrink-0">
-                    <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mr-1">Presets:</span>
+                  <div className="flex items-center gap-2.5 px-6 py-3 bg-surface-850 border-b border-surface-700 flex-shrink-0 flex-wrap">
+                    <span className="text-xs text-zinc-400 font-semibold uppercase tracking-wider mr-1">Quick Presets:</span>
                     {[
                       { label: 'Full Image', value: () => ({ x: 0, y: 0, w: imageDimensions.width, h: imageDimensions.height }) },
                       { label: 'Station Default', value: () => getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height) },
@@ -996,33 +998,33 @@ export default function StationTester() {
                         key={label}
                         type="button"
                         onClick={() => setModalRoi(value())}
-                        className="text-xs px-3 py-1 rounded-lg bg-surface-800 border border-surface-700 text-zinc-300 hover:border-cyan-500 hover:text-cyan-300 transition-colors font-medium"
+                        className="text-xs px-3.5 py-1.5 rounded-xl bg-surface-800 border border-surface-700 text-zinc-300 hover:border-cyan-500 hover:text-cyan-300 transition-colors font-medium shadow-sm"
                       >
                         {label}
                       </button>
                     ))}
-                    <div className="ml-auto text-[11px] font-mono text-zinc-400 flex items-center gap-2">
-                      <span className="text-zinc-500">ROI:</span>
-                      <span className="text-cyan-400 font-semibold">{modalRoi.w}×{modalRoi.h}</span>
+                    <div className="ml-auto text-xs font-mono text-zinc-300 bg-surface-800 px-3 py-1.5 rounded-xl border border-surface-700 flex items-center gap-2 shadow-inner">
+                      <span className="text-zinc-400">Active ROI:</span>
+                      <span className="text-cyan-400 font-bold">{modalRoi.w} × {modalRoi.h}</span>
                       <span className="text-zinc-500">at</span>
-                      <span className="text-zinc-300">({modalRoi.x}, {modalRoi.y})</span>
+                      <span className="text-zinc-200">({modalRoi.x}, {modalRoi.y})</span>
                     </div>
                   </div>
 
-                  {/* Image Canvas Area */}
-                  <div className="relative flex-1 overflow-hidden bg-black/70 flex items-center justify-center p-4 min-h-0">
-                    <div className="relative inline-block max-w-full max-h-full select-none" style={{ cursor: modalDragState ? 'grabbing' : 'default' }}>
+                  {/* Image Canvas Area - Centered & Fully Visible */}
+                  <div className="relative flex-1 bg-black/95 flex items-center justify-center p-4 overflow-auto min-h-0 w-full">
+                    <div className="relative flex items-center justify-center w-full h-full select-none" style={{ cursor: modalDragState ? 'grabbing' : 'default' }}>
                       <img
                         ref={modalImgRef}
                         src={previewUrl}
                         alt="ROI calibration canvas"
-                        className="block max-w-full max-h-[calc(92vh-200px)] object-contain rounded-lg border border-surface-700 shadow-lg"
+                        className="max-h-full max-w-full w-auto h-auto object-contain rounded-xl border border-surface-700 shadow-2xl block"
                         draggable={false}
                       />
 
                       {/* ROI Overlay Box */}
                       <div
-                        className="absolute border-2 border-cyan-400 bg-cyan-500/10 cursor-grab active:cursor-grabbing shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+                        className="absolute border-2 border-cyan-400 bg-cyan-500/15 cursor-grab active:cursor-grabbing shadow-[0_0_30px_rgba(6,182,212,0.5)] rounded-md"
                         style={{
                           left: `${(modalRoi.x / imageDimensions.width) * 100}%`,
                           top: `${(modalRoi.y / imageDimensions.height) * 100}%`,
@@ -1036,61 +1038,61 @@ export default function StationTester() {
                         }}
                       >
                         {/* ROI info label */}
-                        <div className="absolute top-2 left-2 bg-black/85 backdrop-blur-sm px-2 py-0.5 rounded text-[11px] font-mono text-cyan-300 border border-cyan-500/30 pointer-events-none flex items-center gap-1.5">
-                          <Crop className="w-3 h-3 text-cyan-400 flex-shrink-0" />
-                          <span>{modalRoi.w}×{modalRoi.h}</span>
+                        <div className="absolute top-2 left-2 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-lg text-xs font-mono text-cyan-300 border border-cyan-500/40 pointer-events-none flex items-center gap-2 shadow-lg">
+                          <Crop className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
+                          <span className="font-bold">ROI: {modalRoi.w} × {modalRoi.h}</span>
                         </div>
 
                         {/* N handle */}
-                        <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-5 h-2.5 bg-cyan-400 rounded-sm cursor-ns-resize border border-cyan-300 hover:bg-cyan-300 transition-colors shadow-md"
+                        <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-6 h-3 bg-cyan-400 rounded-md cursor-ns-resize border border-cyan-200 hover:bg-cyan-300 transition-colors shadow-md"
                           onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'n', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
                         {/* S handle */}
-                        <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-5 h-2.5 bg-cyan-400 rounded-sm cursor-ns-resize border border-cyan-300 hover:bg-cyan-300 transition-colors shadow-md"
+                        <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-6 h-3 bg-cyan-400 rounded-md cursor-ns-resize border border-cyan-200 hover:bg-cyan-300 transition-colors shadow-md"
                           onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 's', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
                         {/* W handle */}
-                        <div className="absolute top-1/2 -left-2 -translate-y-1/2 w-2.5 h-5 bg-cyan-400 rounded-sm cursor-ew-resize border border-cyan-300 hover:bg-cyan-300 transition-colors shadow-md"
+                        <div className="absolute top-1/2 -left-2.5 -translate-y-1/2 w-3 h-6 bg-cyan-400 rounded-md cursor-ew-resize border border-cyan-200 hover:bg-cyan-300 transition-colors shadow-md"
                           onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'w', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
                         {/* E handle */}
-                        <div className="absolute top-1/2 -right-2 -translate-y-1/2 w-2.5 h-5 bg-cyan-400 rounded-sm cursor-ew-resize border border-cyan-300 hover:bg-cyan-300 transition-colors shadow-md"
+                        <div className="absolute top-1/2 -right-2.5 -translate-y-1/2 w-3 h-6 bg-cyan-400 rounded-md cursor-ew-resize border border-cyan-200 hover:bg-cyan-300 transition-colors shadow-md"
                           onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'e', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
                         {/* NW corner */}
-                        <div className="absolute -top-2.5 -left-2.5 w-5 h-5 bg-white border-2 border-cyan-500 rounded-full cursor-nwse-resize hover:bg-cyan-200 hover:scale-110 transition-all shadow-md"
+                        <div className="absolute -top-3 -left-3 w-6 h-6 bg-white border-2 border-cyan-500 rounded-full cursor-nwse-resize hover:bg-cyan-200 hover:scale-125 transition-all shadow-lg"
                           onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'nw', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
                         {/* NE corner */}
-                        <div className="absolute -top-2.5 -right-2.5 w-5 h-5 bg-white border-2 border-cyan-500 rounded-full cursor-nesw-resize hover:bg-cyan-200 hover:scale-110 transition-all shadow-md"
+                        <div className="absolute -top-3 -right-3 w-6 h-6 bg-white border-2 border-cyan-500 rounded-full cursor-nesw-resize hover:bg-cyan-200 hover:scale-125 transition-all shadow-lg"
                           onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'ne', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
                         {/* SW corner */}
-                        <div className="absolute -bottom-2.5 -left-2.5 w-5 h-5 bg-white border-2 border-cyan-500 rounded-full cursor-nesw-resize hover:bg-cyan-200 hover:scale-110 transition-all shadow-md"
+                        <div className="absolute -bottom-3 -left-3 w-6 h-6 bg-white border-2 border-cyan-500 rounded-full cursor-nesw-resize hover:bg-cyan-200 hover:scale-125 transition-all shadow-lg"
                           onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'sw', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
                         {/* SE corner */}
-                        <div className="absolute -bottom-2.5 -right-2.5 w-5 h-5 bg-white border-2 border-cyan-500 rounded-full cursor-nwse-resize hover:bg-cyan-200 hover:scale-110 transition-all shadow-md"
+                        <div className="absolute -bottom-3 -right-3 w-6 h-6 bg-white border-2 border-cyan-500 rounded-full cursor-nwse-resize hover:bg-cyan-200 hover:scale-125 transition-all shadow-lg"
                           onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'se', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
 
                         {/* Crosshair guides */}
-                        <div className="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px bg-cyan-400/30 pointer-events-none" style={{ borderLeft: '1px dashed rgba(6,182,212,0.3)' }} />
-                        <div className="absolute left-0 right-0 top-1/2 -translate-y-px h-px bg-cyan-400/30 pointer-events-none" style={{ borderTop: '1px dashed rgba(6,182,212,0.3)' }} />
+                        <div className="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px bg-cyan-400/40 pointer-events-none border-l border-dashed border-cyan-400/40" />
+                        <div className="absolute left-0 right-0 top-1/2 -translate-y-px h-px bg-cyan-400/40 pointer-events-none border-t border-dashed border-cyan-400/40" />
                       </div>
                     </div>
                   </div>
 
                   {/* Footer Actions */}
-                  <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-t border-surface-700 bg-surface-850 rounded-b-2xl flex-shrink-0">
-                    <div className="flex items-center gap-2">
-                      <label className="flex items-center gap-2 cursor-pointer text-zinc-300 text-xs font-medium select-none">
+                  <div className="flex items-center justify-between gap-4 px-6 py-4 border-t border-surface-700 bg-surface-850 rounded-b-2xl flex-shrink-0">
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer text-zinc-200 text-xs font-semibold select-none bg-surface-800 px-3 py-2 rounded-xl border border-surface-700 hover:border-cyan-500/50 transition-colors">
                         <input
                           type="checkbox"
                           checked={saveDefaultRoi}
                           onChange={(e) => setSaveDefaultRoi(e.target.checked)}
-                          className="w-3.5 h-3.5 accent-cyan-500 rounded bg-surface-800 border-surface-600"
+                          className="w-4 h-4 accent-cyan-500 rounded bg-surface-900 border-surface-600"
                         />
-                        Save as station default
+                        Save permanently to station YAML default config
                       </label>
                     </div>
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-3">
                       <button
                         type="button"
                         onClick={() => setIsRoiModalOpen(false)}
-                        className="text-xs px-4 py-2 rounded-lg bg-surface-800 border border-surface-700 text-zinc-300 hover:text-white hover:border-surface-600 transition-colors font-medium"
+                        className="text-xs px-5 py-2.5 rounded-xl bg-surface-800 border border-surface-700 text-zinc-300 hover:text-white hover:border-surface-600 transition-colors font-semibold"
                       >
                         Cancel
                       </button>
@@ -1100,10 +1102,10 @@ export default function StationTester() {
                           setCustomRoi({ ...modalRoi })
                           setIsRoiModalOpen(false)
                         }}
-                        className="text-xs px-5 py-2 rounded-lg bg-gradient-to-r from-cyan-600 to-primary-600 hover:from-cyan-500 hover:to-primary-500 text-white font-semibold shadow-md transition-all flex items-center gap-1.5"
+                        className="text-xs px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-primary-600 hover:from-cyan-500 hover:to-primary-500 text-white font-bold shadow-lg shadow-cyan-600/30 transition-all flex items-center gap-2"
                       >
                         <Check className="w-4 h-4" />
-                        Apply ROI
+                        Apply ROI & Test
                       </button>
                     </div>
                   </div>
