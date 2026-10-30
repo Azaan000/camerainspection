@@ -16,7 +16,7 @@ export default function GoldenSampleComparator() {
 
   // Golden master and sample URLs
   const [goldenUrl, setGoldenUrl] = useState<string | null>(null)
-  const [sampleUrl, setSampleUrl] = useState<string | null>(null)
+  const [sampleUrl, setSampleUrl] = useState<string | null>('/data/station_1/replay/01_pass_clean.png')
   const [, setLoadingGolden] = useState(false)
   const [loadingSample, setLoadingSample] = useState(false)
   const [, setError] = useState<string | null>(null)
@@ -41,8 +41,8 @@ export default function GoldenSampleComparator() {
     setLoadingGolden(true)
     setError(null)
     try {
-      const base = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
-      const url = `${base}/api/v1/variants/${variantId}/golden-images/${componentName}`
+      const base = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '')
+      const url = `${base}/configs/variants/${variantId}/golden_images/${componentName}.png`
       setGoldenUrl(url)
     } catch (err: any) {
       console.warn('Could not load golden image:', err)
@@ -61,7 +61,7 @@ export default function GoldenSampleComparator() {
     setError(null)
     try {
       const timestamp = Date.now()
-      const base = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+      const base = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '')
       const url = `${base}/api/v1/camera/snapshot?_t=${timestamp}`
       setSampleUrl(url)
     } catch (err: any) {
@@ -388,8 +388,8 @@ export default function GoldenSampleComparator() {
                 >
                   <option value="FRONT_LH_BLACK">Front LH Black</option>
                   <option value="FRONT_RH_BLACK">Front RH Black</option>
-                  <option value="FRONT_LH_BEIGE">Front LH Beige</option>
-                  <option value="REAR_BENCH">Rear Bench</option>
+                  <option value="FRONT_LH_GREY">Front LH Grey</option>
+                  <option value="REAR_BENCH_BLACK">Rear Bench Black</option>
                 </select>
               </div>
 
@@ -402,6 +402,7 @@ export default function GoldenSampleComparator() {
                 >
                   <option value="side_shield">Side Shield Outer Bezel</option>
                   <option value="lever_handle">Recliner Lever Handle</option>
+                  <option value="underside_clips">Underside Wire Clips</option>
                   <option value="seating_face">Seating Face Perforation</option>
                   <option value="main_seam">Main French Seam Stitch</option>
                 </select>
