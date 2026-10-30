@@ -14,7 +14,7 @@ export default function AndonBoard() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [liveData, setLiveData] = useState<LiveLineResponse | null>(null)
   const [trends, setTrends] = useState<QualityTrendsResponse | null>(null)
-  const [health, setHealth] = useState<SystemHealthResponse | null>(null)
+  const [shadowMode, setShadowMode] = useState(false)
   const [, setLoading] = useState(true)
 
   // Takt time countdown
@@ -44,15 +44,17 @@ export default function AndonBoard() {
     let mounted = true
     const fetchTelemetry = async () => {
       try {
-        const [live, trendData, healthData] = await Promise.all([
+        const [live, trendData, healthData, settingsData] = await Promise.all([
           apiClient.getLiveLine(),
           apiClient.getQualityTrends(),
           apiClient.getSystemHealth(),
+          apiClient.getSystemSettings().catch(() => ({ shadow_mode: false })),
         ])
         if (!mounted) return
         setLiveData(live)
         setTrends(trendData)
         setHealth(healthData)
+        setShadowMode((settingsData as any)?.shadow_mode || false)
         setLoading(false)
       } catch (err) {
         console.warn('Andon polling error:', err)
@@ -90,6 +92,15 @@ export default function AndonBoard() {
 
   return (
     <div className={`space-y-6 ${isFullscreen ? 'p-8 bg-surface-950 min-h-screen' : ''}`}>
+      {shadowMode && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/40 rounded-2xl flex items-center gap-3 text-amber-400">
+          <AlertTriangle className="w-6 h-6 flex-shrink-0 animate-pulse" />
+          <div className="text-sm font-semibold">
+            SHADOW MODE ACTIVE: Andon board is displaying simulated AI decisions. Physical factory hardware and label printing are disabled.
+          </div>
+        </div>
+      )}
+
       {/* Top Bar with High-Visibility Clock and Fullscreen Control */}
       <div className="flex items-center justify-between bg-surface-900 p-4 rounded-2xl border border-surface-700">
         <div className="flex items-center gap-4">

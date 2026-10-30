@@ -1,6 +1,6 @@
 import { apiClient } from '../lib/api'
 import { useEffect, useState } from 'react'
-import { Save, TestTube, RefreshCw, Camera, Trash2, CheckCircle, XCircle } from 'lucide-react'
+import { Save, TestTube, RefreshCw, Camera, Trash2, CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
 
 interface SystemSettings {
   save_images: boolean
@@ -23,8 +23,8 @@ export default function Settings() {
   const [detecting, setDetecting] = useState(false)
   const [testingCameraId, setTestingCameraId] = useState<string | null>(null)
   const [cameraTestResult, setCameraTestResult] = useState<any>(null)
-  const [cleanupResult, setCleanupResult] = useState<any>(null)
-  const [cleaningUp, setCleaningUp] = useState(false)
+  const [showShadowModal, setShowShadowModal] = useState(false)
+  const [pendingShadowMode, setPendingShadowMode] = useState(false)
 
   useEffect(() => {
     const savedUrl = localStorage.getItem('sg_api_url')
@@ -89,20 +89,21 @@ export default function Settings() {
     }
   }
 
-  const toggleShadowMode = async () => {
+  const handleShadowModeClick = () => {
     if (!settings) return
-    const nextMode = !settings.shadow_mode
-    const confirmMsg = nextMode
-      ? 'Switch to Shadow Mode? WARNING: Physical line control (label printer, pallet hold, reject diverters) will be DISABLED. AI decisions will be logged for evaluation only.'
-      : 'Switch to Production Mode? WARNING: AI decisions will now actively control factory hardware and label printing.'
-    if (!window.confirm(confirmMsg)) {
-      return
-    }
+    setPendingShadowMode(!settings.shadow_mode)
+    setShowShadowModal(true)
+  }
+
+  const confirmShadowModeChange = async () => {
+    if (!settings) return
     try {
-      await apiClient.setShadowMode(nextMode)
+      await apiClient.setShadowMode(pendingShadowMode)
       await fetchSystemSettings()
     } catch (error) {
       console.error('Failed to toggle shadow mode:', error)
+    } finally {
+      setShowShadowModal(false)
     }
   }
 
@@ -223,7 +224,7 @@ export default function Settings() {
                 <div className="text-xs text-zinc-500">Compare AI vs Human decisions</div>
               </div>
               <button
-                onClick={toggleShadowMode}
+                onClick={handleShadowModeClick}
                 className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
                   settings?.shadow_mode ? 'bg-primary-600' : 'bg-zinc-700'
                 }`}
@@ -344,6 +345,41 @@ export default function Settings() {
           )}
         </div>
       </div>
+
+      {/* Shadow Mode Confirmation Modal */}
+      {showShadowModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="card max-w-lg w-full p-8 space-y-6 border border-amber-500/50 bg-surface-900 shadow-2xl">
+            <div className="flex items-center gap-3 text-amber-400">
+              <AlertTriangle className="w-8 h-8 flex-shrink-0" />
+              <h3 className="text-xl font-bold text-white">
+                {pendingShadowMode ? 'Enable Shadow Mode (Simulation)?' : 'Switch to Production Mode?'}
+              </h3>
+            </div>
+            <p className="text-sm text-zinc-300 leading-relaxed">
+              {pendingShadowMode
+                ? 'WARNING: Physical line control will be DISABLED. The conveyor, label printer, and pallet hold actuators will not be triggered by inspection outcomes. AI decisions will run in dry-run simulation for evaluation only.'
+                : 'WARNING: Production Mode will be ENABLED. AI inspection outcomes will actively drive factory hardware, release pallets, and enable the OEM barcode label printer.'}
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                onClick={() => setShowShadowModal(false)}
+                className="px-4 py-2 rounded-xl bg-surface-800 text-zinc-300 hover:text-white font-semibold text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmShadowModeChange}
+                className={`px-5 py-2 rounded-xl font-semibold text-sm text-white shadow-lg transition-colors ${
+                  pendingShadowMode ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/30' : 'bg-primary-600 hover:bg-primary-500 shadow-primary-600/30'
+                }`}
+              >
+                Confirm & Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
