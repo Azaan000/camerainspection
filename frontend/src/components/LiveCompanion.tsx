@@ -107,12 +107,14 @@ export default function LiveCompanion() {
                     <img
                       src={imageUrl}
                       alt={stKey}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover"
                       onError={(e) => {
                         ;(e.target as HTMLImageElement).src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%2371717a" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>'
                       }}
                     />
-                    <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur px-2 py-1 rounded text-xs font-mono text-zinc-300">
+                    <div className="absolute bottom-2 left-2 bg-black/85 px-2 py-1 rounded text-xs font-mono text-zinc-300">
                       {stInfo.cycle_time_ms.toFixed(0)} ms
                     </div>
                   </div>
@@ -140,7 +142,7 @@ export default function LiveCompanion() {
                   return (
                     <div key={idx} className="bg-surface-900 rounded-xl p-3 border border-surface-700 text-center space-y-2">
                       <div className="h-28 rounded-lg overflow-hidden bg-black/50 flex items-center justify-center">
-                        <img src={gUrl} alt={g.name} className="w-full h-full object-cover" />
+                        <img src={gUrl} alt={g.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                       </div>
                       <div className="text-xs font-medium text-white truncate">{g.name}</div>
                     </div>

@@ -24,6 +24,7 @@ import {
   VolumeX,
   ScanLine,
   ChevronDown,
+  Sliders,
 } from 'lucide-react'
 import { audioAlerts } from '../lib/audioAlerts'
 import { apiClient } from '../lib/api'
@@ -135,6 +136,7 @@ export default function Header({ currentSection, onSectionChange, onBarcodeScan 
 
   // Secondary modules inside the "More" dropdown
   const secondaryNav = [
+    { id: 'config', label: 'Config Manager', icon: Sliders },
     { id: 'roi', label: 'ROI Editor', icon: Target },
     { id: 'plc', label: 'PLC Telemetry', icon: Cpu },
     { id: 'mes', label: 'MES Webhooks', icon: Webhook },
@@ -154,7 +156,7 @@ export default function Header({ currentSection, onSectionChange, onBarcodeScan 
   const activeSecondaryItem = secondaryNav.find((item) => item.id === currentSection)
 
   return (
-    <header className="border-b border-surface-700 bg-surface-900/90 backdrop-blur-md px-6 lg:px-8 py-3.5 flex items-center justify-between sticky top-0 z-40 shadow-lg gap-4">
+    <header className="border-b border-surface-700 bg-surface-900 px-6 lg:px-8 py-3.5 flex items-center justify-between sticky top-0 z-40 shadow-md gap-4">
       {/* Logo */}
       <div className="flex items-center gap-3 flex-shrink-0 cursor-pointer" onClick={() => onSectionChange('live')}>
         <div className="w-9 h-9 rounded-xl bg-primary-600 flex items-center justify-center shadow-lg shadow-primary-500/20">

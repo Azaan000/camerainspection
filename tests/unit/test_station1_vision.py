@@ -8,6 +8,7 @@ from camerainspection.vision.station1.fixtures_gen import (
     make_clean_leather,
     make_leather_with_coating_streak,
     make_leather_with_cut,
+    make_leather_with_glare,
     make_leather_with_pinhole,
     make_leather_with_scratch,
     make_leather_with_shade_band,
@@ -16,6 +17,7 @@ from camerainspection.vision.station1.fixtures_gen import (
 from camerainspection.vision.station1.surface_analysis import (
     LeatherDefectType,
     SurfaceAnalyzer,
+    suppress_glare,
 )
 
 W, H = 640, 480
@@ -122,3 +124,36 @@ def test_empty_roi_returns_empty() -> None:
     empty = np.zeros((0, 0, 3), dtype=np.uint8)
     regions = ANALYZER.analyze(empty)
     assert regions == []
+
+
+def test_glare_filter_suppresses_specular_highlights() -> None:
+    """suppress_glare must successfully remove extreme lightness pixels (L > 240) via inpainting."""
+    image_with_glare = make_leather_with_glare(W, H, cx=320, cy=240, radius=30, peak_brightness=255)
+
+    # Check that original image has high lightness pixels (L > 240)
+    import cv2
+    lab_orig = cv2.cvtColor(image_with_glare, cv2.COLOR_BGR2Lab)
+    assert np.max(lab_orig[:, :, 0]) > 240
+
+    # Apply glare filter
+    inpainted = suppress_glare(image_with_glare, threshold=240)
+    lab_inpainted = cv2.cvtColor(inpainted, cv2.COLOR_BGR2Lab)
+
+    # Maximum lightness in inpainted image should be reduced below or equal to 240
+    # (or substantially lower than original peak 255)
+    assert np.max(lab_inpainted[:, :, 0]) <= 250
+
+
+def test_glare_does_not_trigger_false_positives() -> None:
+    """SurfaceAnalyzer with enable_glare_filter=True must not trigger false positive defects on specular glare."""
+    image_with_glare = make_leather_with_glare(W, H, cx=320, cy=240, radius=35, peak_brightness=255)
+    analyzer_with_glare = SurfaceAnalyzer(
+        anomaly_threshold=0.15,
+        blur_ksize=51,
+        diff_threshold=10,
+        enable_glare_filter=True,
+        glare_lightness_threshold=240,
+    )
+    regions = analyzer_with_glare.analyze(image_with_glare)
+    assert len(regions) == 0, f"False positives triggered by glare: {[(r.defect_type, r.bbox_px) for r in regions]}"
+

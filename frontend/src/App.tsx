@@ -20,6 +20,7 @@ import AndonBoard from './components/AndonBoard'
 import CameraCalibration from './components/CameraCalibration'
 import GoldenSampleComparator from './components/GoldenSampleComparator'
 import ReworkBench from './components/ReworkBench'
+import ConfigManagement from './components/ConfigManagement'
 
 function App() {
   const [currentSection, setCurrentSection] = useState('live')
@@ -43,6 +44,7 @@ function App() {
           ? 'px-4 md:px-8 py-6 max-w-[1920px]'
           : 'px-6 md:px-10 py-10 max-w-screen-2xl'
       }`}>
+        {currentSection === 'config' && <ConfigManagement />}
         {currentSection === 'live' && <LiveLine />}
         {currentSection === 'andon' && <AndonBoard />}
         {currentSection === 'camerastreams' && <LiveCameraStreams />}

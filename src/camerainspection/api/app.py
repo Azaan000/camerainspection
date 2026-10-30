@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from camerainspection.coordinator.service import InspectionCoordinator
+from camerainspection.core.config_manager import ConfigurationManager
 from camerainspection.core.logging import get_logger
 from camerainspection.core.models import Outcome, StationInspectionResult
 from camerainspection.storage.db import DatabaseManager
@@ -840,6 +841,67 @@ def create_app(
             seat_id=rec.seat_id,
         )
         return {"sample_id": sample_id, "status": "COMPLETED", "decision": dec_clean}
+
+    # -------------------------------------------------------------
+    # Configuration Management Endpoints
+    # -------------------------------------------------------------
+
+    @app.get("/api/v1/config/stations")
+    def get_all_station_configs(auth_user: str = Depends(verify_api_key)) -> dict[str, Any]:
+        """Get configurations for all inspection stations."""
+        mgr = ConfigurationManager(root_dir=repo_root, db_manager=db_manager)
+        stations = {}
+        for st_id in ["STATION_1", "STATION_2", "STATION_3", "STATION_4"]:
+            try:
+                stations[st_id] = mgr.load_station_config(st_id)
+            except Exception:
+                pass
+        return {"stations": stations}
+
+    @app.get("/api/v1/config/stations/{station_id}")
+    def get_station_config_endpoint(station_id: str, auth_user: str = Depends(verify_api_key)) -> dict[str, Any]:
+        """Get configuration for a specific station."""
+        mgr = ConfigurationManager(root_dir=repo_root, db_manager=db_manager)
+        try:
+            return mgr.load_station_config(station_id)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.put("/api/v1/config/stations/{station_id}", dependencies=[Depends(rate_limit_writes)])
+    def update_station_config_endpoint(
+        station_id: str,
+        payload: dict[str, Any],
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Update and validate configuration for a specific station."""
+        mgr = ConfigurationManager(root_dir=repo_root, db_manager=db_manager)
+        try:
+            validated = mgr.save_station_config(station_id, payload, author=auth_user)
+            return {"success": True, "station_id": station_id, "config": validated.model_dump()}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/v1/config/limits")
+    def get_limits_config_endpoint(auth_user: str = Depends(verify_api_key)) -> dict[str, Any]:
+        """Get global limits configuration."""
+        mgr = ConfigurationManager(root_dir=repo_root, db_manager=db_manager)
+        try:
+            return mgr.load_limits_config()
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.put("/api/v1/config/limits", dependencies=[Depends(rate_limit_writes)])
+    def update_limits_config_endpoint(
+        payload: dict[str, Any],
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Update global limits configuration."""
+        mgr = ConfigurationManager(root_dir=repo_root, db_manager=db_manager)
+        try:
+            saved = mgr.save_limits_config(payload, author=auth_user)
+            return {"success": True, "limits": saved}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     # -------------------------------------------------------------
     # Live Monitoring Dashboard Endpoints (Authenticated)
@@ -2614,5 +2676,82 @@ def create_app(
             if p.exists():
                 return FileResponse(p)
         raise HTTPException(status_code=404, detail=f"Golden image not found for component {component_name}")
+
+    # ------------------------------------------------------------------
+    # Configuration Management Endpoints
+    # ------------------------------------------------------------------
+    from camerainspection.core.config_manager import ConfigurationManager
+    config_mgr = ConfigurationManager(root_dir=".", db_manager=db_manager)
+
+    @app.get("/api/v1/config/stations", dependencies=[Depends(verify_api_key)])
+    def get_all_station_configs() -> dict[str, Any]:
+        """Return configurations for all inspection stations."""
+        stations_summary = {}
+        for st_id in ["STATION_1", "STATION_2", "STATION_3", "STATION_4"]:
+            try:
+                cfg = config_mgr.load_station_config(st_id)
+                stations_summary[st_id] = cfg
+            except Exception as e:
+                stations_summary[st_id] = {"error": str(e)}
+        return {"stations": stations_summary, "timestamp": datetime.now(UTC).isoformat()}
+
+    @app.get("/api/v1/config/stations/{station_id}", dependencies=[Depends(verify_api_key)])
+    def get_station_config_endpoint(station_id: str) -> dict[str, Any]:
+        """Return full configuration for a specific station."""
+        try:
+            return config_mgr.load_station_config(station_id)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.put("/api/v1/config/stations/{station_id}")
+    async def update_station_config_endpoint(
+        station_id: str,
+        request: Request,
+        auth_user: str = Depends(verify_api_key),
+        _: None = Depends(rate_limit_writes),
+    ) -> dict[str, Any]:
+        """Update and validate station configuration parameters, persisting to YAML and audit log."""
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        try:
+            validated = config_mgr.save_station_config(station_id, body, author=auth_user)
+            return {
+                "success": True,
+                "station_id": station_id.upper(),
+                "config": validated.model_dump(),
+                "restart_required": True,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/v1/config/limits", dependencies=[Depends(verify_api_key)])
+    def get_limits_endpoint() -> dict[str, Any]:
+        """Return global inspection limits configuration."""
+        try:
+            return config_mgr.load_limits_config()
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.put("/api/v1/config/limits")
+    async def update_limits_endpoint(
+        request: Request,
+        auth_user: str = Depends(verify_api_key),
+        _: None = Depends(rate_limit_writes),
+    ) -> dict[str, Any]:
+        """Update global inspection limits, persisting to YAML and audit log."""
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        try:
+            saved = config_mgr.save_limits_config(body, author=auth_user)
+            return {
+                "success": True,
+                "limits": saved,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     return app

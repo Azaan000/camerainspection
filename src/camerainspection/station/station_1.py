@@ -31,6 +31,7 @@ from camerainspection.station.base_station import BaseStation
 from camerainspection.vision.station1.surface_analysis import (
     LeatherDefectType,
     SurfaceAnalyzer,
+    suppress_glare,
 )
 
 logger = get_logger("station.1")
@@ -118,6 +119,9 @@ class Station1Service(BaseStation):
         #  - SurfaceAnalyzer's own ONNX path uses ImageNet normalisation, which the model
         #    export docstring states is "confirmed broken"; it also ignores `relaxed`.
         analyzer_model_path = None
+        enable_glare_filter = getattr(self.config.model, "enable_glare_filter", True)
+        glare_lightness_threshold = getattr(self.config.model, "glare_lightness_threshold", 240)
+
         self._analyzer = SurfaceAnalyzer(
             model_path=analyzer_model_path,
             anomaly_threshold=self.config.model.pass_below,  # Use pass_below for consistency
@@ -126,6 +130,8 @@ class Station1Service(BaseStation):
             min_area_px=16,         # INCREASED from 4 to reduce noise
             max_area_px=200_000,
             min_contrast=25.0,      # INCREASED from 10.0 for grain suppression
+            enable_glare_filter=enable_glare_filter,
+            glare_lightness_threshold=glare_lightness_threshold,
         )
         # Use the engine injected by the builder when available; lazy-load only as fallback.
         # _onnx_loaded tracks whether we have already attempted a lazy load (avoid retrying).
@@ -324,7 +330,13 @@ class Station1Service(BaseStation):
             return defects, measurements, annotated
 
         try:
-            raw_detections: list[ModelDetection] = engine.predict(image)
+            working_image = image
+            if getattr(self.config.model, "enable_glare_filter", True):
+                working_image = suppress_glare(
+                    image,
+                    threshold=getattr(self.config.model, "glare_lightness_threshold", 240),
+                )
+            raw_detections: list[ModelDetection] = engine.predict(working_image)
         except Exception as exc:
             logger.error("ONNX inference error on camera %s view %s: %s", camera_name, view, exc)
             # Inference error — FAIL SAFE (never PASS on exception)

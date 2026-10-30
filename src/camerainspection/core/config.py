@@ -115,6 +115,8 @@ class StationModelConfig(BaseModel):
     iou_threshold: float | None = None
     # Class names for YOLO detection models — must match training order
     class_names: list[str] = Field(default_factory=list)
+    enable_glare_filter: bool = True
+    glare_lightness_threshold: int = 240
 
     @model_validator(mode="after")
     def _check_thresholds(self) -> StationModelConfig:

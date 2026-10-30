@@ -32,6 +32,27 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[4] / "models" / "station_1" / "model.onnx"
 
 
+def suppress_glare(
+    bgr_image: np.ndarray,
+    threshold: int = 240,
+    inpaint_radius: float = 3.0,
+    method: int = cv2.INPAINT_TELEA,
+) -> np.ndarray:
+    """Suppress specular highlights / glare on leather/rexene panels using LAB L-channel thresholding and inpainting."""
+    if bgr_image is None or bgr_image.size == 0:
+        return bgr_image
+
+    lab = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2Lab)
+    l_channel = lab[:, :, 0]
+
+    _, glare_mask = cv2.threshold(l_channel, threshold, 255, cv2.THRESH_BINARY)
+    if cv2.countNonZero(glare_mask) == 0:
+        return bgr_image
+
+    inpainted = cv2.inpaint(bgr_image, glare_mask, inpaintRadius=int(inpaint_radius), flags=method)
+    return inpainted
+
+
 class LeatherDefectType(StrEnum):
     SCRATCH = "scratch"
     CUT = "cut"
@@ -72,6 +93,9 @@ class SurfaceAnalyzer:
         min_contrast: float = 25.0,
         min_area_mm2: float = 0.02,        # minimum area in mm² using pixel size
         max_defects_per_roi: int = 10,     # cap reported defects per ROI
+        enable_glare_filter: bool = True,
+        glare_lightness_threshold: int = 240,
+        inpaint_radius: float = 3.0,
     ) -> None:
         self.anomaly_threshold = anomaly_threshold
         self.map_threshold = map_threshold
@@ -82,6 +106,9 @@ class SurfaceAnalyzer:
         self.min_contrast = min_contrast
         self.min_area_mm2 = min_area_mm2
         self.max_defects_per_roi = max_defects_per_roi
+        self.enable_glare_filter = enable_glare_filter
+        self.glare_lightness_threshold = glare_lightness_threshold
+        self.inpaint_radius = inpaint_radius
 
         self._session = None
         self._input_name: str = "input"
@@ -116,10 +143,18 @@ class SurfaceAnalyzer:
         if roi_bgr is None or roi_bgr.size == 0:
             return []
 
+        processed_roi = roi_bgr
+        if self.enable_glare_filter:
+            processed_roi = suppress_glare(
+                roi_bgr,
+                threshold=self.glare_lightness_threshold,
+                inpaint_radius=self.inpaint_radius,
+            )
+
         if self._session is not None:
             # Fix #7: pass pixel_size_mm so ONNX path uses the correct calibration
-            return self._analyze_onnx(roi_bgr, pixel_size_mm=pixel_size_mm)
-        return self._analyze_heuristic(roi_bgr, pixel_size_mm=pixel_size_mm, relaxed=relaxed)
+            return self._analyze_onnx(processed_roi, pixel_size_mm=pixel_size_mm)
+        return self._analyze_heuristic(processed_roi, pixel_size_mm=pixel_size_mm, relaxed=relaxed)
 
     # ------------------------------------------------------------------
     # ONNX inference path

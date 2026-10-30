@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { apiClient } from '../lib/api'
 import { audioAlerts } from '../lib/audioAlerts'
 import {
@@ -17,6 +18,89 @@ import {
   Check,
   Crop,
 } from 'lucide-react'
+
+type Roi = { x: number; y: number; w: number; h: number }
+type DragType = 'move' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w'
+
+const MIN_ROI = 40
+
+// Pure ROI math for a drag, clamped to image bounds
+function computeRoi(type: DragType, init: Roi, dx: number, dy: number, maxW: number, maxH: number): Roi {
+  let { x: newX, y: newY, w: newW, h: newH } = init
+
+  switch (type) {
+    case 'move':
+      newX = Math.max(0, Math.min(maxW - init.w, Math.round(init.x + dx)))
+      newY = Math.max(0, Math.min(maxH - init.h, Math.round(init.y + dy)))
+      break
+    case 'se':
+      newW = Math.max(MIN_ROI, Math.min(maxW - init.x, Math.round(init.w + dx)))
+      newH = Math.max(MIN_ROI, Math.min(maxH - init.y, Math.round(init.h + dy)))
+      break
+    case 'nw': {
+      const tx = Math.max(0, Math.min(init.x + init.w - MIN_ROI, Math.round(init.x + dx)))
+      const ty = Math.max(0, Math.min(init.y + init.h - MIN_ROI, Math.round(init.y + dy)))
+      newX = tx
+      newY = ty
+      newW = init.w + (init.x - tx)
+      newH = init.h + (init.y - ty)
+      break
+    }
+    case 'ne': {
+      const ty = Math.max(0, Math.min(init.y + init.h - MIN_ROI, Math.round(init.y + dy)))
+      newY = ty
+      newW = Math.max(MIN_ROI, Math.min(maxW - init.x, Math.round(init.w + dx)))
+      newH = init.h + (init.y - ty)
+      break
+    }
+    case 'sw': {
+      const tx = Math.max(0, Math.min(init.x + init.w - MIN_ROI, Math.round(init.x + dx)))
+      newX = tx
+      newW = init.w + (init.x - tx)
+      newH = Math.max(MIN_ROI, Math.min(maxH - init.y, Math.round(init.h + dy)))
+      break
+    }
+    case 'n': {
+      const ty = Math.max(0, Math.min(init.y + init.h - MIN_ROI, Math.round(init.y + dy)))
+      newY = ty
+      newH = init.h + (init.y - ty)
+      break
+    }
+    case 's':
+      newH = Math.max(MIN_ROI, Math.min(maxH - init.y, Math.round(init.h + dy)))
+      break
+    case 'w': {
+      const tx = Math.max(0, Math.min(init.x + init.w - MIN_ROI, Math.round(init.x + dx)))
+      newX = tx
+      newW = init.w + (init.x - tx)
+      break
+    }
+    case 'e':
+      newW = Math.max(MIN_ROI, Math.min(maxW - init.x, Math.round(init.w + dx)))
+      break
+  }
+
+  return { x: newX, y: newY, w: newW, h: newH }
+}
+
+// Mutate the existing text node in place so React's reference to it stays valid
+function setText(el: HTMLElement | null, text: string) {
+  if (el && el.firstChild) el.firstChild.nodeValue = text
+}
+
+// Resize handles for the calibrator (static classes so Tailwind picks them up)
+const EDGE_HANDLES: { type: DragType; cls: string }[] = [
+  { type: 'n', cls: '-top-3 left-1/2 -translate-x-1/2 w-8 h-3.5 cursor-ns-resize' },
+  { type: 's', cls: '-bottom-3 left-1/2 -translate-x-1/2 w-8 h-3.5 cursor-ns-resize' },
+  { type: 'w', cls: 'top-1/2 -left-3 -translate-y-1/2 w-3.5 h-8 cursor-ew-resize' },
+  { type: 'e', cls: 'top-1/2 -right-3 -translate-y-1/2 w-3.5 h-8 cursor-ew-resize' },
+]
+const CORNER_HANDLES: { type: DragType; cls: string }[] = [
+  { type: 'nw', cls: '-top-3.5 -left-3.5 cursor-nwse-resize' },
+  { type: 'ne', cls: '-top-3.5 -right-3.5 cursor-nesw-resize' },
+  { type: 'sw', cls: '-bottom-3.5 -left-3.5 cursor-nesw-resize' },
+  { type: 'se', cls: '-bottom-3.5 -right-3.5 cursor-nwse-resize' },
+]
 
 export default function StationTester() {
   const [sourceMode, setSourceMode] = useState<'upload' | 'camera'>('upload')
@@ -46,29 +130,110 @@ export default function StationTester() {
   const [viewMode, setViewMode] = useState<'toggle' | 'split'>('toggle')
   const [showAnnotated, setShowAnnotated] = useState(true)
   const [flexibleMode, setFlexibleMode] = useState(false)
-  const [splitPosition, setSplitPosition] = useState(50)
-  const [customRoi, setCustomRoi] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [customRoi, setCustomRoi] = useState<Roi | null>(null)
   const [saveDefaultRoi, setSaveDefaultRoi] = useState(false)
   const [showRoiEditor, setShowRoiEditor] = useState(false)
 
   // Full Visual ROI Calibrator Modal state
   const [isRoiModalOpen, setIsRoiModalOpen] = useState(false)
-  const [modalRoi, setModalRoi] = useState<{ x: number; y: number; w: number; h: number }>({ x: 150, y: 300, w: 2300, h: 400 })
-  const [modalDragState, setModalDragState] = useState<{
-    type: 'move' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w'
-    startX: number
-    startY: number
-    initialRoi: { x: number; y: number; w: number; h: number }
-  } | null>(null)
+  const [modalRoi, setModalRoi] = useState<Roi>({ x: 150, y: 300, w: 2300, h: 400 })
   const modalImgRef = useRef<HTMLImageElement>(null)
 
-  // Embedded preview drag state
-  const [isDraggingRoi, setIsDraggingRoi] = useState(false)
-  const [resizingHandle, setResizingHandle] = useState<string | null>(null)
-  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
-  const imagePreviewRef = useRef<HTMLDivElement>(null)
-  const previewImgRef = useRef<HTMLImageElement>(null)
+  // --- Perf: live drag state lives in refs, painted straight to the DOM ---
+  const liveRoiRef = useRef<Roi>(modalRoi)
+  const dragRef = useRef<{
+    type: DragType
+    startX: number
+    startY: number
+    initial: Roi
+    scaleX: number
+    scaleY: number
+    maxW: number
+    maxH: number
+  } | null>(null)
+  const pointerPosRef = useRef({ x: 0, y: 0 })
+  const rafRef = useRef<number | null>(null)
+  const roiBoxRef = useRef<HTMLDivElement>(null)
+  const roiLabelTextRef = useRef<HTMLSpanElement>(null)
+  const coordsWHRef = useRef<HTMLSpanElement>(null)
+  const coordsXYRef = useRef<HTMLSpanElement>(null)
+
+  // Split slider (direct DOM updates, no re-render)
   const splitContainerRef = useRef<HTMLDivElement>(null)
+  const splitClipRef = useRef<HTMLDivElement>(null)
+  const splitDividerRef = useRef<HTMLDivElement>(null)
+
+  const previewImgRef = useRef<HTMLImageElement>(null)
+  const embeddedContainerRef = useRef<HTMLDivElement>(null)
+  const modalContainerRef = useRef<HTMLDivElement>(null)
+  const [previewImgRect, setPreviewImgRect] = useState<{ width: number; height: number; left: number; top: number } | null>(null)
+  const [modalImgRect, setModalImgRect] = useState<{ width: number; height: number; left: number; top: number } | null>(null)
+
+  // Keep the live ref in sync whenever committed state changes (presets, open, drag end)
+  useEffect(() => {
+    liveRoiRef.current = modalRoi
+  }, [modalRoi])
+
+  // Cancel any pending frame on unmount
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+    }
+  }, [])
+
+  // Measure embedded preview rendered image bounding rect
+  useEffect(() => {
+    if (!previewUrl || !previewImgRef.current || !embeddedContainerRef.current) return
+    const updateRect = () => {
+      if (!previewImgRef.current || !embeddedContainerRef.current) return
+      const containerRect = embeddedContainerRef.current.getBoundingClientRect()
+      const imgRect = previewImgRef.current.getBoundingClientRect()
+      setPreviewImgRect({
+        width: imgRect.width,
+        height: imgRect.height,
+        left: imgRect.left - containerRect.left,
+        top: imgRect.top - containerRect.top,
+      })
+    }
+    updateRect()
+    window.addEventListener('resize', updateRect)
+    const observer = new ResizeObserver(updateRect)
+    observer.observe(embeddedContainerRef.current)
+    observer.observe(previewImgRef.current)
+    return () => {
+      window.removeEventListener('resize', updateRect)
+      observer.disconnect()
+    }
+  }, [previewUrl, imageDimensions, showAnnotated, viewMode])
+
+  // Measure modal rendered image bounding rect
+  useEffect(() => {
+    if (!isRoiModalOpen || !modalImgRef.current || !modalContainerRef.current) return
+    const updateRect = () => {
+      if (!modalImgRef.current || !modalContainerRef.current) return
+      const containerRect = modalContainerRef.current.getBoundingClientRect()
+      const imgRect = modalImgRef.current.getBoundingClientRect()
+      setModalImgRect({
+        width: imgRect.width,
+        height: imgRect.height,
+        left: imgRect.left - containerRect.left,
+        top: imgRect.top - containerRect.top,
+      })
+    }
+    updateRect()
+    window.addEventListener('resize', updateRect)
+    const observer = new ResizeObserver(updateRect)
+    observer.observe(modalContainerRef.current)
+    observer.observe(modalImgRef.current)
+    // Re-measure once the image finishes loading (natural size can change layout)
+    const imgEl = modalImgRef.current
+    imgEl.addEventListener('load', updateRect)
+    return () => {
+      window.removeEventListener('resize', updateRect)
+      imgEl.removeEventListener('load', updateRect)
+      observer.disconnect()
+    }
+  }, [isRoiModalOpen, previewUrl, imageDimensions])
 
   // Default ROI boxes per station scaled to image dimensions
   const getDefaultRoiForStation = (st: string, imgW = imageDimensions.width, imgH = imageDimensions.height) => {
@@ -98,173 +263,90 @@ export default function StationTester() {
 
   const activeRoi = customRoi || getDefaultRoiForStation(selectedStation)
 
-  // Smooth window mouse tracking for Full Modal Visual Calibrator
-  useEffect(() => {
-    if (!modalDragState || !modalImgRef.current) return
+  // ---------- Modal ROI drag (ref + rAF + direct DOM writes) ----------
 
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!modalImgRef.current) return
-      const rect = modalImgRef.current.getBoundingClientRect()
+  // Paint an ROI straight onto the DOM without touching React state
+  const paintRoi = (roi: Roi, maxW: number, maxH: number) => {
+    const box = roiBoxRef.current
+    if (box) {
+      const s = box.style
+      s.left = `${(roi.x / maxW) * 100}%`
+      s.top = `${(roi.y / maxH) * 100}%`
+      s.width = `${(roi.w / maxW) * 100}%`
+      s.height = `${(roi.h / maxH) * 100}%`
+    }
+    setText(roiLabelTextRef.current, `ROI Zone: ${roi.w} × ${roi.h} px`)
+    setText(coordsWHRef.current, `W: ${roi.w} × H: ${roi.h}`)
+    setText(coordsXYRef.current, `X: ${roi.x}, Y: ${roi.y}`)
+  }
+
+  const stepDrag = () => {
+    rafRef.current = null
+    const d = dragRef.current
+    if (!d) return
+    const dx = (pointerPosRef.current.x - d.startX) * d.scaleX
+    const dy = (pointerPosRef.current.y - d.startY) * d.scaleY
+    const roi = computeRoi(d.type, d.initial, dx, dy, d.maxW, d.maxH)
+    liveRoiRef.current = roi
+    paintRoi(roi, d.maxW, d.maxH)
+  }
+
+  const endModalDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current
+    if (!d) return
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    if (e.type === 'pointerup') {
+      pointerPosRef.current = { x: e.clientX, y: e.clientY }
+    }
+    stepDrag() // flush the final position
+    dragRef.current = null
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* already released */
+    }
+    // Commit to React state exactly once, at the end of the gesture
+    setModalRoi({ ...liveRoiRef.current })
+  }
+
+  const roiPointerProps = (type: DragType) => ({
+    onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== undefined && e.button !== 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      const img = modalImgRef.current
+      if (!img) return
+      // Measure once per drag instead of on every mousemove
+      const rect = img.getBoundingClientRect()
       if (rect.width <= 0 || rect.height <= 0) return
-
-      const scaleX = imageDimensions.width / rect.width
-      const scaleY = imageDimensions.height / rect.height
-      const dx = (e.clientX - modalDragState.startX) * scaleX
-      const dy = (e.clientY - modalDragState.startY) * scaleY
-
-      const init = modalDragState.initialRoi
-      const maxW = imageDimensions.width
-      const maxH = imageDimensions.height
-
-      let newX = init.x
-      let newY = init.y
-      let newW = init.w
-      let newH = init.h
-
-      switch (modalDragState.type) {
-        case 'move':
-          newX = Math.max(0, Math.min(maxW - init.w, Math.round(init.x + dx)))
-          newY = Math.max(0, Math.min(maxH - init.h, Math.round(init.y + dy)))
-          break
-        case 'se':
-          newW = Math.max(40, Math.min(maxW - init.x, Math.round(init.w + dx)))
-          newH = Math.max(40, Math.min(maxH - init.y, Math.round(init.h + dy)))
-          break
-        case 'nw': {
-          const targetX = Math.max(0, Math.min(init.x + init.w - 40, Math.round(init.x + dx)))
-          const targetY = Math.max(0, Math.min(init.y + init.h - 40, Math.round(init.y + dy)))
-          newX = targetX
-          newY = targetY
-          newW = init.w + (init.x - targetX)
-          newH = init.h + (init.y - targetY)
-          break
-        }
-        case 'ne': {
-          const targetY = Math.max(0, Math.min(init.y + init.h - 40, Math.round(init.y + dy)))
-          newY = targetY
-          newW = Math.max(40, Math.min(maxW - init.x, Math.round(init.w + dx)))
-          newH = init.h + (init.y - targetY)
-          break
-        }
-        case 'sw': {
-          const targetX = Math.max(0, Math.min(init.x + init.w - 40, Math.round(init.x + dx)))
-          newX = targetX
-          newW = init.w + (init.x - targetX)
-          newH = Math.max(40, Math.min(maxH - init.y, Math.round(init.h + dy)))
-          break
-        }
-        case 'n': {
-          const targetY = Math.max(0, Math.min(init.y + init.h - 40, Math.round(init.y + dy)))
-          newY = targetY
-          newH = init.h + (init.y - targetY)
-          break
-        }
-        case 's':
-          newH = Math.max(40, Math.min(maxH - init.y, Math.round(init.h + dy)))
-          break
-        case 'w': {
-          const targetX = Math.max(0, Math.min(init.x + init.w - 40, Math.round(init.x + dx)))
-          newX = targetX
-          newW = init.w + (init.x - targetX)
-          break
-        }
-        case 'e':
-          newW = Math.max(40, Math.min(maxW - init.x, Math.round(init.w + dx)))
-          break
+      dragRef.current = {
+        type,
+        startX: e.clientX,
+        startY: e.clientY,
+        initial: { ...liveRoiRef.current },
+        scaleX: imageDimensions.width / rect.width,
+        scaleY: imageDimensions.height / rect.height,
+        maxW: imageDimensions.width,
+        maxH: imageDimensions.height,
       }
+      pointerPosRef.current = { x: e.clientX, y: e.clientY }
+      e.currentTarget.setPointerCapture(e.pointerId)
+    },
+    onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!dragRef.current) return
+      pointerPosRef.current = { x: e.clientX, y: e.clientY }
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(stepDrag)
+      }
+    },
+    onPointerUp: endModalDrag,
+    onPointerCancel: endModalDrag,
+  })
 
-      setModalRoi({ x: newX, y: newY, w: newW, h: newH })
-    }
-
-    const handleMouseUp = () => {
-      setModalDragState(null)
-    }
-
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [modalDragState, imageDimensions])
-
-  // Smooth window mouse tracking for embedded preview
-  useEffect(() => {
-    if (!isDraggingRoi && !resizingHandle) return
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const container = previewImgRef.current || imagePreviewRef.current
-      if (!container) return
-      const rect = container.getBoundingClientRect()
-      if (rect.width <= 0 || rect.height <= 0) return
-
-      const scaleX = imageDimensions.width / rect.width
-      const scaleY = imageDimensions.height / rect.height
-      const dx = (e.clientX - dragStart.x) * scaleX
-      const dy = (e.clientY - dragStart.y) * scaleY
-      setDragStart({ x: e.clientX, y: e.clientY })
-
-      setCustomRoi((prev) => {
-        const curr = prev || getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height)
-        const maxW = imageDimensions.width
-        const maxH = imageDimensions.height
-
-        if (resizingHandle === 'se') {
-          return {
-            x: curr.x,
-            y: curr.y,
-            w: Math.max(50, Math.min(maxW - curr.x, Math.round(curr.w + dx))),
-            h: Math.max(50, Math.min(maxH - curr.y, Math.round(curr.h + dy))),
-          }
-        } else if (resizingHandle === 'nw') {
-          const newX = Math.max(0, Math.min(curr.x + curr.w - 50, Math.round(curr.x + dx)))
-          const newY = Math.max(0, Math.min(curr.y + curr.h - 50, Math.round(curr.y + dy)))
-          return {
-            x: newX,
-            y: newY,
-            w: curr.w + (curr.x - newX),
-            h: curr.h + (curr.y - newY),
-          }
-        } else if (resizingHandle === 'ne') {
-          const newY = Math.max(0, Math.min(curr.y + curr.h - 50, Math.round(curr.y + dy)))
-          return {
-            x: curr.x,
-            y: newY,
-            w: Math.max(50, Math.min(maxW - curr.x, Math.round(curr.w + dx))),
-            h: curr.h + (curr.y - newY),
-          }
-        } else if (resizingHandle === 'sw') {
-          const newX = Math.max(0, Math.min(curr.x + curr.w - 50, Math.round(curr.x + dx)))
-          return {
-            x: newX,
-            y: curr.y,
-            w: curr.w + (curr.x - newX),
-            h: Math.max(50, Math.min(maxH - curr.y, Math.round(curr.h + dy))),
-          }
-        } else {
-          // Full box drag
-          return {
-            x: Math.max(0, Math.min(maxW - curr.w, Math.round(curr.x + dx))),
-            y: Math.max(0, Math.min(maxH - curr.h, Math.round(curr.y + dy))),
-            w: curr.w,
-            h: curr.h,
-          }
-        }
-      })
-    }
-
-    const handleMouseUp = () => {
-      setIsDraggingRoi(false)
-      setResizingHandle(null)
-    }
-
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [isDraggingRoi, resizingHandle, dragStart, selectedStation, imageDimensions])
+  // ---------- Handlers ----------
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -362,11 +444,26 @@ export default function StationTester() {
     }
   }
 
+  // Split slider: update the DOM directly, no React re-render per mouse move
   const handleSplitMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!splitContainerRef.current || viewMode !== 'split') return
     const rect = splitContainerRef.current.getBoundingClientRect()
     const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width))
-    setSplitPosition((x / rect.width) * 100)
+    const pct = (x / rect.width) * 100
+    if (splitClipRef.current) splitClipRef.current.style.clipPath = `inset(0 ${100 - pct}% 0 0)`
+    if (splitDividerRef.current) splitDividerRef.current.style.left = `${pct}%`
+  }
+
+  const openRoiModal = () => {
+    const initial = customRoi || getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height)
+    liveRoiRef.current = initial
+    setModalRoi(initial)
+    setIsRoiModalOpen(true)
+  }
+
+  const applyPreset = (roi: Roi) => {
+    liveRoiRef.current = roi
+    setModalRoi(roi)
   }
 
   const getOutcomeBadge = (outcome: string) => {
@@ -512,10 +609,7 @@ export default function StationTester() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setModalRoi(customRoi || getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height))
-                      setIsRoiModalOpen(true)
-                    }}
+                    onClick={openRoiModal}
                     disabled={!previewUrl}
                     className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 disabled:opacity-40"
                     title={!previewUrl ? "Upload or capture an image first" : "Open full visual ROI calibrator"}
@@ -746,8 +840,9 @@ export default function StationTester() {
 
                     {/* Clipped Original Image on Top */}
                     <div
+                      ref={splitClipRef}
                       className="absolute inset-0 overflow-hidden"
-                      style={{ clipPath: `inset(0 ${100 - splitPosition}% 0 0)` }}
+                      style={{ clipPath: 'inset(0 50% 0 0)' }}
                     >
                       <img
                         src={previewUrl}
@@ -758,8 +853,9 @@ export default function StationTester() {
 
                     {/* Draggable Divider Line */}
                     <div
+                      ref={splitDividerRef}
                       className="absolute top-0 bottom-0 w-0.5 bg-primary-400 shadow-[0_0_8px_rgba(99,102,241,0.8)]"
-                      style={{ left: `${splitPosition}%` }}
+                      style={{ left: '50%' }}
                     >
                       <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6 rounded-full bg-primary-600 border-2 border-white flex items-center justify-center text-[10px] text-white font-bold">
                         ↔
@@ -777,36 +873,44 @@ export default function StationTester() {
                 ) : (
                   <div>
                     <div
-                      ref={imagePreviewRef}
+                      ref={embeddedContainerRef}
                       className="rounded-xl overflow-hidden bg-black/60 h-72 flex items-center justify-center border border-surface-700 relative group"
                     >
-                      <img src={activeDisplayUrl || ''} alt="Inspection view" className="w-full h-full object-contain" />
+                      <img ref={previewImgRef} src={activeDisplayUrl || ''} alt="Inspection view" className="max-h-full max-w-full w-auto h-auto object-contain" />
 
-                      {/* Active Visual ROI Overlay indicator */}
-                      {previewUrl && (
+                      {/* Active Visual ROI Overlay indicator mapped precisely to previewImgRect */}
+                      {previewUrl && previewImgRect && (
                         <div
-                          onClick={() => {
-                            setModalRoi(customRoi || getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height))
-                            setIsRoiModalOpen(true)
-                          }}
-                          className="absolute border-2 border-cyan-400 bg-cyan-500/10 shadow-[0_0_15px_rgba(6,182,212,0.4)] cursor-pointer rounded transition-all hover:bg-cyan-500/20 group/roi z-10"
+                          className="absolute"
                           style={{
-                            left: `${(activeRoi.x / imageDimensions.width) * 100}%`,
-                            top: `${(activeRoi.y / imageDimensions.height) * 100}%`,
-                            width: `${(activeRoi.w / imageDimensions.width) * 100}%`,
-                            height: `${(activeRoi.h / imageDimensions.height) * 100}%`,
+                            left: `${previewImgRect.left}px`,
+                            top: `${previewImgRect.top}px`,
+                            width: `${previewImgRect.width}px`,
+                            height: `${previewImgRect.height}px`,
+                            pointerEvents: 'none',
                           }}
-                          title="Click to open Full Visual ROI Calibrator"
                         >
-                          <div className="absolute top-1 left-1 bg-black/85 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] font-mono text-cyan-300 pointer-events-none flex items-center gap-1 border border-cyan-500/30">
-                            <Crop className="w-2.5 h-2.5 text-cyan-400" />
-                            <span>ROI: {selectedStation} ({activeRoi.w}×{activeRoi.h})</span>
-                          </div>
-                          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/roi:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px]">
-                            <span className="text-[11px] font-semibold text-white bg-cyan-600 px-2.5 py-1 rounded shadow-md flex items-center gap-1.5">
-                              <Maximize2 className="w-3 h-3" />
-                              Open Visual Calibrator
-                            </span>
+                          <div
+                            onClick={openRoiModal}
+                            className="absolute border-2 border-cyan-400 bg-cyan-500/10 shadow-[0_0_15px_rgba(6,182,212,0.4)] cursor-pointer rounded transition-all hover:bg-cyan-500/20 group/roi pointer-events-auto z-10"
+                            style={{
+                              left: `${(activeRoi.x / imageDimensions.width) * 100}%`,
+                              top: `${(activeRoi.y / imageDimensions.height) * 100}%`,
+                              width: `${(activeRoi.w / imageDimensions.width) * 100}%`,
+                              height: `${(activeRoi.h / imageDimensions.height) * 100}%`,
+                            }}
+                            title="Click to open Full Visual ROI Calibrator"
+                          >
+                            <div className="absolute top-1 left-1 bg-black/95 px-1.5 py-0.5 rounded text-[10px] font-mono text-cyan-300 pointer-events-none flex items-center gap-1 border border-cyan-500/30">
+                              <Crop className="w-2.5 h-2.5 text-cyan-400" />
+                              <span>ROI: {selectedStation} ({activeRoi.w}×{activeRoi.h})</span>
+                            </div>
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/roi:opacity-100 transition-opacity bg-black/70">
+                              <span className="text-[11px] font-semibold text-white bg-cyan-600 px-2.5 py-1 rounded shadow-md flex items-center gap-1.5">
+                                <Maximize2 className="w-3 h-3" />
+                                Open Visual Calibrator
+                              </span>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -818,10 +922,7 @@ export default function StationTester() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => {
-                              setModalRoi(customRoi || getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height))
-                              setIsRoiModalOpen(true)
-                            }}
+                            onClick={openRoiModal}
                             className="btn-primary py-1.5 px-3.5 text-xs flex items-center gap-2 font-semibold shadow-md shadow-primary-600/30 bg-gradient-to-r from-primary-600 to-cyan-600 hover:from-primary-500 hover:to-cyan-500"
                           >
                             <Crop className="w-4 h-4 text-white" />
@@ -948,174 +1049,194 @@ export default function StationTester() {
                 )}
               </div>
             )}
-
-            {/* Full Visual ROI Calibrator Modal */}
-            {isRoiModalOpen && previewUrl && (
-              <div
-                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md overflow-y-auto"
-                onClick={(e) => { if (e.target === e.currentTarget) setIsRoiModalOpen(false) }}
-              >
-                <div className="bg-surface-900 rounded-2xl border border-surface-700 shadow-2xl w-full max-w-7xl max-h-[92vh] flex flex-col overflow-hidden my-auto">
-                  {/* Modal Header */}
-                  <div className="flex items-center justify-between px-6 py-4 border-b border-surface-700 bg-surface-850 rounded-t-2xl flex-shrink-0">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-                        <Crop className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-base font-bold text-white">Visual ROI Calibrator — {selectedStation}</div>
-                        <div className="text-xs text-zinc-400">Drag box to position, drag handles or edges to resize. Full resolution view ({imageDimensions.width} × {imageDimensions.height} px).</div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setIsRoiModalOpen(false)}
-                      className="text-zinc-400 hover:text-white hover:bg-surface-800 rounded-xl p-2 transition-colors"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-
-                  {/* Preset Row */}
-                  <div className="flex items-center gap-2.5 px-6 py-3 bg-surface-850 border-b border-surface-700 flex-shrink-0 flex-wrap">
-                    <span className="text-xs text-zinc-400 font-semibold uppercase tracking-wider mr-1">Quick Presets:</span>
-                    {[
-                      { label: 'Full Image', value: () => ({ x: 0, y: 0, w: imageDimensions.width, h: imageDimensions.height }) },
-                      { label: 'Station Default', value: () => getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height) },
-                      { label: 'Center 80%', value: () => ({
-                        x: Math.round(imageDimensions.width * 0.1),
-                        y: Math.round(imageDimensions.height * 0.1),
-                        w: Math.round(imageDimensions.width * 0.8),
-                        h: Math.round(imageDimensions.height * 0.8),
-                      })},
-                      { label: 'Center Seam Strip', value: () => ({
-                        x: Math.round(imageDimensions.width * 0.05),
-                        y: Math.round(imageDimensions.height * 0.35),
-                        w: Math.round(imageDimensions.width * 0.9),
-                        h: Math.round(imageDimensions.height * 0.3),
-                      })},
-                    ].map(({ label, value }) => (
-                      <button
-                        key={label}
-                        type="button"
-                        onClick={() => setModalRoi(value())}
-                        className="text-xs px-3.5 py-1.5 rounded-xl bg-surface-800 border border-surface-700 text-zinc-300 hover:border-cyan-500 hover:text-cyan-300 transition-colors font-medium shadow-sm"
-                      >
-                        {label}
-                      </button>
-                    ))}
-                    <div className="ml-auto text-xs font-mono text-zinc-300 bg-surface-800 px-3 py-1.5 rounded-xl border border-surface-700 flex items-center gap-2 shadow-inner">
-                      <span className="text-zinc-400">Active ROI:</span>
-                      <span className="text-cyan-400 font-bold">{modalRoi.w} × {modalRoi.h}</span>
-                      <span className="text-zinc-500">at</span>
-                      <span className="text-zinc-200">({modalRoi.x}, {modalRoi.y})</span>
-                    </div>
-                  </div>
-
-                  {/* Image Canvas Area - Centered & Fully Visible */}
-                  <div className="relative flex-1 bg-black/95 flex items-center justify-center p-4 overflow-auto min-h-0 w-full">
-                    <div className="relative flex items-center justify-center w-full h-full select-none" style={{ cursor: modalDragState ? 'grabbing' : 'default' }}>
-                      <img
-                        ref={modalImgRef}
-                        src={previewUrl}
-                        alt="ROI calibration canvas"
-                        className="max-h-full max-w-full w-auto h-auto object-contain rounded-xl border border-surface-700 shadow-2xl block"
-                        draggable={false}
-                      />
-
-                      {/* ROI Overlay Box */}
-                      <div
-                        className="absolute border-2 border-cyan-400 bg-cyan-500/15 cursor-grab active:cursor-grabbing shadow-[0_0_30px_rgba(6,182,212,0.5)] rounded-md"
-                        style={{
-                          left: `${(modalRoi.x / imageDimensions.width) * 100}%`,
-                          top: `${(modalRoi.y / imageDimensions.height) * 100}%`,
-                          width: `${(modalRoi.w / imageDimensions.width) * 100}%`,
-                          height: `${(modalRoi.h / imageDimensions.height) * 100}%`,
-                        }}
-                        onMouseDown={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          setModalDragState({ type: 'move', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } })
-                        }}
-                      >
-                        {/* ROI info label */}
-                        <div className="absolute top-2 left-2 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-lg text-xs font-mono text-cyan-300 border border-cyan-500/40 pointer-events-none flex items-center gap-2 shadow-lg">
-                          <Crop className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
-                          <span className="font-bold">ROI: {modalRoi.w} × {modalRoi.h}</span>
-                        </div>
-
-                        {/* N handle */}
-                        <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-6 h-3 bg-cyan-400 rounded-md cursor-ns-resize border border-cyan-200 hover:bg-cyan-300 transition-colors shadow-md"
-                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'n', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
-                        {/* S handle */}
-                        <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-6 h-3 bg-cyan-400 rounded-md cursor-ns-resize border border-cyan-200 hover:bg-cyan-300 transition-colors shadow-md"
-                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 's', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
-                        {/* W handle */}
-                        <div className="absolute top-1/2 -left-2.5 -translate-y-1/2 w-3 h-6 bg-cyan-400 rounded-md cursor-ew-resize border border-cyan-200 hover:bg-cyan-300 transition-colors shadow-md"
-                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'w', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
-                        {/* E handle */}
-                        <div className="absolute top-1/2 -right-2.5 -translate-y-1/2 w-3 h-6 bg-cyan-400 rounded-md cursor-ew-resize border border-cyan-200 hover:bg-cyan-300 transition-colors shadow-md"
-                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'e', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
-                        {/* NW corner */}
-                        <div className="absolute -top-3 -left-3 w-6 h-6 bg-white border-2 border-cyan-500 rounded-full cursor-nwse-resize hover:bg-cyan-200 hover:scale-125 transition-all shadow-lg"
-                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'nw', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
-                        {/* NE corner */}
-                        <div className="absolute -top-3 -right-3 w-6 h-6 bg-white border-2 border-cyan-500 rounded-full cursor-nesw-resize hover:bg-cyan-200 hover:scale-125 transition-all shadow-lg"
-                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'ne', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
-                        {/* SW corner */}
-                        <div className="absolute -bottom-3 -left-3 w-6 h-6 bg-white border-2 border-cyan-500 rounded-full cursor-nesw-resize hover:bg-cyan-200 hover:scale-125 transition-all shadow-lg"
-                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'sw', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
-                        {/* SE corner */}
-                        <div className="absolute -bottom-3 -right-3 w-6 h-6 bg-white border-2 border-cyan-500 rounded-full cursor-nwse-resize hover:bg-cyan-200 hover:scale-125 transition-all shadow-lg"
-                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setModalDragState({ type: 'se', startX: e.clientX, startY: e.clientY, initialRoi: { ...modalRoi } }) }} />
-
-                        {/* Crosshair guides */}
-                        <div className="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px bg-cyan-400/40 pointer-events-none border-l border-dashed border-cyan-400/40" />
-                        <div className="absolute left-0 right-0 top-1/2 -translate-y-px h-px bg-cyan-400/40 pointer-events-none border-t border-dashed border-cyan-400/40" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Footer Actions */}
-                  <div className="flex items-center justify-between gap-4 px-6 py-4 border-t border-surface-700 bg-surface-850 rounded-b-2xl flex-shrink-0">
-                    <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-2 cursor-pointer text-zinc-200 text-xs font-semibold select-none bg-surface-800 px-3 py-2 rounded-xl border border-surface-700 hover:border-cyan-500/50 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={saveDefaultRoi}
-                          onChange={(e) => setSaveDefaultRoi(e.target.checked)}
-                          className="w-4 h-4 accent-cyan-500 rounded bg-surface-900 border-surface-600"
-                        />
-                        Save permanently to station YAML default config
-                      </label>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setIsRoiModalOpen(false)}
-                        className="text-xs px-5 py-2.5 rounded-xl bg-surface-800 border border-surface-700 text-zinc-300 hover:text-white hover:border-surface-600 transition-colors font-semibold"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCustomRoi({ ...modalRoi })
-                          setIsRoiModalOpen(false)
-                        }}
-                        className="text-xs px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-primary-600 hover:from-cyan-500 hover:to-primary-500 text-white font-bold shadow-lg shadow-cyan-600/30 transition-all flex items-center gap-2"
-                      >
-                        <Check className="w-4 h-4" />
-                        Apply ROI & Test
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
+
+      {/* Full Visual ROI Calibrator Modal — rendered via portal into document.body
+          so `position: fixed` is relative to the viewport, not the .card ancestor */}
+      {isRoiModalOpen && previewUrl && createPortal(
+        <div
+          // PERF: solid background, no backdrop-blur (blur over a full-screen layer is very expensive)
+          className="fixed inset-0 z-[100] flex flex-col bg-black overflow-hidden select-none"
+          onClick={(e) => { if (e.target === e.currentTarget) setIsRoiModalOpen(false) }}
+        >
+          {/* Modal Header */}
+          <div className="flex items-center justify-between px-8 py-5 border-b border-surface-700 bg-surface-900 flex-shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                <Crop className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="text-lg font-bold text-white flex items-center gap-3">
+                  <span>Visual ROI Calibrator</span>
+                  <span className="text-xs font-mono bg-surface-800 text-cyan-400 px-3 py-1 rounded-full border border-surface-700">
+                    {selectedStation} ({cameraName})
+                  </span>
+                </div>
+                <div className="text-xs text-zinc-400 mt-0.5">
+                  Full-resolution calibration view ({imageDimensions.width} × {imageDimensions.height} px). Drag inside box to move, use handles to resize smoothly.
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="text-xs font-mono text-zinc-300 bg-surface-800 px-4 py-2 rounded-xl border border-surface-700 flex items-center gap-3">
+                <span className="text-zinc-400">ROI Coordinates:</span>
+                {/* Single string children so the live drag code can update the text node in place */}
+                <span ref={coordsWHRef} className="text-cyan-400 font-bold">{`W: ${modalRoi.w} × H: ${modalRoi.h}`}</span>
+                <span className="text-zinc-500">|</span>
+                <span ref={coordsXYRef} className="text-zinc-200">{`X: ${modalRoi.x}, Y: ${modalRoi.y}`}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsRoiModalOpen(false)}
+                className="text-zinc-400 hover:text-white hover:bg-surface-800 rounded-xl p-2.5 transition-colors"
+                title="Close modal"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+          </div>
+
+          {/* Preset Row & Tools Toolbar */}
+          <div className="flex items-center gap-3 px-8 py-3 bg-surface-850 border-b border-surface-700 flex-shrink-0 flex-wrap">
+            <span className="text-xs text-zinc-400 font-semibold uppercase tracking-wider mr-2">Quick Presets:</span>
+            {[
+              { label: 'Full Image', value: (): Roi => ({ x: 0, y: 0, w: imageDimensions.width, h: imageDimensions.height }) },
+              { label: 'Station Default', value: (): Roi => getDefaultRoiForStation(selectedStation, imageDimensions.width, imageDimensions.height) },
+              { label: 'Center 80%', value: (): Roi => ({
+                x: Math.round(imageDimensions.width * 0.1),
+                y: Math.round(imageDimensions.height * 0.1),
+                w: Math.round(imageDimensions.width * 0.8),
+                h: Math.round(imageDimensions.height * 0.8),
+              })},
+              { label: 'Center Seam Strip', value: (): Roi => ({
+                x: Math.round(imageDimensions.width * 0.05),
+                y: Math.round(imageDimensions.height * 0.35),
+                w: Math.round(imageDimensions.width * 0.9),
+                h: Math.round(imageDimensions.height * 0.3),
+              })},
+            ].map(({ label, value }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => applyPreset(value())}
+                className="text-xs px-4 py-2 rounded-xl bg-surface-800 border border-surface-700 text-zinc-300 hover:border-cyan-500 hover:text-cyan-300 transition-colors font-medium"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Immersive Canvas Area - Full Window without Side-scrolling */}
+          <div ref={modalContainerRef} className="relative flex-1 bg-black flex items-center justify-center p-6 overflow-hidden min-h-0 w-full">
+            <div className="relative flex items-center justify-center w-full h-full">
+              <img
+                ref={modalImgRef}
+                src={previewUrl}
+                alt="ROI calibration canvas"
+                // PERF: no big shadow / heavy rounding on the huge image
+                className="max-h-full max-w-full w-auto h-auto object-contain rounded-lg border border-surface-800 block"
+                draggable={false}
+              />
+
+              {/* ROI Overlay Box mapped precisely to modalImgRect */}
+              {modalImgRect && (
+                <div
+                  className="absolute"
+                  style={{
+                    left: `${modalImgRect.left}px`,
+                    top: `${modalImgRect.top}px`,
+                    width: `${modalImgRect.width}px`,
+                    height: `${modalImgRect.height}px`,
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <div
+                    ref={roiBoxRef}
+                    // PERF: no large glow shadow, no transitions on the box; touch-none for pointer events
+                    className="absolute border-2 border-cyan-400 bg-cyan-500/15 cursor-grab active:cursor-grabbing rounded-sm pointer-events-auto touch-none"
+                    style={{
+                      left: `${(modalRoi.x / imageDimensions.width) * 100}%`,
+                      top: `${(modalRoi.y / imageDimensions.height) * 100}%`,
+                      width: `${(modalRoi.w / imageDimensions.width) * 100}%`,
+                      height: `${(modalRoi.h / imageDimensions.height) * 100}%`,
+                      willChange: 'left, top, width, height',
+                    }}
+                    {...roiPointerProps('move')}
+                  >
+                    {/* ROI info label */}
+                    <div className="absolute top-3 left-3 bg-black/90 px-3 py-1.5 rounded-xl text-xs font-mono text-cyan-300 border border-cyan-500/40 pointer-events-none flex items-center gap-2">
+                      <Crop className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+                      <span ref={roiLabelTextRef} className="font-bold">{`ROI Zone: ${modalRoi.w} × ${modalRoi.h} px`}</span>
+                    </div>
+
+                    {/* Edge resize handles */}
+                    {EDGE_HANDLES.map(({ type, cls }) => (
+                      <div
+                        key={type}
+                        className={`absolute ${cls} bg-cyan-400 rounded-md border border-cyan-200 hover:bg-cyan-300 touch-none`}
+                        {...roiPointerProps(type)}
+                      />
+                    ))}
+
+                    {/* Corner resize handles */}
+                    {CORNER_HANDLES.map(({ type, cls }) => (
+                      <div
+                        key={type}
+                        className={`absolute ${cls} w-7 h-7 bg-white border-2 border-cyan-500 rounded-full hover:bg-cyan-200 touch-none`}
+                        {...roiPointerProps(type)}
+                      />
+                    ))}
+
+                    {/* Crosshair guide lines */}
+                    <div className="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px pointer-events-none border-l border-dashed border-cyan-400/40" />
+                    <div className="absolute left-0 right-0 top-1/2 -translate-y-px h-px pointer-events-none border-t border-dashed border-cyan-400/40" />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Footer Actions */}
+          <div className="flex items-center justify-between gap-6 px-8 py-5 border-t border-surface-700 bg-surface-900 flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-3 cursor-pointer text-zinc-200 text-sm font-semibold select-none bg-surface-800 px-4 py-2.5 rounded-xl border border-surface-700 hover:border-cyan-500/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={saveDefaultRoi}
+                  onChange={(e) => setSaveDefaultRoi(e.target.checked)}
+                  className="w-4 h-4 accent-cyan-500 rounded bg-surface-900 border-surface-600"
+                />
+                Save permanently to station YAML default config
+              </label>
+            </div>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setIsRoiModalOpen(false)}
+                className="text-sm px-6 py-3 rounded-xl bg-surface-800 border border-surface-700 text-zinc-300 hover:text-white hover:border-surface-600 transition-colors font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomRoi({ ...liveRoiRef.current })
+                  setIsRoiModalOpen(false)
+                }}
+                className="text-sm px-8 py-3 rounded-xl bg-gradient-to-r from-cyan-600 to-primary-600 hover:from-cyan-500 hover:to-primary-500 text-white font-bold transition-all flex items-center gap-2.5"
+              >
+                <Check className="w-5 h-5" />
+                Save & Apply ROI
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }
-

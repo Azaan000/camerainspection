@@ -91,7 +91,7 @@ export default function AndonBoard() {
   return (
     <div className={`space-y-6 ${isFullscreen ? 'p-8 bg-surface-950 min-h-screen' : ''}`}>
       {/* Top Bar with High-Visibility Clock and Fullscreen Control */}
-      <div className="flex items-center justify-between bg-surface-900/90 backdrop-blur p-4 rounded-2xl border border-surface-700">
+      <div className="flex items-center justify-between bg-surface-900 p-4 rounded-2xl border border-surface-700">
         <div className="flex items-center gap-4">
           <div className="p-2.5 rounded-xl bg-primary-600/20 text-primary-400 border border-primary-500/30">
             <Tv className="w-7 h-7" />

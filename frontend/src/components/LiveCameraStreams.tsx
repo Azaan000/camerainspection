@@ -350,7 +350,7 @@ export default function LiveCameraStreams() {
             )}
 
             {/* Overlay Telemetry HUD */}
-            <div className="absolute top-4 left-4 bg-black/75 backdrop-blur px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-300 border border-white/10 flex items-center gap-3">
+            <div className="absolute top-4 left-4 bg-black/90 px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-300 border border-white/10 flex items-center gap-3">
               <span>FPS: {autoRefresh ? '1.0' : 'Manual'}</span>
               <span>•</span>
               <span>Res: {frameWidth}x{frameHeight}</span>
@@ -359,7 +359,7 @@ export default function LiveCameraStreams() {
             </div>
 
             {inspectLive && inspectResult && (
-              <div className="absolute bottom-4 left-4 right-4 bg-black/85 backdrop-blur p-3 rounded-lg border border-white/10 flex items-center justify-between text-xs">
+              <div className="absolute bottom-4 left-4 right-4 bg-black/95 p-3 rounded-lg border border-white/10 flex items-center justify-between text-xs">
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-1.5">
                     <ShieldAlert className="w-4 h-4 text-warning-400" />

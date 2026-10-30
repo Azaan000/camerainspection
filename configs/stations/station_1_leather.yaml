@@ -78,6 +78,8 @@ model:
   threshold: 0.45
   pass_below: 0.4
   fail_above: 0.6
+  enable_glare_filter: true
+  glare_lightness_threshold: 240
 trigger:
   timeout_s: 5.0
 quality:

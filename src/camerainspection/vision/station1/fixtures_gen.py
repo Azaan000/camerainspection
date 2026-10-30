@@ -184,3 +184,18 @@ def generate_station1_replay_frames(output_dir: Path) -> None:
         make_leather_with_stain(w, h, cx=sf_x + 200, cy=sf_y, rx=20, ry=15, darkness=0),
     )
 
+
+def make_leather_with_glare(
+    width: int = 640,
+    height: int = 480,
+    cx: int = 320,
+    cy: int = 240,
+    radius: int = 40,
+    peak_brightness: int = 255,
+) -> np.ndarray:
+    """Generate a dark leather panel with a high-intensity specular reflection / glare spot."""
+    canvas = _dark_leather_base(width, height)
+    cv2.circle(canvas, (cx, cy), radius, (peak_brightness, peak_brightness, peak_brightness), -1)
+    canvas = cv2.GaussianBlur(canvas, (9, 9), 0)
+    return canvas
+

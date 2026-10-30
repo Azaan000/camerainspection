@@ -57,7 +57,7 @@
 
   /* Card Styles */
   .card {
-    @apply bg-surface-800 border border-surface-700 rounded-2xl shadow-xl backdrop-blur-sm transition-all;
+    @apply bg-surface-800 border border-surface-700 rounded-2xl shadow-md transition-colors duration-150;
   }
 
   .card-header {
