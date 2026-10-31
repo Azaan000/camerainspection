@@ -5,13 +5,19 @@ import { AlertTriangle, CheckCircle, X } from 'lucide-react'
 
 export default function ReviewQueue() {
   const [reviews, setReviews] = useState<ReviewItem[]>([])
+  const [shadowMode, setShadowMode] = useState(false)
   const [loading, setLoading] = useState(true)
   const [resolving, setResolving] = useState<number | null>(null)
+  const [successToast, setSuccessToast] = useState<string | null>(null)
 
-  const fetchReviews = async () => {
+  const fetchData = async () => {
     try {
-      const result = await apiClient.getPendingReviews()
-      setReviews(result)
+      const [reviewData, settingsData] = await Promise.all([
+        apiClient.getPendingReviews(),
+        apiClient.getSystemSettings().catch(() => ({ shadow_mode: false })),
+      ])
+      setReviews(reviewData)
+      setShadowMode((settingsData as any)?.shadow_mode || false)
     } catch (error) {
       console.error('Failed to fetch reviews:', error)
     } finally {
@@ -20,16 +26,18 @@ export default function ReviewQueue() {
   }
 
   useEffect(() => {
-    fetchReviews()
-    const interval = setInterval(fetchReviews, 5000)
+    fetchData()
+    const interval = setInterval(fetchData, 5000)
     return () => clearInterval(interval)
   }, [])
 
-  const handleResolve = async (reviewId: number, decision: 'PASS' | 'REWORK' | 'SCRAP') => {
+  const handleResolve = async (reviewId: number, seatId: string, decision: 'PASS' | 'REWORK' | 'SCRAP') => {
     setResolving(reviewId)
     try {
       await apiClient.resolveReview(reviewId, decision, `Resolved as ${decision} via dashboard`)
-      await fetchReviews()
+      setSuccessToast(`Seat ${seatId} successfully dispositioned as ${decision}`)
+      setTimeout(() => setSuccessToast(null), 4000)
+      await fetchData()
     } catch (error) {
       console.error('Failed to resolve review:', error)
       alert('Failed to resolve review. Please try again.')
@@ -42,9 +50,9 @@ export default function ReviewQueue() {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (reviews.length === 0) return
       const firstReview = reviews[0]
-      if (e.key === '1') handleResolve(firstReview.review_id, 'PASS')
-      else if (e.key === '2') handleResolve(firstReview.review_id, 'REWORK')
-      else if (e.key === '3') handleResolve(firstReview.review_id, 'SCRAP')
+      if (e.key === '1') handleResolve(firstReview.review_id, firstReview.seat_id, 'PASS')
+      else if (e.key === '2') handleResolve(firstReview.review_id, firstReview.seat_id, 'REWORK')
+      else if (e.key === '3') handleResolve(firstReview.review_id, firstReview.seat_id, 'SCRAP')
     }
     window.addEventListener('keypress', handleKeyPress)
     return () => window.removeEventListener('keypress', handleKeyPress)
@@ -56,29 +64,57 @@ export default function ReviewQueue() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="font-bold text-white text-2xl">Human Review Queue</h2>
-        <span className="badge-review px-4 py-1.5 rounded-full text-sm font-bold">{reviews.length} pending</span>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="font-bold text-white text-2xl flex items-center gap-3">
+            <AlertTriangle className="w-7 h-7 text-warning-400" />
+            Human Review Queue & Disposition
+          </h2>
+          <p className="text-sm text-zinc-400 mt-1">
+            {shadowMode
+              ? 'Shadow Mode active: Review queue items are for offline audit and escape tracking.'
+              : 'Production Mode active: Review resolutions actively control factory pallet release.'}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {shadowMode ? (
+            <span className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">
+              SHADOW MODE (Audit)
+            </span>
+          ) : (
+            <span className="px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+              PRODUCTION MODE
+            </span>
+          )}
+          <span className="badge-review px-4 py-1.5 rounded-full text-sm font-bold">{reviews.length} pending</span>
+        </div>
       </div>
+
+      {successToast && (
+        <div className="p-4 bg-success-900/20 text-success-400 text-sm rounded-xl border border-success-500 flex items-center gap-2 animate-fade-in">
+          <CheckCircle className="w-5 h-5 flex-shrink-0" />
+          {successToast}
+        </div>
+      )}
 
       {reviews.length > 0 && (
         <div className="p-4 rounded-xl bg-primary-900/20 border border-primary-500/20 text-sm text-zinc-300 flex items-center justify-between">
           <div>
-            💡 <strong>Shortcuts:</strong> Press{' '}
+            💡 <strong>Keyboard Shortcuts:</strong> Press{' '}
             <code className="px-2 py-1 rounded bg-black/40 text-success-400 font-mono">[1]</code> PASS,{' '}
             <code className="px-2 py-1 rounded bg-black/40 text-warning-400 font-mono">[2]</code> REWORK,{' '}
             <code className="px-2 py-1 rounded bg-black/40 text-danger-400 font-mono">[3]</code> SCRAP.
           </div>
-          <div className="text-primary-400 font-medium">Floor Mode</div>
+          <div className="text-primary-400 font-medium">Floor Mode Active</div>
         </div>
       )}
 
       <div className="space-y-4">
         {reviews.length === 0 ? (
-          <div className="text-zinc-500 py-16 text-center">
-            <CheckCircle className="w-16 h-16 mx-auto mb-4 text-zinc-600" />
-            <p className="text-lg">No pending reviews</p>
-            <p className="text-sm mt-2">All inspections cleared</p>
+          <div className="text-zinc-500 py-16 text-center card">
+            <CheckCircle className="w-16 h-16 mx-auto mb-4 text-success-500 opacity-80" />
+            <p className="text-lg font-semibold text-white">No pending reviews</p>
+            <p className="text-sm mt-1 text-zinc-400">All seat inspection ambiguities have been cleared.</p>
           </div>
         ) : (
           reviews.map((review) => (
@@ -107,27 +143,27 @@ export default function ReviewQueue() {
                     </div>
                   )}
 
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 flex-wrap">
                     <button
-                      onClick={() => handleResolve(review.review_id, 'PASS')}
+                      onClick={() => handleResolve(review.review_id, review.seat_id, 'PASS')}
                       disabled={resolving === review.review_id}
-                      className="btn-primary bg-success-500 hover:bg-success-600 flex items-center gap-2"
+                      className="btn-primary bg-emerald-600 hover:bg-emerald-500 flex items-center gap-2 shadow-lg shadow-emerald-600/20"
                     >
                       <CheckCircle className="w-4 h-4" />
                       {resolving === review.review_id ? 'Processing...' : 'PASS [1]'}
                     </button>
                     <button
-                      onClick={() => handleResolve(review.review_id, 'REWORK')}
+                      onClick={() => handleResolve(review.review_id, review.seat_id, 'REWORK')}
                       disabled={resolving === review.review_id}
-                      className="btn-primary bg-warning-500 hover:bg-warning-600 flex items-center gap-2"
+                      className="btn-primary bg-amber-600 hover:bg-amber-500 flex items-center gap-2 shadow-lg shadow-amber-600/20"
                     >
                       <AlertTriangle className="w-4 h-4" />
                       REWORK [2]
                     </button>
                     <button
-                      onClick={() => handleResolve(review.review_id, 'SCRAP')}
+                      onClick={() => handleResolve(review.review_id, review.seat_id, 'SCRAP')}
                       disabled={resolving === review.review_id}
-                      className="btn-primary bg-danger-500 hover:bg-danger-600 flex items-center gap-2"
+                      className="btn-primary bg-rose-600 hover:bg-rose-500 flex items-center gap-2 shadow-lg shadow-rose-600/20"
                     >
                       <X className="w-4 h-4" />
                       SCRAP [3]
