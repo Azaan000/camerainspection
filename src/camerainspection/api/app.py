@@ -907,6 +907,31 @@ def create_app(
     # Live Monitoring Dashboard Endpoints (Authenticated)
     # -------------------------------------------------------------
 
+    def _resolve_seat_images(seat_id: str) -> tuple[str | None, dict[str, str]]:
+        """Return (annotated_image_path, camera_image_paths) for a seat.
+
+        Checks station_results rows first (DB-linked path), then falls back to
+        scanning storage/captures/<seat_id>/ on disk so images are found even
+        when the DB has no station_results yet.
+        """
+        captures_dir = repo_root / "storage" / "captures" / seat_id
+        annotated_image_path: str | None = None
+        camera_image_paths: dict[str, str] = {}
+
+        if captures_dir.is_dir():
+            # Prefer annotated files; fall back to raw if nothing annotated exists
+            annotated_files = sorted(captures_dir.glob("*_annotated.*"))
+            raw_files = sorted(captures_dir.glob("*_raw.*"))
+            candidates = annotated_files or raw_files
+            for f in candidates:
+                rel = f"storage/captures/{seat_id}/{f.name}"
+                cam_key = f.stem  # e.g. "STATION_1_front_cushion_backrest_annotated"
+                camera_image_paths[cam_key] = rel
+            if candidates:
+                annotated_image_path = f"storage/captures/{seat_id}/{candidates[0].name}"
+
+        return annotated_image_path, camera_image_paths
+
     @app.get("/api/v1/dashboard/live")
     def get_live_line_view(
         auth_user: str = Depends(verify_api_key),
@@ -915,9 +940,9 @@ def create_app(
         with db_manager.session_scope() as session:
             seats = session.query(SeatInspectionRecord).order_by(SeatInspectionRecord.created_at.desc()).limit(20).all()
 
-            # For each seat, find the first station result that has an annotated image
             strip = []
             for s in reversed(seats):
+                # Try DB-linked paths first
                 annotated_image_path: str | None = None
                 camera_image_paths: dict[str, str] = {}
                 for st in (s.station_results or []):
@@ -931,6 +956,10 @@ def create_app(
                             pass
                     if annotated_image_path:
                         break
+
+                # Fall back to disk scan when DB has no image paths for this seat
+                if not annotated_image_path:
+                    annotated_image_path, camera_image_paths = _resolve_seat_images(s.seat_id)
 
                 strip.append({
                     "seat_id": s.seat_id,
@@ -948,6 +977,19 @@ def create_app(
                 "recent_strip": strip,
                 "sample_size": len(strip),
             }
+
+    @app.get("/api/v1/captures/{seat_id}/images")
+    def get_seat_capture_images(
+        seat_id: str,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Return all capture image paths for a given seat_id by scanning disk."""
+        annotated_image_path, camera_image_paths = _resolve_seat_images(seat_id)
+        return {
+            "seat_id": seat_id,
+            "annotated_image_path": annotated_image_path,
+            "camera_image_paths": camera_image_paths,
+        }
 
     @app.get("/api/v1/dashboard/quality-trends")
     def get_quality_trends(
