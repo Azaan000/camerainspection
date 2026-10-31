@@ -148,6 +148,7 @@ export default function Header({ currentSection, onSectionChange, onBarcodeScan 
     { id: 'spc', label: 'SPC Charts', icon: Target },
     { id: 'audit', label: 'Audit Log', icon: ClipboardList },
     { id: 'report', label: 'Shift Report', icon: FileText },
+    { id: 'shadowinspector', label: 'Shadow Inspector', icon: FlaskConical },
     { id: 'health', label: 'System Health', icon: Wrench },
     { id: 'settings', label: 'Settings', icon: Settings },
   ]

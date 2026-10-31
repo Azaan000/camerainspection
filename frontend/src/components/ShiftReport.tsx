@@ -4,14 +4,19 @@ import { FileText, Shield, AlertTriangle, CheckCircle, RefreshCw, Download } fro
 
 export default function ShiftReport() {
   const [report, setReport] = useState<any>(null)
+  const [shadowMode, setShadowMode] = useState(false)
   const [loading, setLoading] = useState(true)
   const [threshold, setThreshold] = useState(3.0)
 
   const fetchReport = async () => {
     setLoading(true)
     try {
-      const data = await apiClient.getShiftReport(threshold)
+      const [data, settings] = await Promise.all([
+        apiClient.getShiftReport(threshold),
+        apiClient.getSystemSettings().catch(() => ({ shadow_mode: false })),
+      ])
       setReport(data)
+      setShadowMode(!!(settings as any)?.shadow_mode)
     } catch (error) {
       console.error('Failed to fetch shift report:', error)
     } finally {
@@ -68,24 +73,26 @@ export default function ShiftReport() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="stat-card">
               <div className="stat-label">Total Inspected</div>
-              <div className="stat-value text-white">{report.total_inspected ?? report.sample_size ?? 0}</div>
+              <div className="stat-value text-white">{report.total_inspected ?? 0}</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">AI Pass Rate</div>
               <div className="stat-value text-success-400">
-                {(((report.pass_rate ?? report.ai_pass_rate ?? 0) * 100)).toFixed(1)}%
+                {report.total_inspected > 0
+                  ? ((report.camera_pass_count / report.total_inspected) * 100).toFixed(1)
+                  : '0.0'}%
               </div>
             </div>
             <div className="stat-card border-warning-900/50">
               <div className="stat-label">False Reject Rate</div>
               <div className="stat-value text-warning-400">
-                {(report.false_reject_rate ?? 0).toFixed(2)}%
+                {((report.false_reject_rate ?? 0) * 100).toFixed(2)}%
               </div>
             </div>
             <div className="stat-card border-danger-900/50">
               <div className="stat-label">Escape Rate</div>
               <div className="stat-value text-danger-400">
-                {(report.escape_rate ?? 0).toFixed(2)}%
+                {((report.escape_rate ?? 0) * 100).toFixed(2)}%
               </div>
             </div>
           </div>
@@ -98,20 +105,40 @@ export default function ShiftReport() {
                 Shadow Mode & Agreement
               </h3>
               <div className="space-y-3 text-sm text-zinc-300 bg-surface-900 p-4 rounded-xl border border-surface-700">
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span>Shadow Mode Status:</span>
-                  <span className="font-mono text-primary-400">{report.shadow_mode_active ? 'Active' : 'Inactive'}</span>
+                  {shadowMode ? (
+                    <span className="px-2.5 py-1 rounded text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                      ACTIVE (Simulation)
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-1 rounded text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                      INACTIVE (Production)
+                    </span>
+                  )}
                 </div>
                 <div className="flex justify-between">
                   <span>Agreement Rate:</span>
                   <span className="font-mono text-success-400">
-                    {report.agreement_rate !== undefined ? `${(report.agreement_rate * 100).toFixed(1)}%` : 'N/A'}
+                    {report.agreement_rate !== undefined
+                      ? `${(report.agreement_rate * 100).toFixed(1)}%`
+                      : 'N/A'}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Total Shadow Reviews:</span>
-                  <span className="font-mono text-white">{report.total_shadow_reviews ?? report.total_reviews ?? 0}</span>
+                  <span>Human Decisions Recorded:</span>
+                  <span className="font-mono text-white">{report.human_decisions_count ?? 0}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span>Compared Sample Size:</span>
+                  <span className="font-mono text-white">{report.compared_sample_size ?? 0}</span>
+                </div>
+                {report.human_decisions_count === 0 && (
+                  <div className="pt-2 text-xs text-amber-400 border-t border-surface-700 flex items-start gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    No human decisions recorded yet. Use the Shadow Inspector module to log ground-truth decisions for AI comparison.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -121,6 +148,12 @@ export default function ShiftReport() {
                 Quality Recommendations
               </h3>
               <div className="space-y-2 text-sm text-zinc-300">
+                {report.flagged_false_reject_warning && (
+                  <div className="p-3 bg-danger-900/20 rounded-lg border border-danger-500/40 flex items-start gap-2 text-danger-300">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-danger-400" />
+                    <span>False-reject rate exceeds {report.threshold_pct?.toFixed(1)}% threshold. Retune station tolerances or inspect camera lighting.</span>
+                  </div>
+                )}
                 {report.recommendations && report.recommendations.length > 0 ? (
                   report.recommendations.map((rec: string, idx: number) => (
                     <div key={idx} className="p-3 bg-surface-900 rounded-lg border border-surface-700 flex items-start gap-2">
@@ -142,3 +175,4 @@ export default function ShiftReport() {
     </div>
   )
 }
+

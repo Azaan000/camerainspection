@@ -21,6 +21,7 @@ import CameraCalibration from './components/CameraCalibration'
 import GoldenSampleComparator from './components/GoldenSampleComparator'
 import ReworkBench from './components/ReworkBench'
 import ConfigManagement from './components/ConfigManagement'
+import ShadowInspector from './components/ShadowInspector'
 
 function App() {
   const [currentSection, setCurrentSection] = useState('live')
@@ -64,6 +65,7 @@ function App() {
         {currentSection === 'spc' && <SPCCharts />}
         {currentSection === 'audit' && <AuditLog />}
         {currentSection === 'report' && <ShiftReport />}
+        {currentSection === 'shadowinspector' && <ShadowInspector />}
         {currentSection === 'settings' && <Settings />}
       </main>
     </div>
