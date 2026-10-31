@@ -914,16 +914,34 @@ def create_app(
         """View 1: Live line view - last 20 seats as pass/fail strip and line status."""
         with db_manager.session_scope() as session:
             seats = session.query(SeatInspectionRecord).order_by(SeatInspectionRecord.created_at.desc()).limit(20).all()
-            strip = [
-                {
+
+            # For each seat, find the first station result that has an annotated image
+            strip = []
+            for s in reversed(seats):
+                annotated_image_path: str | None = None
+                camera_image_paths: dict[str, str] = {}
+                for st in (s.station_results or []):
+                    if st.annotated_image_path:
+                        annotated_image_path = st.annotated_image_path
+                    if st.camera_image_paths_json:
+                        try:
+                            cam_paths = json.loads(st.camera_image_paths_json)
+                            camera_image_paths.update(cam_paths)
+                        except Exception:
+                            pass
+                    if annotated_image_path:
+                        break
+
+                strip.append({
                     "seat_id": s.seat_id,
                     "variant_id": s.variant_id,
                     "outcome": s.outcome,
                     "label_printer": s.label_printer_enabled,
                     "timestamp": s.created_at.isoformat() if s.created_at else None,
-                }
-                for s in reversed(seats)
-            ]
+                    "annotated_image_path": annotated_image_path,
+                    "camera_image_paths": camera_image_paths,
+                })
+
             current = seats[0].seat_id if seats else None
             return {
                 "current_seat_id": current,

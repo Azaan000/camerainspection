@@ -12,6 +12,8 @@ interface SeatCard {
   timestamp: string
   decided?: boolean
   human_decision?: 'PASS' | 'FAIL'
+  annotated_image_path: string | null
+  camera_image_paths: Record<string, string>
 }
 
 interface RecentDecision {
@@ -100,6 +102,8 @@ export default function ShadowInspector() {
           timestamp: s.timestamp,
           decided: isDecided,
           human_decision: existingDecision?.decision,
+          annotated_image_path: s.annotated_image_path || null,
+          camera_image_paths: s.camera_image_paths || {},
         }
       })
       setSeatCards(strip)
@@ -291,8 +295,11 @@ export default function ShadowInspector() {
           ) : (
             <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
               {seatCards.map(card => {
-                const captureImgUrl = `${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/storage/captures/INJECTED/${card.seat_id}.jpg`
-                const fallbackImgUrl = `${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/storage/captures/INJECTED/STATION_1_main_1793412121.jpg`
+                const BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+                // Pick the best available image: annotated path from API, first camera path, or nothing
+                const firstCamPath = Object.values(card.camera_image_paths)[0] || null
+                const rawPath = card.annotated_image_path || firstCamPath
+                const captureImgUrl = rawPath ? `${BASE}/${rawPath.replace(/^\/+/, '')}` : null
 
                 return (
                   <div
@@ -321,6 +328,7 @@ export default function ShadowInspector() {
                     </div>
 
                     {/* Inline Thumbnail Preview that opens modal on click */}
+                    {captureImgUrl ? (
                     <div
                       onClick={() => setInspectSeatId(card.seat_id)}
                       className="relative rounded-xl overflow-hidden border border-surface-700 bg-surface-950 h-36 cursor-pointer group"
@@ -329,14 +337,16 @@ export default function ShadowInspector() {
                         src={captureImgUrl}
                         alt={`Seat ${card.seat_id}`}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        onError={(e) => {
-                          ;(e.target as HTMLImageElement).src = fallbackImgUrl
-                        }}
                       />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-semibold text-xs">
                         <Eye className="w-4 h-4" /> Click to Inspect High-Res Capture
                       </div>
                     </div>
+                    ) : (
+                      <div className="flex items-center justify-center h-20 rounded-xl bg-surface-950 border border-surface-700 text-zinc-600 text-xs gap-2">
+                        <Eye className="w-4 h-4" /> No capture saved for this seat
+                      </div>
+                    )}
 
                     {card.decided ? (
                       <div className={`flex items-center gap-2 text-sm font-semibold ${
@@ -430,7 +440,13 @@ export default function ShadowInspector() {
       </div>
 
       {/* Image Inspection Modal */}
-      {inspectSeatId && (
+      {inspectSeatId && (() => {
+        const BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+        const card = seatCards.find(c => c.seat_id === inspectSeatId)
+        const firstCamPath = card ? Object.values(card.camera_image_paths)[0] || null : null
+        const rawPath = card?.annotated_image_path || firstCamPath
+        const modalImgUrl = rawPath ? `${BASE}/${rawPath.replace(/^\/+/, '')}` : null
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="card max-w-3xl w-full p-6 space-y-4 border border-primary-500/40 bg-surface-900 shadow-2xl relative">
             <div className="flex items-center justify-between border-b border-surface-700 pb-3">
@@ -447,14 +463,18 @@ export default function ShadowInspector() {
             </div>
 
             <div className="flex flex-col items-center justify-center p-4 bg-surface-950 rounded-xl border border-surface-800">
-              <img
-                src={`${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/storage/captures/INJECTED/${inspectSeatId}.jpg`}
-                alt={`Seat ${inspectSeatId}`}
-                className="max-h-[480px] object-contain rounded-lg border border-surface-700 shadow-lg"
-                onError={(e) => {
-                  ;(e.target as HTMLImageElement).src = `${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/storage/captures/INJECTED/STATION_1_main_1793412121.jpg`
-                }}
-              />
+              {modalImgUrl ? (
+                <img
+                  src={modalImgUrl}
+                  alt={`Seat ${inspectSeatId}`}
+                  className="max-h-[480px] object-contain rounded-lg border border-surface-700 shadow-lg"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-48 text-zinc-500 text-sm gap-2">
+                  <Eye className="w-10 h-10 text-zinc-700" />
+                  No capture image available for this seat
+                </div>
+              )}
               <div className="text-xs text-zinc-400 mt-3 font-mono">
                 Showing inspection capture frame for {inspectSeatId}
               </div>
@@ -470,7 +490,8 @@ export default function ShadowInspector() {
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
