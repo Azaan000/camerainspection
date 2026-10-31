@@ -14,6 +14,7 @@ export default function AndonBoard() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [liveData, setLiveData] = useState<LiveLineResponse | null>(null)
   const [trends, setTrends] = useState<QualityTrendsResponse | null>(null)
+  const [health, setHealth] = useState<SystemHealthResponse | null>(null)
   const [shadowMode, setShadowMode] = useState(false)
   const [, setLoading] = useState(true)
 

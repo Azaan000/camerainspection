@@ -23,6 +23,8 @@ export default function Settings() {
   const [detecting, setDetecting] = useState(false)
   const [testingCameraId, setTestingCameraId] = useState<string | null>(null)
   const [cameraTestResult, setCameraTestResult] = useState<any>(null)
+  const [cleanupResult, setCleanupResult] = useState<any>(null)
+  const [cleaningUp, setCleaningUp] = useState(false)
   const [showShadowModal, setShowShadowModal] = useState(false)
   const [pendingShadowMode, setPendingShadowMode] = useState(false)
 
