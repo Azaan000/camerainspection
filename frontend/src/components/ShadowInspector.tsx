@@ -1,66 +1,141 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { apiClient } from '../lib/api'
-import { FlaskConical, CheckCircle, XCircle, AlertTriangle, ClipboardList } from 'lucide-react'
+import {
+  FlaskConical, CheckCircle, XCircle, AlertTriangle,
+  ClipboardList, RefreshCw, Activity,
+} from 'lucide-react'
+
+interface SeatCard {
+  seat_id: string
+  variant_id: string
+  outcome: string
+  timestamp: string
+  decided?: boolean
+  human_decision?: 'PASS' | 'FAIL'
+}
 
 interface RecentDecision {
   seat_id: string
   inspector_id: string
-  decision: string
+  decision: 'PASS' | 'FAIL'
   notes: string
   timestamp: string
 }
 
+interface ShiftStats {
+  total_inspected: number
+  human_decisions_count: number
+  compared_sample_size: number
+  agreement_rate: number
+  false_reject_rate: number
+  escape_rate: number
+}
+
 export default function ShadowInspector() {
   const [shadowMode, setShadowMode] = useState<boolean | null>(null)
-  const [seatId, setSeatId] = useState('')
   const [inspectorId, setInspectorId] = useState(() => localStorage.getItem('sg_inspector_id') || '')
-  const [notes, setNotes] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  const [submitting, setSubmitting] = useState<string | null>(null) // seat_id being submitted
   const [successToast, setSuccessToast] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [seatCards, setSeatCards] = useState<SeatCard[]>([])
   const [recentDecisions, setRecentDecisions] = useState<RecentDecision[]>([])
+  const [stats, setStats] = useState<ShiftStats | null>(null)
+  const [notesMap, setNotesMap] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const decidedRef = useRef<Set<string>>(new Set())
+
+  const fetchAll = async () => {
+    try {
+      const [settingsData, liveData, statsResp] = await Promise.all([
+        apiClient.getSystemSettings().catch(() => ({ shadow_mode: false })),
+        apiClient.getLiveLine().catch(() => ({ recent_strip: [] })),
+        apiClient.getShadowModeStats().catch(() => ({}) as any),
+      ])
+      const mode = !!(settingsData as any)?.shadow_mode
+      setShadowMode(mode)
+      // Map ShadowModeStats fields to ShiftStats
+      setStats({
+        total_inspected: (statsResp as any).total_inspected || 0,
+        human_decisions_count: (statsResp as any).human_decisions_count || recentDecisions.length,
+        compared_sample_size: (statsResp as any).compared_sample_size || 0,
+        agreement_rate: (statsResp as any).agreement_rate || 0,
+        false_reject_rate: (statsResp as any).false_reject_rate || 0,
+        escape_rate: (statsResp as any).escape_rate || 0,
+      })
+
+      const strip: SeatCard[] = ((liveData as any)?.recent_strip || []).map((s: any) => ({
+        seat_id: s.seat_id,
+        variant_id: s.variant_id,
+        outcome: s.outcome,
+        timestamp: s.timestamp,
+        decided: decidedRef.current.has(s.seat_id),
+        human_decision: undefined,
+      }))
+      setSeatCards(strip)
+    } catch (err) {
+      console.error('ShadowInspector fetch error:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    apiClient.getSystemSettings()
-      .then((s: any) => setShadowMode(!!s?.shadow_mode))
-      .catch(() => setShadowMode(false))
+    fetchAll()
+    const interval = setInterval(fetchAll, 8000)
+    return () => clearInterval(interval)
   }, [])
 
-  const handleSubmit = async (decision: 'PASS' | 'FAIL') => {
-    if (!seatId.trim() || !inspectorId.trim()) {
-      setErrorMsg('Seat ID and Inspector ID are required.')
+  const handleDecide = async (seatId: string, decision: 'PASS' | 'FAIL') => {
+    if (!inspectorId.trim()) {
+      setErrorMsg('Please enter your Inspector ID before recording decisions.')
       return
     }
-    setSubmitting(true)
+    setSubmitting(seatId)
     setErrorMsg(null)
+    const notes = notesMap[seatId] || ''
     try {
-      await apiClient.recordShadowDecision(seatId.trim(), inspectorId.trim(), decision, notes.trim())
+      await apiClient.recordShadowDecision(seatId, inspectorId.trim(), decision, notes)
       localStorage.setItem('sg_inspector_id', inspectorId.trim())
+      decidedRef.current.add(seatId)
+      setSeatCards(prev => prev.map(c =>
+        c.seat_id === seatId ? { ...c, decided: true, human_decision: decision } : c
+      ))
       const entry: RecentDecision = {
-        seat_id: seatId.trim(),
+        seat_id: seatId,
         inspector_id: inspectorId.trim(),
         decision,
-        notes: notes.trim(),
+        notes,
         timestamp: new Date().toLocaleTimeString(),
       }
-      setRecentDecisions(prev => [entry, ...prev.slice(0, 19)])
-      setSuccessToast(`Recorded: Seat ${seatId.trim()} → ${decision} by ${inspectorId.trim()}`)
-      setTimeout(() => setSuccessToast(null), 4000)
-      setSeatId('')
-      setNotes('')
+      setRecentDecisions(prev => [entry, ...prev.slice(0, 29)])
+      setSuccessToast(`Seat ${seatId} → ${decision} recorded`)
+      setTimeout(() => setSuccessToast(null), 3500)
+      // Refresh stats
+      apiClient.getShadowModeStats().then(s => {
+        const statsResp = s as any
+        setStats({
+          total_inspected: statsResp?.total_inspected || 0,
+          human_decisions_count: statsResp?.human_decisions_count || recentDecisions.length,
+          compared_sample_size: statsResp?.compared_sample_size || 0,
+          agreement_rate: statsResp?.agreement_rate || 0,
+          false_reject_rate: statsResp?.false_reject_rate || 0,
+          escape_rate: statsResp?.escape_rate || 0,
+        })
+      }).catch(() => {})
     } catch (err) {
-      setErrorMsg(`Failed to record decision: ${err}`)
+      setErrorMsg(`Failed to record: ${err}`)
     } finally {
-      setSubmitting(false)
+      setSubmitting(null)
     }
   }
 
-  if (shadowMode === null) {
-    return <div className="text-center py-20 text-zinc-400">Loading system status...</div>
-  }
+  if (loading) return <div className="text-center py-20 text-zinc-400">Loading Shadow Inspector...</div>
+
+  const pendingCount = seatCards.filter(c => !c.decided).length
 
   return (
     <div className="space-y-8">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="font-bold text-white text-3xl flex items-center gap-3">
@@ -68,128 +143,208 @@ export default function ShadowInspector() {
             Shadow Inspector
           </h2>
           <p className="text-sm text-zinc-400 mt-1">
-            Record human ground-truth decisions during AI model validation. These decisions are compared against AI outcomes to calculate false reject and escape rates in the Shift Report.
+            Review each seat the AI inspected and record your human ground-truth decision.
+            These decisions feed directly into the Shift Report agreement metrics.
           </p>
         </div>
-        {shadowMode ? (
-          <span className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 flex-shrink-0">
-            SHADOW MODE ACTIVE
-          </span>
-        ) : (
-          <span className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex-shrink-0">
-            PRODUCTION MODE
-          </span>
-        )}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {shadowMode ? (
+            <span className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse">
+              SHADOW MODE ACTIVE
+            </span>
+          ) : (
+            <span className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+              PRODUCTION MODE
+            </span>
+          )}
+          <button onClick={fetchAll} className="btn-ghost p-2" title="Refresh">
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
+      {/* Not in shadow mode warning */}
       {!shadowMode && (
         <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/40 flex items-start gap-4">
           <AlertTriangle className="w-7 h-7 text-amber-400 flex-shrink-0 mt-0.5" />
           <div>
             <div className="font-bold text-amber-300 text-base mb-1">Shadow Mode is not active</div>
             <p className="text-sm text-amber-200/70">
-              This panel is only used during AI model validation. Enable Shadow Mode in Settings to start recording human ground-truth inspection decisions for comparison against AI outcomes.
+              This panel is only used during AI model validation. Enable Shadow Mode in Settings to start
+              recording human ground-truth decisions for comparison against AI outcomes.
             </p>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Decision Form */}
-        <div className={`card p-8 space-y-6 ${!shadowMode ? 'opacity-50 pointer-events-none' : ''}`}>
-          <div className="text-sm font-semibold uppercase tracking-wide text-zinc-400 border-b border-surface-700 pb-4">
-            Record Human Inspection Decision
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-2">Seat ID <span className="text-danger-400">*</span></label>
-              <input
-                type="text"
-                value={seatId}
-                onChange={e => setSeatId(e.target.value)}
-                placeholder="e.g. SEAT_2026_1031_0089"
-                className="w-full font-mono text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-2">Inspector ID <span className="text-danger-400">*</span></label>
-              <input
-                type="text"
-                value={inspectorId}
-                onChange={e => setInspectorId(e.target.value)}
-                placeholder="e.g. OP_ALPHA or your name"
-                className="w-full text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-2">Notes <span className="text-zinc-600">(optional)</span></label>
-              <textarea
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                rows={3}
-                placeholder="Describe what you physically observed on the seat..."
-                className="w-full text-sm resize-none"
-              />
-            </div>
-          </div>
-
-          {errorMsg && (
-            <div className="p-3 bg-danger-900/20 border border-danger-500/40 text-danger-400 text-sm rounded-xl flex items-center gap-2">
-              <XCircle className="w-4 h-4 flex-shrink-0" />
-              {errorMsg}
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => handleSubmit('PASS')}
-              disabled={submitting}
-              className="flex-1 py-3 rounded-xl font-bold text-sm text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
-            >
-              <CheckCircle className="w-5 h-5" />
-              {submitting ? 'Recording...' : 'PASS — Seat is Good'}
-            </button>
-            <button
-              onClick={() => handleSubmit('FAIL')}
-              disabled={submitting}
-              className="flex-1 py-3 rounded-xl font-bold text-sm text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20"
-            >
-              <XCircle className="w-5 h-5" />
-              {submitting ? 'Recording...' : 'FAIL — Seat has Defect'}
-            </button>
-          </div>
-
-          <div className="pt-2 text-xs text-zinc-500 border-t border-surface-700">
-            Each decision is stored and compared against the AI's logged decision for this seat. Results feed into the Shift Report Agreement Rate, False Reject Rate, and Escape Rate metrics.
-          </div>
+      {/* Inspector ID + Live Mini-Stats */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="card p-6 space-y-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Your Inspector ID</div>
+          <input
+            type="text"
+            value={inspectorId}
+            onChange={e => setInspectorId(e.target.value)}
+            placeholder="e.g. OP_ALPHA or your name"
+            className="w-full text-sm"
+          />
+          <p className="text-xs text-zinc-500">Saved automatically when you record your first decision.</p>
         </div>
 
-        {/* Recent Decisions Log */}
+        <div className="stat-card">
+          <div className="stat-label">Seats in AI Log</div>
+          <div className="stat-value text-white">{seatCards.length}</div>
+          <div className="text-xs text-zinc-500 mt-1">{pendingCount} awaiting your review</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-label">Decisions This Shift</div>
+          <div className="stat-value text-primary-400">{stats?.human_decisions_count ?? recentDecisions.length}</div>
+          <div className="text-xs text-zinc-500 mt-1">
+            Agreement: {stats?.agreement_rate !== undefined ? `${(stats.agreement_rate * 100).toFixed(1)}%` : 'N/A'}
+          </div>
+        </div>
+      </div>
+
+      {/* Shift analytics mini row */}
+      {stats && (stats.compared_sample_size > 0) && (
+        <div className="grid grid-cols-3 gap-4">
+          <div className="p-4 rounded-xl bg-surface-800 border border-surface-700 text-center">
+            <div className="text-xs text-zinc-400 mb-1">AI vs Human Compared</div>
+            <div className="text-xl font-bold text-white">{stats.compared_sample_size}</div>
+          </div>
+          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-center">
+            <div className="text-xs text-zinc-400 mb-1">False Reject Rate</div>
+            <div className="text-xl font-bold text-amber-400">{(stats.false_reject_rate * 100).toFixed(2)}%</div>
+          </div>
+          <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-center">
+            <div className="text-xs text-zinc-400 mb-1">Escape Rate</div>
+            <div className="text-xl font-bold text-rose-400">{(stats.escape_rate * 100).toFixed(2)}%</div>
+          </div>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="p-4 bg-danger-900/20 border border-danger-500/40 text-danger-400 text-sm rounded-xl flex items-center gap-2">
+          <XCircle className="w-4 h-4 flex-shrink-0" />
+          {errorMsg}
+        </div>
+      )}
+
+      {successToast && (
+        <div className="p-4 bg-success-900/20 text-success-400 text-sm rounded-xl border border-success-500 flex items-center gap-2">
+          <CheckCircle className="w-5 h-5 flex-shrink-0" />
+          {successToast}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+        {/* AI Shadow Log Feed */}
+        <div className={`space-y-4 ${!shadowMode ? 'opacity-40 pointer-events-none' : ''}`}>
+          <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+            <Activity className="w-4 h-4 text-primary-400" />
+            AI Shadow Log — Recent Seats
+            {pendingCount > 0 && (
+              <span className="ml-auto px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-xs font-bold border border-amber-500/30">
+                {pendingCount} pending
+              </span>
+            )}
+          </div>
+
+          {seatCards.length === 0 ? (
+            <div className="card p-10 text-center text-zinc-500 text-sm">
+              <Activity className="w-10 h-10 mx-auto mb-3 text-zinc-700" />
+              No seats in AI log yet. Seats will appear here as the line runs.
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+              {seatCards.map(card => (
+                <div
+                  key={card.seat_id}
+                  className={`card p-5 transition-all ${
+                    card.decided ? 'opacity-60 border-surface-600' : 'border-surface-600 hover:border-primary-500/50'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4 mb-3">
+                    <div>
+                      <div className="font-bold text-white font-mono text-sm">{card.seat_id}</div>
+                      <div className="text-xs text-zinc-500 mt-0.5">
+                        {card.variant_id} · {new Date(card.timestamp).toLocaleTimeString()}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-xs text-zinc-400">AI:</span>
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        card.outcome === 'PASS'
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          : card.outcome === 'FAIL'
+                          ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                          : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      }`}>{card.outcome}</span>
+                    </div>
+                  </div>
+
+                  {card.decided ? (
+                    <div className={`flex items-center gap-2 text-sm font-semibold ${
+                      card.human_decision === 'PASS' ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      <CheckCircle className="w-4 h-4" />
+                      You recorded: {card.human_decision}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={notesMap[card.seat_id] || ''}
+                        onChange={e => setNotesMap(prev => ({ ...prev, [card.seat_id]: e.target.value }))}
+                        placeholder="Optional notes..."
+                        className="w-full text-xs py-1.5 px-3"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleDecide(card.seat_id, 'PASS')}
+                          disabled={submitting === card.seat_id}
+                          className="flex-1 py-2 rounded-lg font-bold text-xs text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          {submitting === card.seat_id ? 'Saving...' : 'PASS'}
+                        </button>
+                        <button
+                          onClick={() => handleDecide(card.seat_id, 'FAIL')}
+                          disabled={submitting === card.seat_id}
+                          className="flex-1 py-2 rounded-lg font-bold text-xs text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          {submitting === card.seat_id ? 'Saving...' : 'FAIL'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Decisions Log */}
         <div className="card p-8 space-y-4">
           <div className="text-sm font-semibold uppercase tracking-wide text-zinc-400 border-b border-surface-700 pb-4 flex items-center gap-2">
             <ClipboardList className="w-4 h-4 text-primary-400" />
             Decisions Recorded This Session
+            <span className="ml-auto text-xs text-zinc-500 font-normal normal-case">
+              feeds into Shift Report
+            </span>
           </div>
-
-          {successToast && (
-            <div className="p-3 bg-success-900/20 text-success-400 text-xs rounded-xl border border-success-500 flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 flex-shrink-0" />
-              {successToast}
-            </div>
-          )}
 
           {recentDecisions.length === 0 ? (
             <div className="py-12 text-center text-zinc-500 text-sm">
               <ClipboardList className="w-10 h-10 mx-auto mb-3 text-zinc-700" />
-              No decisions recorded this session yet.
+              No decisions recorded yet this session.
               <br />
-              Use the form to log your human inspection verdicts.
+              Click PASS or FAIL on a seat in the AI log.
             </div>
           ) : (
-            <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-[560px] overflow-y-auto pr-1">
               {recentDecisions.map((d, i) => (
                 <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-surface-900 border border-surface-700">
                   <div>
@@ -197,7 +352,7 @@ export default function ShadowInspector() {
                     <div className="text-xs text-zinc-500 mt-0.5">{d.inspector_id} · {d.timestamp}</div>
                     {d.notes && <div className="text-xs text-zinc-400 mt-0.5 italic">"{d.notes}"</div>}
                   </div>
-                  <span className={`px-2.5 py-1 rounded text-xs font-bold ${
+                  <span className={`px-2.5 py-1 rounded text-xs font-bold flex-shrink-0 ${
                     d.decision === 'PASS'
                       ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                       : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
