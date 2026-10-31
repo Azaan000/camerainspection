@@ -991,6 +991,38 @@ def create_app(
             "camera_image_paths": camera_image_paths,
         }
 
+    @app.get("/api/v1/captures/list")
+    def list_disk_captures(
+        auth_user: str = Depends(verify_api_key),
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        """List seats found in storage/captures on disk (no DB required).
+
+        Returns the most recently modified seat folders so the Shadow Inspector
+        can show real captures even before the DB has been populated.
+        """
+        captures_dir = repo_root / "storage" / "captures"
+        seats = []
+        if captures_dir.is_dir():
+            folders = [
+                f for f in captures_dir.iterdir()
+                if f.is_dir() and f.name != "INJECTED"
+            ]
+            # Sort by modification time, newest first
+            folders.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+            for folder in folders[:limit]:
+                annotated_image_path, camera_image_paths = _resolve_seat_images(folder.name)
+                seats.append({
+                    "seat_id": folder.name,
+                    "variant_id": "UNKNOWN",
+                    "outcome": "UNKNOWN",
+                    "label_printer": False,
+                    "timestamp": None,
+                    "annotated_image_path": annotated_image_path,
+                    "camera_image_paths": camera_image_paths,
+                })
+        return {"seats": seats, "total": len(seats)}
+
     @app.get("/api/v1/dashboard/quality-trends")
     def get_quality_trends(
         auth_user: str = Depends(verify_api_key),

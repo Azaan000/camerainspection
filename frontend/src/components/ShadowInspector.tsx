@@ -121,7 +121,15 @@ export default function ShadowInspector() {
         escape_rate: statsRespAny?.escape_rate || 0,
       })
 
-      const strip: SeatCard[] = ((liveData as any)?.recent_strip || []).map((s: any) => {
+      let rawStrip: any[] = (liveData as any)?.recent_strip || []
+
+      // If the live strip is empty (DB not yet populated), fall back to disk captures
+      if (rawStrip.length === 0) {
+        const diskData = await apiClient.listDiskCaptures(30).catch(() => ({ seats: [] }))
+        rawStrip = (diskData as any).seats || []
+      }
+
+      const strip: SeatCard[] = rawStrip.map((s: any) => {
         const isDecided = decidedRef.current.has(s.seat_id)
         const existingDecision = recentDecisions.find(d => d.seat_id === s.seat_id)
         return {
