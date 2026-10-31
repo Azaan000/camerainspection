@@ -978,19 +978,6 @@ def create_app(
                 "sample_size": len(strip),
             }
 
-    @app.get("/api/v1/captures/{seat_id}/images")
-    def get_seat_capture_images(
-        seat_id: str,
-        auth_user: str = Depends(verify_api_key),
-    ) -> dict[str, Any]:
-        """Return all capture image paths for a given seat_id by scanning disk."""
-        annotated_image_path, camera_image_paths = _resolve_seat_images(seat_id)
-        return {
-            "seat_id": seat_id,
-            "annotated_image_path": annotated_image_path,
-            "camera_image_paths": camera_image_paths,
-        }
-
     @app.get("/api/v1/captures/list")
     def list_disk_captures(
         auth_user: str = Depends(verify_api_key),
@@ -1022,6 +1009,19 @@ def create_app(
                     "camera_image_paths": camera_image_paths,
                 })
         return {"seats": seats, "total": len(seats)}
+
+    @app.get("/api/v1/captures/{seat_id}/images")
+    def get_seat_capture_images(
+        seat_id: str,
+        auth_user: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Return all capture image paths for a given seat_id by scanning disk."""
+        annotated_image_path, camera_image_paths = _resolve_seat_images(seat_id)
+        return {
+            "seat_id": seat_id,
+            "annotated_image_path": annotated_image_path,
+            "camera_image_paths": camera_image_paths,
+        }
 
     @app.get("/api/v1/dashboard/quality-trends")
     def get_quality_trends(
